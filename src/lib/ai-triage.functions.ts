@@ -63,7 +63,7 @@ ${data.conversa}`;
       };
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {
-        throw new Error("A IA não conseguiu estruturar o chamado. Detalhe um pouco mais o caso.");
+        throw new Error(`DEBUG:${String(error.text).slice(0, 400)}|${error.cause}`);
       }
       throw error;
     }
