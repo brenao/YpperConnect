@@ -28,7 +28,7 @@ export const Route = createFileRoute("/governanca")({
       },
     ],
   }),
-  component: Governanca;
+  component: Governanca,
 });
 
 const impactos: { key: Impact; label: string }[] = [
