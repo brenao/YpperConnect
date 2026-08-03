@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useHydrated } from "@/hooks/use-hydrated";
 import {
   PRIORITY_LABEL,
   STATUS_LABEL,
@@ -73,6 +74,7 @@ export function StatusBadge({ value }: { value: TicketStatus }) {
 }
 
 export function SlaPill({ prazo, status }: { prazo: string; status: TicketStatus }) {
+  const hydrated = useHydrated();
   const done = status === "resolvido" || status === "fechado";
   const diff = new Date(prazo).getTime() - Date.now();
   const hours = diff / 3600_000;
@@ -83,6 +85,7 @@ export function SlaPill({ prazo, status }: { prazo: string; status: TicketStatus
       : hours < 24
         ? `${Math.max(1, Math.round(hours))}h restantes`
         : `${Math.round(hours / 24)}d restantes`;
+  if (!hydrated) return <span className="font-mono text-xs text-muted-foreground">—</span>;
   return (
     <span
       className={cn(
