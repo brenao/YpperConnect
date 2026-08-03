@@ -15,6 +15,7 @@ import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
 import { Route as GovernancaRouteImport } from './routes/governanca'
 import { Route as ProjetosRouteImport } from './routes/projetos'
+import { Route as ApiChatRouteImport } from './routes/api/chat'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,6 +47,11 @@ const ProjetosRoute = ProjetosRouteImport.update({
   path: '/projetos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiChatRoute = ApiChatRouteImport.update({
+  id: '/api/chat',
+  path: '/api/chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -54,6 +60,7 @@ export interface FileRoutesByFullPath {
   '/conhecimento': typeof ConhecimentoRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
+  '/api/chat': typeof ApiChatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -62,6 +69,7 @@ export interface FileRoutesByTo {
   '/conhecimento': typeof ConhecimentoRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
+  '/api/chat': typeof ApiChatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -71,6 +79,7 @@ export interface FileRoutesById {
   '/conhecimento': typeof ConhecimentoRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
+  '/api/chat': typeof ApiChatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -81,6 +90,7 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/governanca'
     | '/projetos'
+    | '/api/chat'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -89,6 +99,7 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/governanca'
     | '/projetos'
+    | '/api/chat'
   id:
     | '__root__'
     | '/'
@@ -97,6 +108,7 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/governanca'
     | '/projetos'
+    | '/api/chat'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -106,6 +118,7 @@ export interface RootRouteChildren {
   ConhecimentoRoute: typeof ConhecimentoRoute
   GovernancaRoute: typeof GovernancaRoute
   ProjetosRoute: typeof ProjetosRoute
+  ApiChatRoute: typeof ApiChatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -152,6 +165,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjetosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/chat': {
+      id: '/api/chat'
+      path: '/api/chat'
+      fullPath: '/api/chat'
+      preLoaderRoute: typeof ApiChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -162,6 +182,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConhecimentoRoute: ConhecimentoRoute,
   GovernancaRoute: GovernancaRoute,
   ProjetosRoute: ProjetosRoute,
+  ApiChatRoute: ApiChatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
