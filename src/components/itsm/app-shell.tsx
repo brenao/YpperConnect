@@ -7,7 +7,6 @@ import {
   GanttChartSquare,
   ShieldCheck,
   Sparkles,
-  Activity,
   PieChart,
 } from "lucide-react";
 import type { ReactNode } from "react";
