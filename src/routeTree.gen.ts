@@ -14,6 +14,7 @@ import { Route as AssistenteRouteImport } from './routes/assistente'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
 import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
+import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
 import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
@@ -44,6 +45,11 @@ const ConhecimentoRoute = ConhecimentoRouteImport.update({
   path: '/conhecimento',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DiretoriaRoute = DiretoriaRouteImport.update({
+  id: '/diretoria',
+  path: '/diretoria',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GovernancaRoute = GovernancaRouteImport.update({
   id: '/governanca',
   path: '/governanca',
@@ -71,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
   '/api/chat': typeof ApiChatRoute
@@ -82,6 +89,7 @@ export interface FileRoutesByTo {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
   '/api/chat': typeof ApiChatRoute
@@ -94,6 +102,7 @@ export interface FileRoutesById {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
   '/api/chat': typeof ApiChatRoute
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/diretoria'
     | '/governanca'
     | '/projetos'
     | '/api/chat'
@@ -118,6 +128,7 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/diretoria'
     | '/governanca'
     | '/projetos'
     | '/api/chat'
@@ -129,6 +140,7 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/diretoria'
     | '/governanca'
     | '/projetos'
     | '/api/chat'
@@ -141,6 +153,7 @@ export interface RootRouteChildren {
   CatalogoRoute: typeof CatalogoRoute
   ChamadosRoute: typeof ChamadosRoute
   ConhecimentoRoute: typeof ConhecimentoRoute
+  DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
   ProjetosRoute: typeof ProjetosRoute
   ApiChatRoute: typeof ApiChatRoute
@@ -184,6 +197,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConhecimentoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/diretoria': {
+      id: '/diretoria'
+      path: '/diretoria'
+      fullPath: '/diretoria'
+      preLoaderRoute: typeof DiretoriaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/governanca': {
       id: '/governanca'
       path: '/governanca'
@@ -221,6 +241,7 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogoRoute: CatalogoRoute,
   ChamadosRoute: ChamadosRoute,
   ConhecimentoRoute: ConhecimentoRoute,
+  DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
   ProjetosRoute: ProjetosRoute,
   ApiChatRoute: ApiChatRoute,
