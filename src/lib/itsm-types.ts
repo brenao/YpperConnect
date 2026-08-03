@@ -18,7 +18,7 @@ export interface Ticket {
   categoria: string;
   servico: string;
   /** Nome do sistema afetado — obrigatório para incidente, melhoria e tarefa. */
-  sistema?: string;
+  sistema?: string | undefined;
   impacto: Impact;
   urgencia: Urgency;
   prioridade: Priority;
