@@ -19,13 +19,13 @@ import {
 export const Route = createFileRoute("/assistente")({
   head: () => ({
     meta: [
-      { title: "Assistente IA de atendimento · GovTI" },
+      { title: "Assistente IA de atendimento · YpperConnect" },
       {
         name: "description",
         content:
           "IA conversacional que coleta informações, sugere classificação e prioridade e direciona o chamado para a equipe responsável.",
       },
-      { property: "og:title", content: "Assistente IA de atendimento · GovTI" },
+      { property: "og:title", content: "Assistente IA de atendimento · YpperConnect" },
       {
         property: "og:description",
         content: "Abertura de chamados guiada por IA com sugestão de categoria e prioridade.",

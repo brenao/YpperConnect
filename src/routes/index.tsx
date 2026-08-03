@@ -27,13 +27,13 @@ import { TYPE_LABEL, type Priority, type RecordType } from "@/lib/itsm-types";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "GovTI · Central de governança e atendimento de TI" },
+      { title: "YpperConnect · Central de governança e atendimento de TI" },
       {
         name: "description",
         content:
           "Painel de governança de TI com chamados ITIL, matriz de prioridade, catálogo de serviços, base de conhecimento e cronograma de projetos.",
       },
-      { property: "og:title", content: "GovTI · Central de governança de TI" },
+      { property: "og:title", content: "YpperConnect · Central de governança de TI" },
       {
         property: "og:description",
         content:

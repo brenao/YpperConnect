@@ -43,13 +43,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/projetos_/$projectId")({
   head: () => ({
     meta: [
-      { title: "Detalhe do projeto · GovTI" },
+      { title: "Detalhe do projeto · YpperConnect" },
       {
         name: "description",
         content:
           "Visão única do projeto: cronograma, caminho crítico, riscos, pontos de atenção e avaliação de IA baseada no PMI.",
       },
-      { property: "og:title", content: "Detalhe do projeto · GovTI" },
+      { property: "og:title", content: "Detalhe do projeto · YpperConnect" },
       {
         property: "og:description",
         content: "Cronograma, caminho crítico, riscos e avaliação de IA do projeto de TI.",

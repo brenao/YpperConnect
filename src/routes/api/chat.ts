@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
 import { createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
 
-const SYSTEM_PROMPT = `Você é o assistente de atendimento de TI da plataforma GovTI, baseada em práticas ITIL.
+const SYSTEM_PROMPT = `Você é o assistente de atendimento de TI da plataforma YpperConnect, baseada em práticas ITIL.
 
 Seu papel:
 1. Coletar as informações necessárias para abrir um chamado (o que aconteceu, desde quando, quantas pessoas afetadas, se há alternativa de continuidade, serviço/sistema envolvido).

@@ -30,13 +30,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/diretoria")({
   head: () => ({
     meta: [
-      { title: "Visão diretoria · GovTI" },
+      { title: "Visão diretoria · YpperConnect" },
       {
         name: "description",
         content:
           "Painel executivo de TI: portfólio de projetos, entregas por mês, atrasos, paralisados e volume de chamados por prioridade.",
       },
-      { property: "og:title", content: "Visão diretoria · GovTI" },
+      { property: "og:title", content: "Visão diretoria · YpperConnect" },
       {
         property: "og:description",
         content: "Painel executivo com portfólio, entregas previstas e chamados por prioridade.",
