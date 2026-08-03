@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
 import { Route as ChamadosRouteImport } from './routes/chamados'
+import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
 import { Route as ProjetosRouteImport } from './routes/projetos'
 
 const IndexRoute = IndexRouteImport.update({
@@ -29,6 +30,11 @@ const ChamadosRoute = ChamadosRouteImport.update({
   path: '/chamados',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConhecimentoRoute = ConhecimentoRouteImport.update({
+  id: '/conhecimento',
+  path: '/conhecimento',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjetosRoute = ProjetosRouteImport.update({
   id: '/projetos',
   path: '/projetos',
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
+  '/conhecimento': typeof ConhecimentoRoute
   '/projetos': typeof ProjetosRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
+  '/conhecimento': typeof ConhecimentoRoute
   '/projetos': typeof ProjetosRoute
 }
 export interface FileRoutesById {
@@ -52,20 +60,23 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
+  '/conhecimento': typeof ConhecimentoRoute
   '/projetos': typeof ProjetosRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/catalogo' | '/chamados' | '/projetos'
+  fullPaths: '/' | '/catalogo' | '/chamados' | '/conhecimento' | '/projetos'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/catalogo' | '/chamados' | '/projetos'
-  id: '__root__' | '/' | '/catalogo' | '/chamados' | '/projetos'
+  to: '/' | '/catalogo' | '/chamados' | '/conhecimento' | '/projetos'
+  id:
+    '__root__' | '/' | '/catalogo' | '/chamados' | '/conhecimento' | '/projetos'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CatalogoRoute: typeof CatalogoRoute
   ChamadosRoute: typeof ChamadosRoute
+  ConhecimentoRoute: typeof ConhecimentoRoute
   ProjetosRoute: typeof ProjetosRoute
 }
 
@@ -92,6 +103,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChamadosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/conhecimento': {
+      id: '/conhecimento'
+      path: '/conhecimento'
+      fullPath: '/conhecimento'
+      preLoaderRoute: typeof ConhecimentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projetos': {
       id: '/projetos'
       path: '/projetos'
@@ -106,6 +124,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CatalogoRoute: CatalogoRoute,
   ChamadosRoute: ChamadosRoute,
+  ConhecimentoRoute: ConhecimentoRoute,
   ProjetosRoute: ProjetosRoute,
 }
 export const routeTree = rootRouteImport
