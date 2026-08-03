@@ -31,8 +31,7 @@ type NewTicket = Pick<
   | "urgencia"
   | "solicitante"
   | "origem"
-> &
-  Pick<Partial<Ticket>, "sistema">;
+> & { sistema?: string | undefined };
 
 interface Store extends State {
   createTicket: (t: NewTicket) => Ticket;
