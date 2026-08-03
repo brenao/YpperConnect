@@ -12,6 +12,7 @@ import {
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
+import { ThemeToggle } from "./theme-toggle";
 
 const nav = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
@@ -84,7 +85,10 @@ export function AppShell({
               <p className="truncate text-sm text-muted-foreground">{subtitle}</p>
             ) : null}
           </div>
-          <NewTicketDialog />
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <NewTicketDialog />
+          </div>
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-border px-4 py-2 lg:hidden">
