@@ -29,6 +29,8 @@ export interface Ticket {
   criadoEm: string;
   prazoSla: string;
   problemaVinculado?: string;
+  /** Obrigatória ao resolver/fechar o chamado. */
+  descricaoEncerramento?: string | undefined;
   origem: "portal" | "ia" | "email" | "telefone";
 }
 
@@ -63,6 +65,51 @@ export interface ProjectTask {
   progresso: number;
   responsavel: string;
   marco?: boolean;
+  /** Responsáveis adicionais (1 ou vários). */
+  responsaveis?: string[] | undefined;
+  /** IDs de tarefas predecessoras dentro do mesmo projeto. */
+  predecessoras?: string[] | undefined;
+  /** ID da tarefa pai (tarefas filhas / WBS). */
+  paiId?: string | undefined;
+  duracao?: number | undefined;
+  duracaoUnidade?: "dias" | "horas" | undefined;
+  atividade?: string | undefined;
+}
+
+export type ProjectStatus =
+  | "planejamento"
+  | "execucao"
+  | "risco"
+  | "paralisado"
+  | "cancelado"
+  | "concluido";
+
+export interface ProjectUpdate {
+  id: string;
+  data: string;
+  autor: string;
+  descricao: string;
+  ultimasEntregas: string;
+  proximasEntregas: string;
+}
+
+export interface ProjectRisk {
+  id: string;
+  descricao: string;
+  probabilidade: "alta" | "media" | "baixa";
+  impacto: "alto" | "medio" | "baixo";
+  mitigacao: string;
+  status: "aberto" | "monitorado" | "mitigado";
+}
+
+export interface ProjectAttention {
+  id: string;
+  titulo: string;
+  descricao: string;
+  decisaoNecessaria: string;
+  responsavelDecisao: string;
+  criadoEm: string;
+  status: "aberto" | "resolvido";
 }
 
 export interface Project {
@@ -71,11 +118,25 @@ export interface Project {
   objetivo: string;
   sponsor: string;
   gerente: string;
-  status: "planejamento" | "execucao" | "risco" | "concluido";
+  status: ProjectStatus;
   inicio: string;
   fim: string;
   tarefas: ProjectTask[];
+  atualizacoes?: ProjectUpdate[] | undefined;
+  riscos?: ProjectRisk[] | undefined;
+  atencoes?: ProjectAttention[] | undefined;
 }
+
+export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
+  planejamento: "Planejamento",
+  execucao: "Em execução",
+  risco: "Em risco",
+  paralisado: "Paralisado",
+  cancelado: "Cancelado",
+  concluido: "Concluído",
+};
+
+export type UserRole = "ti" | "nao_ti";
 
 export const PRIORITY_MATRIX: Record<Impact, Record<Urgency, Priority>> = {
   alto: { alta: "P1", media: "P2", baixa: "P3" },
