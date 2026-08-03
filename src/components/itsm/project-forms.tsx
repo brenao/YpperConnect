@@ -47,9 +47,9 @@ export function NewProjectDialog({ onCreated }: { onCreated?: (p: Project) => vo
   const [fim, setFim] = useState(emDias(90));
 
   function submit() {
-    if (nome.trim().length < 4) return toast.error("Informe o nome do projeto.");
-    if (gerente.trim().length < 3) return toast.error("Informe o gerente do projeto (GP).");
-    if (new Date(fim) <= new Date(inicio)) return toast.error("A data fim deve ser após o início.");
+    if (nome.trim().length < 4) { toast.error("Informe o nome do projeto."); return; }
+    if (gerente.trim().length < 3) { toast.error("Informe o gerente do projeto (GP)."); return; }
+    if (new Date(fim) <= new Date(inicio)) { toast.error("A data fim deve ser após o início."); return; }
     const p = createProject({
       nome: nome.trim().slice(0, 120),
       objetivo: objetivo.trim().slice(0, 600),
@@ -165,16 +165,16 @@ export function TaskDialog({
   const candidatas = project.tarefas.filter((t) => t.id !== task?.id);
 
   function submit() {
-    if (nome.trim().length < 3) return toast.error("Informe o nome da tarefa.");
+    if (nome.trim().length < 3) { toast.error("Informe o nome da tarefa."); return; }
     const dur = Number(duracao);
-    if (!Number.isFinite(dur) || dur <= 0) return toast.error("Informe uma duração válida.");
+    if (!Number.isFinite(dur) || dur <= 0) { toast.error("Informe uma duração válida."); return; }
     const dias = unidade === "horas" ? Math.max(dur / 8, 0.125) : dur;
     const fim = toISODate(new Date(`${inicio}T00:00:00`).getTime() + Math.max(dias - 1, 0) * 86_400_000);
     const pessoas = responsaveis
       .split(",")
       .map((r) => r.trim())
       .filter(Boolean);
-    if (!pessoas.length) return toast.error("Atribua a tarefa a pelo menos uma pessoa.");
+    if (!pessoas.length) { toast.error("Atribua a tarefa a pelo menos uma pessoa."); return; }
 
     const payload = {
       nome: nome.trim().slice(0, 120),
@@ -323,7 +323,7 @@ export function WeeklyUpdateDialog({ project }: { project: Project }) {
   const [proximas, setProximas] = useState("");
 
   function submit() {
-    if (descricao.trim().length < 10) return toast.error("Descreva a situação do projeto.");
+    if (descricao.trim().length < 10) { toast.error("Descreva a situação do projeto."); return; }
     addProjectUpdate(project.id, {
       data: new Date().toISOString(),
       autor: project.gerente,
@@ -386,7 +386,7 @@ export function RiskDialog({ project }: { project: Project }) {
   const [mitigacao, setMitigacao] = useState("");
 
   function submit() {
-    if (descricao.trim().length < 10) return toast.error("Descreva o risco.");
+    if (descricao.trim().length < 10) { toast.error("Descreva o risco."); return; }
     addRisk(project.id, {
       descricao: descricao.trim().slice(0, 500),
       probabilidade,
@@ -470,8 +470,8 @@ export function AttentionDialog({ project }: { project: Project }) {
   const [responsavel, setResponsavel] = useState(project.sponsor);
 
   function submit() {
-    if (titulo.trim().length < 5) return toast.error("Informe o título do ponto de atenção.");
-    if (decisao.trim().length < 5) return toast.error("Informe a decisão necessária.");
+    if (titulo.trim().length < 5) { toast.error("Informe o título do ponto de atenção."); return; }
+    if (decisao.trim().length < 5) { toast.error("Informe a decisão necessária."); return; }
     addAttention(project.id, {
       titulo: titulo.trim().slice(0, 120),
       descricao: descricao.trim().slice(0, 800),

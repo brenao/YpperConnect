@@ -59,8 +59,8 @@ function Kpi({
 }: {
   label: string;
   value: number | string;
-  tone?: string;
-  hint?: string;
+  tone?: string | undefined;
+  hint?: string | undefined;
 }) {
   return (
     <div className="glass-panel rounded-2xl border border-border/60 p-5">
