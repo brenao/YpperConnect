@@ -2,12 +2,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useEffect, useRef, useState } from "react";
-import { Send, Sparkles } from "lucide-react";
+import { Loader2, Send, Sparkles, TicketPlus } from "lucide-react";
 import { toast } from "sonner";
+import { useServerFn } from "@tanstack/react-start";
 import { AppShell } from "@/components/itsm/app-shell";
+import { AiTicketDraft } from "@/components/itsm/ai-ticket-draft";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { useItsm } from "@/lib/itsm-store";
+import {
+  draftTicketFromConversation,
+  type TicketDraft,
+} from "@/lib/ai-triage.functions";
 
 export const Route = createFileRoute("/assistente")({
   head: () => ({
@@ -37,8 +44,13 @@ const SUGESTOES = [
 
 function Assistente() {
   const [input, setInput] = useState("");
+  const [draft, setDraft] = useState<TicketDraft | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const [criado, setCriado] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const { services } = useItsm();
+  const gerarRascunho = useServerFn(draftTicketFromConversation);
 
   const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
@@ -50,7 +62,7 @@ function Assistente() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, status]);
+  }, [messages, status, draft]);
 
   useEffect(() => {
     if (!loading) inputRef.current?.focus();
@@ -61,6 +73,33 @@ function Assistente() {
     if (!value || loading) return;
     void sendMessage({ text: value.slice(0, 2000) });
     setInput("");
+    setCriado(null);
+  }
+
+  const conversa = messages
+    .map((m) => {
+      const text = m.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+      return `${m.role === "user" ? "Usuário" : "Assistente"}: ${text}`;
+    })
+    .join("\n\n")
+    .slice(-8000);
+
+  async function estruturarChamado() {
+    if (conversa.trim().length < 10) return;
+    setDrafting(true);
+    setCriado(null);
+    try {
+      const result = await gerarRascunho({
+        data: { conversa, servicos: services.map((s) => s.nome).slice(0, 60) },
+      });
+      setDraft(result);
+    } catch (error) {
+      toast.error("Não foi possível estruturar o chamado", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setDrafting(false);
+    }
   }
 
   return (
@@ -134,10 +173,46 @@ function Assistente() {
                 </div>
               </div>
             ) : null}
+
+            {draft ? (
+              <AiTicketDraft
+                draft={draft}
+                onDismiss={() => setDraft(null)}
+                onCreated={(id) => {
+                  setDraft(null);
+                  setCriado(id);
+                }}
+              />
+            ) : null}
+
+            {criado ? (
+              <div className="rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-sm">
+                Chamado <strong className="font-mono">{criado}</strong> registrado pelo assistente e
+                enviado para a fila de atendimento.
+              </div>
+            ) : null}
             <div ref={endRef} />
           </div>
 
           <div className="border-t border-border p-4">
+            {messages.length > 0 && !draft ? (
+              <div className="mb-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2"
+                  disabled={drafting || loading}
+                  onClick={() => void estruturarChamado()}
+                >
+                  {drafting ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <TicketPlus className="size-4" />
+                  )}
+                  Abrir chamado com base nesta conversa
+                </Button>
+              </div>
+            ) : null}
             <div className="flex items-end gap-2">
               <Textarea
                 ref={inputRef}
