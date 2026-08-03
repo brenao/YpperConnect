@@ -19,6 +19,7 @@ import {
   type Impact,
   type RecordType,
   type Urgency,
+  requiresSystem,
 } from "@/lib/itsm-types";
 import type { TicketDraft } from "@/lib/ai-triage.functions";
 import { PriorityBadge } from "./badges";
