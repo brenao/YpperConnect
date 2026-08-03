@@ -185,7 +185,8 @@ function Chamados() {
 
                 <dl className="grid grid-cols-2 gap-3 text-sm">
                   {[
-                    ["Serviço", atual.servico],
+                     ["Serviço", atual.servico],
+                     ...(atual.sistema ? [["Sistema", atual.sistema]] : []),
                     ["Categoria", atual.categoria],
                     ["Solicitante", atual.solicitante],
                     ["Responsável", atual.responsavel],
