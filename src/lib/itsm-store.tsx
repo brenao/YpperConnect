@@ -27,6 +27,7 @@ type NewTicket = Pick<
   | "tipo"
   | "categoria"
   | "servico"
+  | "sistema"
   | "impacto"
   | "urgencia"
   | "solicitante"
