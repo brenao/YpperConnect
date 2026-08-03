@@ -31,7 +31,7 @@ type NewTicket = Pick<
   | "urgencia"
   | "solicitante"
   | "origem"
->;
+> & { sistema?: string | undefined };
 
 interface Store extends State {
   createTicket: (t: NewTicket) => Ticket;

@@ -19,6 +19,7 @@ import {
   type Impact,
   type RecordType,
   type Urgency,
+  requiresSystem,
 } from "@/lib/itsm-types";
 import type { TicketDraft } from "@/lib/ai-triage.functions";
 import { PriorityBadge } from "./badges";
@@ -46,13 +47,19 @@ export function AiTicketDraft({
   const [impacto, setImpacto] = useState<Impact>(draft.impacto);
   const [urgencia, setUrgencia] = useState<Urgency>(draft.urgencia);
   const [solicitante, setSolicitante] = useState("");
+  const [sistema, setSistema] = useState(draft.sistema ?? "");
 
   const prioridade = resolvePriority(impacto, urgencia);
   const categoria = services.find((s) => s.nome === servico)?.categoria ?? "Geral";
+  const sistemaObrigatorio = requiresSystem(tipo);
 
   function registrar() {
     if (titulo.trim().length < 5) {
       toast.error("Descreva o título com pelo menos 5 caracteres.");
+      return;
+    }
+    if (sistemaObrigatorio && sistema.trim().length < 2) {
+      toast.error(`Informe o nome do sistema para ${TYPE_LABEL[tipo].toLowerCase()}.`);
       return;
     }
     const ticket = createTicket({
@@ -61,6 +68,7 @@ export function AiTicketDraft({
       tipo,
       categoria,
       servico,
+      sistema: sistemaObrigatorio ? sistema.trim().slice(0, 80) : undefined,
       impacto,
       urgencia,
       solicitante: solicitante.trim().slice(0, 80) || "Usuário do portal",
@@ -91,6 +99,32 @@ export function AiTicketDraft({
 
       <div className="mt-4 grid gap-3">
         <div className="grid gap-1.5">
+          <label className="text-xs text-muted-foreground">Classificação</label>
+          <Select value={tipo} onValueChange={(v) => setTipo(v as RecordType)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TIPOS.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {TYPE_LABEL[t]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {sistemaObrigatorio && (
+          <div className="grid gap-1.5">
+            <label className="text-xs text-muted-foreground">Sistema *</label>
+            <Input
+              value={sistema}
+              maxLength={80}
+              onChange={(e) => setSistema(e.target.value)}
+              placeholder="Ex.: ERP TOTVS, Portal RH"
+            />
+          </div>
+        )}
+        <div className="grid gap-1.5">
           <label className="text-xs text-muted-foreground">Título</label>
           <Input value={titulo} maxLength={140} onChange={(e) => setTitulo(e.target.value)} />
         </div>
@@ -104,21 +138,6 @@ export function AiTicketDraft({
           />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1.5">
-            <label className="text-xs text-muted-foreground">Classificação</label>
-            <Select value={tipo} onValueChange={(v) => setTipo(v as RecordType)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TIPOS.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {TYPE_LABEL[t]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           <div className="grid gap-1.5">
             <label className="text-xs text-muted-foreground">Serviço</label>
             <Select value={servico} onValueChange={setServico}>

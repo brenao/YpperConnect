@@ -17,6 +17,8 @@ export interface Ticket {
   tipo: RecordType;
   categoria: string;
   servico: string;
+  /** Nome do sistema afetado — obrigatório para incidente, melhoria e tarefa. */
+  sistema?: string | undefined;
   impacto: Impact;
   urgencia: Urgency;
   prioridade: Priority;
@@ -114,4 +116,11 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
 
 export function resolvePriority(impacto: Impact, urgencia: Urgency): Priority {
   return PRIORITY_MATRIX[impacto][urgencia];
+}
+
+/** Classificações que exigem o nome do sistema. */
+export const TYPES_REQUIRING_SYSTEM: RecordType[] = ["incidente", "melhoria", "tarefa"];
+
+export function requiresSystem(tipo: RecordType): boolean {
+  return TYPES_REQUIRING_SYSTEM.includes(tipo);
 }
