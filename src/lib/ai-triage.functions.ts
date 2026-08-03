@@ -13,6 +13,7 @@ const DraftSchema = z.object({
   descricao: z.string(),
   tipo: z.enum(["incidente", "requisicao", "melhoria", "tarefa"]),
   servico: z.string(),
+  sistema: z.string(),
   impacto: z.enum(["alto", "medio", "baixo"]),
   urgencia: z.enum(["alta", "media", "baixa"]),
   justificativa: z.string(),
@@ -41,6 +42,7 @@ Regras:
 - titulo com no máximo 90 caracteres, objetivo, sem prefixo de tipo.
 - descricao com até 600 caracteres, em texto corrido, com sintoma, escopo e impacto observado.
 - justificativa com até 200 caracteres explicando a classificação e a prioridade.
+- "sistema": nome do sistema/aplicação afetado (ex.: ERP TOTVS, Portal RH, Active Directory). Obrigatório quando o tipo for incidente, melhoria ou tarefa; use "" se realmente não for possível identificar.
 - Responda em português do Brasil.
 
 Conversa:
@@ -55,6 +57,7 @@ ${data.conversa}`;
       return {
         ...output,
         titulo: output.titulo.slice(0, 90),
+        sistema: output.sistema.slice(0, 80),
         descricao: output.descricao.slice(0, 600),
         justificativa: output.justificativa.slice(0, 200),
         servico: data.servicos.includes(output.servico)
