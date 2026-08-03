@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/itsm/app-shell";
 import { Progress } from "@/components/ui/progress";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useItsm } from "@/lib/itsm-store";
 import type { Project } from "@/lib/itsm-types";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,7 @@ const fmt = (d: string) =>
   new Date(`${d}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
 
 function Gantt({ project }: { project: Project }) {
+  const hydrated = useHydrated();
   const start = new Date(`${project.inicio}T00:00:00`).getTime();
   const end = new Date(`${project.fim}T00:00:00`).getTime();
   const span = Math.max(end - start, 1);
@@ -50,7 +52,7 @@ function Gantt({ project }: { project: Project }) {
 
   return (
     <div className="relative mt-4 space-y-2">
-      {hojePct > 0 && hojePct < 100 ? (
+      {hydrated && hojePct > 0 && hojePct < 100 ? (
         <div
           className="pointer-events-none absolute inset-y-0 z-10 w-px bg-primary/60"
           style={{ left: `calc(14rem + (100% - 14rem) * ${hojePct / 100})` }}
