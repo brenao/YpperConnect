@@ -175,5 +175,34 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(900px 500px at 12% -10%, oklch(0.82 0.16 185 / 8%), transparent 60%),
+      radial-gradient(700px 480px at 95% 0%, oklch(0.72 0.13 240 / 7%), transparent 55%);
+    background-attachment: fixed;
   }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+}
+
+@utility panel {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-panel);
+}
+
+@utility text-gradient {
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility bg-hero {
+  background-image: var(--gradient-hero);
 }
