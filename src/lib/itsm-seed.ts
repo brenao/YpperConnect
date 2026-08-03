@@ -1,7 +1,7 @@
 import type { Article, Project, ServiceItem, Ticket } from "./itsm-types";
 import { SLA_HORAS, resolvePriority } from "./itsm-types";
 
-const now = new Date("2026-08-03T13:00:00.000Z").getTime();
+const now = Date.now();
 const h = (n: number) => new Date(now + n * 3600_000).toISOString();
 
 function mk(
