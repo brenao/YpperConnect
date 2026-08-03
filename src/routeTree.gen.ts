@@ -14,9 +14,11 @@ import { Route as AssistenteRouteImport } from './routes/assistente'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
 import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
+import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
 import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
+import { Route as ProjetosProjectIdRouteImport } from './routes/projetos_.$projectId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -43,6 +45,11 @@ const ConhecimentoRoute = ConhecimentoRouteImport.update({
   path: '/conhecimento',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DiretoriaRoute = DiretoriaRouteImport.update({
+  id: '/diretoria',
+  path: '/diretoria',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GovernancaRoute = GovernancaRouteImport.update({
   id: '/governanca',
   path: '/governanca',
@@ -58,6 +65,11 @@ const ApiChatRoute = ApiChatRouteImport.update({
   path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjetosProjectIdRoute = ProjetosProjectIdRouteImport.update({
+  id: '/projetos_/$projectId',
+  path: '/projetos/$projectId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -65,9 +77,11 @@ export interface FileRoutesByFullPath {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
   '/api/chat': typeof ApiChatRoute
+  '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -75,9 +89,11 @@ export interface FileRoutesByTo {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
   '/api/chat': typeof ApiChatRoute
+  '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -86,9 +102,11 @@ export interface FileRoutesById {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
   '/api/chat': typeof ApiChatRoute
+  '/projetos_/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -98,9 +116,11 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/diretoria'
     | '/governanca'
     | '/projetos'
     | '/api/chat'
+    | '/projetos/$projectId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -108,9 +128,11 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/diretoria'
     | '/governanca'
     | '/projetos'
     | '/api/chat'
+    | '/projetos/$projectId'
   id:
     | '__root__'
     | '/'
@@ -118,9 +140,11 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/diretoria'
     | '/governanca'
     | '/projetos'
     | '/api/chat'
+    | '/projetos_/$projectId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -129,9 +153,11 @@ export interface RootRouteChildren {
   CatalogoRoute: typeof CatalogoRoute
   ChamadosRoute: typeof ChamadosRoute
   ConhecimentoRoute: typeof ConhecimentoRoute
+  DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
   ProjetosRoute: typeof ProjetosRoute
   ApiChatRoute: typeof ApiChatRoute
+  ProjetosProjectIdRoute: typeof ProjetosProjectIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -171,6 +197,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConhecimentoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/diretoria': {
+      id: '/diretoria'
+      path: '/diretoria'
+      fullPath: '/diretoria'
+      preLoaderRoute: typeof DiretoriaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/governanca': {
       id: '/governanca'
       path: '/governanca'
@@ -192,6 +225,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projetos_/$projectId': {
+      id: '/projetos_/$projectId'
+      path: '/projetos/$projectId'
+      fullPath: '/projetos/$projectId'
+      preLoaderRoute: typeof ProjetosProjectIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -201,10 +241,22 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogoRoute: CatalogoRoute,
   ChamadosRoute: ChamadosRoute,
   ConhecimentoRoute: ConhecimentoRoute,
+  DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
   ProjetosRoute: ProjetosRoute,
   ApiChatRoute: ApiChatRoute,
+  ProjetosProjectIdRoute: ProjetosProjectIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

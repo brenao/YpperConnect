@@ -37,7 +37,9 @@ import { PriorityBadge } from "./badges";
 const USER_TYPES: RecordType[] = ["incidente", "requisicao", "melhoria", "tarefa"];
 
 export function NewTicketDialog() {
-  const { services, createTicket } = useItsm();
+  const { services, createTicket, role } = useItsm();
+  // Somente a equipe de TI pode registrar Problemas.
+  const tiposDisponiveis: RecordType[] = role === "ti" ? [...USER_TYPES, "problema"] : USER_TYPES;
   const [open, setOpen] = useState(false);
   const [titulo, setTitulo] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -107,7 +109,7 @@ export function NewTicketDialog() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {USER_TYPES.map((t) => (
+                {tiposDisponiveis.map((t) => (
                   <SelectItem key={t} value={t}>
                     {TYPE_LABEL[t]}
                   </SelectItem>

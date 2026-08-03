@@ -8,16 +8,19 @@ import {
   ShieldCheck,
   Sparkles,
   Activity,
+  PieChart,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
+import { RoleSwitch } from "./role-switch";
 
 const nav = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
   { to: "/chamados", label: "Chamados", icon: Ticket },
   { to: "/projetos", label: "Projetos e cronograma", icon: GanttChartSquare },
+  { to: "/diretoria", label: "Visão diretoria", icon: PieChart },
   { to: "/catalogo", label: "Catálogo de serviços", icon: Boxes },
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },
   { to: "/governanca", label: "Governança ITIL", icon: ShieldCheck },
@@ -27,10 +30,12 @@ const nav = [
 export function AppShell({
   title,
   subtitle,
+  actions,
   children,
 }: {
   title: string;
   subtitle?: string;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -86,6 +91,8 @@ export function AppShell({
             ) : null}
           </div>
           <div className="flex items-center gap-2">
+            {actions}
+            <RoleSwitch />
             <ThemeToggle />
             <NewTicketDialog />
           </div>

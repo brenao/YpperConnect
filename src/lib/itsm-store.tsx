@@ -1,16 +1,27 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { SEED_ARTICLES, SEED_PROJECTS, SEED_SERVICES, SEED_TICKETS } from "./itsm-seed";
-import type { Article, Project, ServiceItem, Ticket } from "./itsm-types";
+import type {
+  Article,
+  Project,
+  ProjectAttention,
+  ProjectRisk,
+  ProjectTask,
+  ProjectUpdate,
+  ServiceItem,
+  Ticket,
+  UserRole,
+} from "./itsm-types";
 import { SLA_HORAS, resolvePriority } from "./itsm-types";
 
-const KEY = "govti.state.v1";
+const KEY = "govti.state.v2";
 
 interface State {
   tickets: Ticket[];
   services: ServiceItem[];
   articles: Article[];
   projects: Project[];
+  role: UserRole;
 }
 
 const initial: State = {
@@ -18,6 +29,7 @@ const initial: State = {
   services: SEED_SERVICES,
   articles: SEED_ARTICLES,
   projects: SEED_PROJECTS,
+  role: "ti",
 };
 
 type NewTicket = Pick<
@@ -37,6 +49,16 @@ interface Store extends State {
   createTicket: (t: NewTicket) => Ticket;
   updateTicket: (id: string, patch: Partial<Ticket>) => void;
   addArticle: (a: Omit<Article, "id" | "visualizacoes">) => void;
+  setRole: (r: UserRole) => void;
+  createProject: (p: Omit<Project, "id" | "tarefas" | "atualizacoes" | "riscos" | "atencoes">) => Project;
+  updateProject: (id: string, patch: Partial<Project>) => void;
+  addTask: (projectId: string, t: Omit<ProjectTask, "id">) => void;
+  updateTask: (projectId: string, taskId: string, patch: Partial<ProjectTask>) => void;
+  removeTask: (projectId: string, taskId: string) => void;
+  addProjectUpdate: (projectId: string, u: Omit<ProjectUpdate, "id">) => void;
+  addRisk: (projectId: string, r: Omit<ProjectRisk, "id">) => void;
+  addAttention: (projectId: string, a: Omit<ProjectAttention, "id" | "criadoEm" | "status">) => void;
+  resolveAttention: (projectId: string, attentionId: string) => void;
   reset: () => void;
 }
 
@@ -106,11 +128,151 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  const setRole = useCallback((role: UserRole) => setState((s) => ({ ...s, role })), []);
+
+  const patchProject = useCallback((id: string, fn: (p: Project) => Project) => {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) => (p.id === id ? fn(p) : p)),
+    }));
+  }, []);
+
+  const createProject = useCallback<Store["createProject"]>((input) => {
+    const project: Project = {
+      ...input,
+      id: `PRJ-${Math.floor(10 + Math.random() * 89)}`,
+      tarefas: [],
+      atualizacoes: [],
+      riscos: [],
+      atencoes: [],
+    };
+    setState((s) => ({ ...s, projects: [project, ...s.projects] }));
+    return project;
+  }, []);
+
+  const updateProject = useCallback<Store["updateProject"]>(
+    (id, patch) => patchProject(id, (p) => ({ ...p, ...patch })),
+    [patchProject],
+  );
+
+  const addTask = useCallback<Store["addTask"]>(
+    (projectId, t) =>
+      patchProject(projectId, (p) => ({
+        ...p,
+        tarefas: [...p.tarefas, { ...t, id: `T${p.tarefas.length + 1}-${Math.floor(Math.random() * 900 + 100)}` }],
+      })),
+    [patchProject],
+  );
+
+  const updateTask = useCallback<Store["updateTask"]>(
+    (projectId, taskId, patch) =>
+      patchProject(projectId, (p) => ({
+        ...p,
+        tarefas: p.tarefas.map((t) => (t.id === taskId ? { ...t, ...patch } : t)),
+      })),
+    [patchProject],
+  );
+
+  const removeTask = useCallback<Store["removeTask"]>(
+    (projectId, taskId) =>
+      patchProject(projectId, (p) => ({
+        ...p,
+        tarefas: p.tarefas
+          .filter((t) => t.id !== taskId && t.paiId !== taskId)
+          .map((t) => ({
+            ...t,
+            predecessoras: (t.predecessoras ?? []).filter((x) => x !== taskId),
+          })),
+      })),
+    [patchProject],
+  );
+
+  const addProjectUpdate = useCallback<Store["addProjectUpdate"]>(
+    (projectId, u) =>
+      patchProject(projectId, (p) => ({
+        ...p,
+        atualizacoes: [
+          { ...u, id: `UPD-${Math.floor(1000 + Math.random() * 8999)}` },
+          ...(p.atualizacoes ?? []),
+        ],
+      })),
+    [patchProject],
+  );
+
+  const addRisk = useCallback<Store["addRisk"]>(
+    (projectId, r) =>
+      patchProject(projectId, (p) => ({
+        ...p,
+        riscos: [{ ...r, id: `RSK-${Math.floor(100 + Math.random() * 899)}` }, ...(p.riscos ?? [])],
+      })),
+    [patchProject],
+  );
+
+  const addAttention = useCallback<Store["addAttention"]>(
+    (projectId, a) =>
+      patchProject(projectId, (p) => ({
+        ...p,
+        atencoes: [
+          {
+            ...a,
+            id: `ATN-${Math.floor(100 + Math.random() * 899)}`,
+            criadoEm: new Date().toISOString(),
+            status: "aberto",
+          },
+          ...(p.atencoes ?? []),
+        ],
+      })),
+    [patchProject],
+  );
+
+  const resolveAttention = useCallback<Store["resolveAttention"]>(
+    (projectId, attentionId) =>
+      patchProject(projectId, (p) => ({
+        ...p,
+        atencoes: (p.atencoes ?? []).map((a) =>
+          a.id === attentionId ? { ...a, status: "resolvido" as const } : a,
+        ),
+      })),
+    [patchProject],
+  );
+
   const reset = useCallback(() => setState(initial), []);
 
   const value = useMemo<Store>(
-    () => ({ ...state, createTicket, updateTicket, addArticle, reset }),
-    [state, createTicket, updateTicket, addArticle, reset],
+    () => ({
+      ...state,
+      createTicket,
+      updateTicket,
+      addArticle,
+      setRole,
+      createProject,
+      updateProject,
+      addTask,
+      updateTask,
+      removeTask,
+      addProjectUpdate,
+      addRisk,
+      addAttention,
+      resolveAttention,
+      reset,
+    }),
+    [
+      state,
+      createTicket,
+      updateTicket,
+      addArticle,
+      setRole,
+      createProject,
+      updateProject,
+      addTask,
+      updateTask,
+      removeTask,
+      addProjectUpdate,
+      addRisk,
+      addAttention,
+      resolveAttention,
+      reset,
+    ],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
