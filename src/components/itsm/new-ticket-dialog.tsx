@@ -25,6 +25,7 @@ import { useItsm } from "@/lib/itsm-store";
 import {
   PRIORITY_LABEL,
   TYPE_LABEL,
+  requiresSystem,
   resolvePriority,
   type Impact,
   type RecordType,
@@ -42,16 +43,22 @@ export function NewTicketDialog() {
   const [descricao, setDescricao] = useState("");
   const [tipo, setTipo] = useState<RecordType>("incidente");
   const [servico, setServico] = useState(services[0]?.nome ?? "");
+  const [sistema, setSistema] = useState("");
   const [impacto, setImpacto] = useState<Impact>("medio");
   const [urgencia, setUrgencia] = useState<Urgency>("media");
   const [solicitante, setSolicitante] = useState("");
 
   const prioridade = resolvePriority(impacto, urgencia);
   const categoria = services.find((s) => s.nome === servico)?.categoria ?? "Geral";
+  const sistemaObrigatorio = requiresSystem(tipo);
 
   function submit() {
     if (titulo.trim().length < 5) {
       toast.error("Descreva o título com pelo menos 5 caracteres.");
+      return;
+    }
+    if (sistemaObrigatorio && sistema.trim().length < 2) {
+      toast.error(`Informe o nome do sistema para ${TYPE_LABEL[tipo].toLowerCase()}.`);
       return;
     }
     const ticket = createTicket({
@@ -60,6 +67,7 @@ export function NewTicketDialog() {
       tipo,
       categoria,
       servico,
+      sistema: sistemaObrigatorio ? sistema.trim().slice(0, 80) : undefined,
       impacto,
       urgencia,
       solicitante: solicitante.trim().slice(0, 80) || "Usuário do portal",
@@ -72,6 +80,7 @@ export function NewTicketDialog() {
     setTitulo("");
     setDescricao("");
     setSolicitante("");
+    setSistema("");
   }
 
   return (
@@ -91,6 +100,37 @@ export function NewTicketDialog() {
         </DialogHeader>
 
         <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label>Classificação</Label>
+            <Select value={tipo} onValueChange={(v) => setTipo(v as RecordType)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {USER_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {TYPE_LABEL[t]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {sistemaObrigatorio && (
+            <div className="grid gap-2">
+              <Label htmlFor="sistema">
+                Sistema <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="sistema"
+                maxLength={80}
+                value={sistema}
+                onChange={(e) => setSistema(e.target.value)}
+                placeholder="Ex.: ERP TOTVS, Portal RH, Active Directory"
+              />
+            </div>
+          )}
+
           <div className="grid gap-2">
             <Label htmlFor="titulo">Título</Label>
             <Input
@@ -115,22 +155,6 @@ export function NewTicketDialog() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>Classificação</Label>
-              <Select value={tipo} onValueChange={(v) => setTipo(v as RecordType)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {USER_TYPES.map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {TYPE_LABEL[t]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
             <div className="grid gap-2">
               <Label>Serviço do catálogo</Label>
               <Select value={servico} onValueChange={setServico}>
