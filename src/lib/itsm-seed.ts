@@ -295,7 +295,7 @@ export const SEED_ARTICLES: Article[] = [
   },
 ];
 
-export const SEED_PROJECTS: Project[] = [
+const BASE_PROJECTS: Project[] = [
   {
     id: "PRJ-01",
     nome: "Implantação da Central Única de Chamados",
@@ -433,3 +433,59 @@ export const SEED_PROJECTS: Project[] = [
     ],
   },
 ];
+const d = (offsetDays: number) => new Date(now + offsetDays * 86_400_000).toISOString();
+
+// Enriquecimento: predecessoras em cadeia, múltiplos responsáveis, atualizações,
+// riscos e pontos de atenção — base para os semáforos de governança.
+export const SEED_PROJECTS: Project[] = BASE_PROJECTS.map((p, pi) => ({
+  ...p,
+  tarefas: p.tarefas.map((t, i) => ({
+    ...t,
+    responsaveis: [t.responsavel],
+    predecessoras: i > 0 ? [p.tarefas[i - 1]!.id] : [],
+    duracaoUnidade: "dias" as const,
+    atividade: t.marco ? "Marco de aprovação" : "Execução",
+  })),
+  atualizacoes:
+    pi === 2
+      ? []
+      : [
+          {
+            id: `UPD-${p.id}-1`,
+            data: d(pi === 1 ? -9 : -3),
+            autor: p.gerente,
+            descricao:
+              "Frente em andamento conforme cronograma acordado com as áreas envolvidas.",
+            ultimasEntregas: "Diagnóstico consolidado e alinhamento com as áreas de negócio.",
+            proximasEntregas: "Configuração do ambiente e validação com usuários-chave.",
+          },
+        ],
+  riscos:
+    pi === 2
+      ? []
+      : [
+          {
+            id: `RSK-${p.id}-1`,
+            descricao: "Baixa disponibilidade das áreas de negócio para validação.",
+            probabilidade: "media" as const,
+            impacto: "alto" as const,
+            mitigacao: "Agenda fixa semanal com os key users e escalonamento ao sponsor.",
+            status: "monitorado" as const,
+          },
+        ],
+  atencoes:
+    pi === 2
+      ? [
+          {
+            id: `ATN-${p.id}-1`,
+            titulo: "Definição de responsável pela análise de causa raiz",
+            descricao:
+              "Sem responsável dedicado, a fila de problemas não avança e as recorrências continuam.",
+            decisaoNecessaria: "Alocar analista dedicado ou contratar apoio externo.",
+            responsavelDecisao: "Gerência de TI",
+            criadoEm: d(-5),
+            status: "aberto" as const,
+          },
+        ]
+      : [],
+}));
