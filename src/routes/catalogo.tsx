@@ -7,13 +7,13 @@ import { useItsm } from "@/lib/itsm-store";
 export const Route = createFileRoute("/catalogo")({
   head: () => ({
     meta: [
-      { title: "Catálogo de serviços de TI · GovTI" },
+      { title: "Catálogo de serviços de TI · YpperConnect" },
       {
         name: "description",
         content:
           "Catálogo inicial de serviços de TI com categoria, classificação padrão, SLA e equipe responsável por cada serviço.",
       },
-      { property: "og:title", content: "Catálogo de serviços de TI · GovTI" },
+      { property: "og:title", content: "Catálogo de serviços de TI · YpperConnect" },
       {
         property: "og:description",
         content: "Serviços padronizados de TI com SLA e responsabilidades definidas.",

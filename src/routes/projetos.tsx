@@ -28,13 +28,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/projetos")({
   head: () => ({
     meta: [
-      { title: "Projetos e cronograma · GovTI" },
+      { title: "Projetos e cronograma · YpperConnect" },
       {
         name: "description",
         content:
           "Portfólio de projetos de TI com semáforo de saúde, gerente responsável, atualização semanal e progresso do cronograma.",
       },
-      { property: "og:title", content: "Projetos e cronograma · GovTI" },
+      { property: "og:title", content: "Projetos e cronograma · YpperConnect" },
       {
         property: "og:description",
         content: "Portfólio de projetos de TI com semáforo de saúde e progresso do cronograma.",

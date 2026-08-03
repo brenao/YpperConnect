@@ -35,13 +35,13 @@ import { useHydrated } from "@/hooks/use-hydrated";
 export const Route = createFileRoute("/chamados")({
   head: () => ({
     meta: [
-      { title: "Chamados · GovTI" },
+      { title: "Chamados · YpperConnect" },
       {
         name: "description",
         content:
           "Fila única de incidentes, requisições, melhorias, problemas e tarefas com prioridade, status e SLA padronizados.",
       },
-      { property: "og:title", content: "Chamados · GovTI" },
+      { property: "og:title", content: "Chamados · YpperConnect" },
       {
         property: "og:description",
         content: "Fila única de atendimento de TI com classificação ITIL e controle de SLA.",

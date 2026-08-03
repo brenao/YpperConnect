@@ -15,13 +15,13 @@ import {
 export const Route = createFileRoute("/governanca")({
   head: () => ({
     meta: [
-      { title: "Governança ITIL · GovTI" },
+      { title: "Governança ITIL · YpperConnect" },
       {
         name: "description",
         content:
           "Matriz de prioridade por impacto e urgência, definições de classificação, SLAs e fluxo de incidentes críticos.",
       },
-      { property: "og:title", content: "Governança ITIL · GovTI" },
+      { property: "og:title", content: "Governança ITIL · YpperConnect" },
       {
         property: "og:description",
         content: "Matriz de prioridade, classificações padronizadas e fluxo de incidentes críticos.",
