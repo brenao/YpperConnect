@@ -392,20 +392,30 @@ export function TaskDialog({
           </div>
           {candidatas.length > 0 && (
             <div className="grid gap-2">
-              <Label>Predecessoras</Label>
-              <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border border-border p-3">
-                {candidatas.map((t) => (
-                  <label key={t.id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={preds.includes(t.id)}
-                      onCheckedChange={(c) =>
-                        setPreds((prev) => (c ? [...prev, t.id] : prev.filter((x) => x !== t.id)))
-                      }
-                    />
-                    <span className="truncate">{t.nome}</span>
-                  </label>
-                ))}
-              </div>
+              <Label htmlFor="t-preds">Predecessoras (números das tarefas, separados por vírgula)</Label>
+              <Input
+                id="t-preds"
+                value={predsTexto}
+                onChange={(e) => setPredsTexto(e.target.value)}
+                placeholder="Ex.: 2, 5, 7"
+                className={predsInvalidas.length ? "border-destructive" : undefined}
+              />
+              {predsInvalidas.length ? (
+                <p className="text-[11px] text-destructive">
+                  Número(s) inexistente(s) ou inválido(s): {predsInvalidas.join(", ")}
+                </p>
+              ) : predsIds.length ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Após:{" "}
+                  {predsIds
+                    .map((id) => `${numeroPorId.get(id)}. ${project.tarefas.find((x) => x.id === id)?.nome ?? id}`)
+                    .join(" · ")}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  Use a coluna <strong>#</strong> do cronograma para identificar o número de cada tarefa.
+                </p>
+              )}
             </div>
           )}
           <label className="flex items-center gap-2 text-sm">
