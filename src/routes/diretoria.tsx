@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
+import type { DateRange } from "react-day-picker";
 import {
   CartesianGrid,
   Legend,
@@ -11,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { AppShell } from "@/components/itsm/app-shell";
+import { DateRangePicker } from "@/components/itsm/date-range-picker";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
@@ -76,6 +78,14 @@ function Diretoria() {
   const [busca, setBusca] = useState("");
   const [gp, setGp] = useState("todos");
   const [status, setStatus] = useState<"todos" | ProjectStatus>("todos");
+  const [periodo, setPeriodo] = useState<DateRange | undefined>(undefined);
+
+  const inicioMs = periodo?.from ? new Date(periodo.from).setHours(0, 0, 0, 0) : null;
+  const fimMs = periodo?.to
+    ? new Date(periodo.to).setHours(23, 59, 59, 999)
+    : periodo?.from
+      ? new Date(periodo.from).setHours(23, 59, 59, 999)
+      : null;
 
   const gerentes = useMemo(
     () => Array.from(new Set(projects.map((p) => p.gerente))).sort(),
@@ -88,9 +98,13 @@ function Diretoria() {
         (p) =>
           (gp === "todos" || p.gerente === gp) &&
           (status === "todos" || p.status === status) &&
-          p.nome.toLowerCase().includes(busca.trim().toLowerCase()),
+          p.nome.toLowerCase().includes(busca.trim().toLowerCase()) &&
+          (inicioMs === null ||
+            fimMs === null ||
+            // projeto ativo em qualquer momento dentro do período informado
+            (parseDate(p.inicio) <= fimMs && parseDate(p.fim) >= inicioMs)),
       ),
-    [projects, gp, status, busca],
+    [projects, gp, status, busca, inicioMs, fimMs],
   );
 
   const emExecucao = filtrados.filter((p) => p.status === "execucao").length;
@@ -99,12 +113,20 @@ function Diretoria() {
   const concluidos = filtrados.filter((p) => p.status === "concluido").length;
 
   const porPrioridade = useMemo(() => {
-    const abertos = tickets.filter((t) => t.status !== "fechado" && t.status !== "resolvido");
+    const abertos = tickets.filter(
+      (t) =>
+        t.status !== "fechado" &&
+        t.status !== "resolvido" &&
+        (inicioMs === null ||
+          fimMs === null ||
+          (new Date(t.criadoEm).getTime() >= inicioMs &&
+            new Date(t.criadoEm).getTime() <= fimMs)),
+    );
     return (["P1", "P2", "P3", "P4"] as Priority[]).map((p) => ({
       prioridade: p,
       total: abertos.filter((t) => t.prioridade === p).length,
     }));
-  }, [tickets]);
+  }, [tickets, inicioMs, fimMs]);
 
   const porResponsavel = useMemo(() => {
     const map = new Map<string, number>();
@@ -114,13 +136,19 @@ function Diretoria() {
 
   // Gráfico de baleia: 3 meses entregues + 6 meses previstos, com curva acumulada.
   const baleia = useMemo(() => {
-    const base = new Date();
-    base.setDate(1);
     const meses: { mes: string; acumulado: number }[] = [];
     let acumulado = 0;
-    for (let i = -3; i <= 6; i++) {
-      const ini = new Date(base.getFullYear(), base.getMonth() + i, 1).getTime();
-      const fim = new Date(base.getFullYear(), base.getMonth() + i + 1, 1).getTime();
+    const hoje = new Date();
+    const primeiro =
+      inicioMs !== null ? new Date(inicioMs) : new Date(hoje.getFullYear(), hoje.getMonth() - 3, 1);
+    const ultimo =
+      fimMs !== null ? new Date(fimMs) : new Date(hoje.getFullYear(), hoje.getMonth() + 6, 1);
+    const totalMeses =
+      (ultimo.getFullYear() - primeiro.getFullYear()) * 12 +
+      (ultimo.getMonth() - primeiro.getMonth());
+    for (let i = 0; i <= Math.max(totalMeses, 0); i++) {
+      const ini = new Date(primeiro.getFullYear(), primeiro.getMonth() + i, 1).getTime();
+      const fim = new Date(primeiro.getFullYear(), primeiro.getMonth() + i + 1, 1).getTime();
       const doMes = filtrados.filter((p) => {
         const f = parseDate(p.fim);
         return f >= ini && f < fim && p.status !== "cancelado";
@@ -129,18 +157,23 @@ function Diretoria() {
       meses.push({ mes: MES(new Date(ini)), acumulado });
     }
     return meses;
-  }, [filtrados]);
+  }, [filtrados, inicioMs, fimMs]);
 
   return (
     <AppShell
       title="Visão diretoria"
       subtitle="Panorama executivo do portfólio de projetos e da operação de atendimento"
     >
-      <div className="grid gap-3 md:grid-cols-[1fr_200px_200px]">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_260px_200px_200px]">
         <Input
           placeholder="Filtrar por nome do projeto..."
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
+        />
+        <DateRangePicker
+          value={periodo}
+          onChange={setPeriodo}
+          placeholder="Período (início → fim)"
         />
         <Select value={gp} onValueChange={setGp}>
           <SelectTrigger>
@@ -198,7 +231,7 @@ function Diretoria() {
       <div className="glass-panel mt-6 rounded-2xl border border-border/60 p-5">
         <h3 className="font-semibold">Curva de entregas (baleia)</h3>
         <p className="text-sm text-muted-foreground">
-          Acumulado de projetos entregues e previstos, mês a mês (3 meses passados e 6 futuros).
+          Acumulado de projetos entregues e previstos, mês a mês, dentro do período selecionado.
         </p>
         <div className="mt-4 h-80">
           <ResponsiveContainer width="100%" height="100%">
