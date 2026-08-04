@@ -87,10 +87,6 @@ const praticas = [
   },
 ];
 
-const fluxoP1 = [
-  "Detecção e registro imediato como Incidente P1",
-] as string[];
-
 const slaPrioridades: Priority[] = ["P1", "P2", "P3", "P4"];
 const slaTipos: RecordType[] = ["incidente", "requisicao", "tarefa", "problema", "melhoria"];
 
@@ -103,7 +99,7 @@ const regrasSla = [
   "Reclassificação de prioridade recalcula os prazos a partir da data original do registro.",
 ];
 
-const fluxoP1Steps = [
+const fluxoP1 = [
   "Detecção e registro imediato como Incidente P1",
   "Acionamento da ponte de crise e do gestor de plantão",
   "Comunicação às áreas impactadas a cada 30 minutos",
