@@ -75,11 +75,35 @@ function Kpi({
   hint?: string | undefined;
 }) {
   return (
-    <div className="glass-panel rounded-2xl border border-border/60 p-5">
-      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
-      <p className={cn("mt-2 text-3xl font-semibold", tone)}>{value}</p>
-      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+    <div className="glass-panel rounded-xl border border-border/50 p-4">
+      <span className="line-clamp-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <p className={cn("mt-1.5 text-2xl font-semibold tabular-nums", tone)}>{value}</p>
+      {hint ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
     </div>
+  );
+}
+
+function Panel({
+  title,
+  description,
+  children,
+  className,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("glass-panel rounded-2xl border border-border/60 p-5", className)}>
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {description ? (
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      ) : null}
+      <div className="mt-4">{children}</div>
+    </section>
   );
 }
 
