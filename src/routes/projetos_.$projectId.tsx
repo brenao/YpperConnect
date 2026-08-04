@@ -38,6 +38,14 @@ import {
   taskDurationDays,
   taskDurationLabel,
 } from "@/lib/project-utils";
+import {
+  durationWithResources,
+  effectiveDurationDays,
+  findResource,
+  portfolioLoad,
+  taskAllocation,
+  taskResponsibles,
+} from "@/lib/resource-utils";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/projetos_/$projectId")({
@@ -72,9 +80,16 @@ function Semaforo({ tone, label }: { tone: "verde" | "amarelo" | "vermelho"; lab
 
 function Gantt({ project }: { project: Project }) {
   const hydrated = useHydrated();
-  const cpm = useMemo(() => criticalPath(project), [project]);
+  const { resources, projects } = useItsm();
+  const cpm = useMemo(
+    () => criticalPath(project, durationWithResources(resources, projects)),
+    [project, resources, projects],
+  );
   const start = Math.min(parseDate(project.inicio), ...project.tarefas.map((t) => parseDate(t.inicio)));
-  const end = Math.max(parseDate(project.fim), ...project.tarefas.map((t) => parseDate(t.fim)));
+  const end = Math.max(
+    parseDate(project.fim),
+    ...project.tarefas.map((t) => cpm.get(t.id)?.ef ?? parseDate(t.fim)),
+  );
   const span = Math.max(end - start, 1);
   const hojePct = ((Date.now() - start) / span) * 100;
 
@@ -96,8 +111,10 @@ function Gantt({ project }: { project: Project }) {
       ) : null}
       {project.tarefas.map((t) => {
         const sched = cpm.get(t.id);
-        const left = ((parseDate(t.inicio) - start) / span) * 100;
-        const width = Math.max(((parseDate(t.fim) - parseDate(t.inicio)) / span) * 100, 1.5);
+        const ini = sched?.es ?? parseDate(t.inicio);
+        const fim = sched?.ef ?? parseDate(t.fim);
+        const left = ((ini - start) / span) * 100;
+        const width = Math.max(((fim - ini) / span) * 100, 1.5);
         const critica = sched?.critica;
         return (
           <div key={t.id} className="flex items-center gap-3 text-sm">
@@ -109,7 +126,8 @@ function Gantt({ project }: { project: Project }) {
                 <span className="truncate">{t.nome}</span>
               </div>
               <span className="text-[11px] text-muted-foreground">
-                {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)}
+                {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
+                {taskAllocation(t)}% alocado
               </span>
             </div>
             <div className="relative h-7 flex-1 rounded-md bg-muted/40">
@@ -131,7 +149,7 @@ function Gantt({ project }: { project: Project }) {
               </div>
             </div>
             <span className="w-28 shrink-0 text-right text-[11px] text-muted-foreground">
-              {fmtDate(t.inicio)} — {fmtDate(t.fim)}
+              {fmtDate(toISODate(ini))} — {fmtDate(toISODate(fim))}
             </span>
             <span className="w-10 shrink-0 text-right text-xs">{t.progresso}%</span>
           </div>
