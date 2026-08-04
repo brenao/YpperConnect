@@ -231,7 +231,7 @@ function Diretoria() {
       <div className="glass-panel mt-6 rounded-2xl border border-border/60 p-5">
         <h3 className="font-semibold">Curva de entregas (baleia)</h3>
         <p className="text-sm text-muted-foreground">
-          Acumulado de projetos entregues e previstos, mês a mês (3 meses passados e 6 futuros).
+          Acumulado de projetos entregues e previstos, mês a mês, dentro do período selecionado.
         </p>
         <div className="mt-4 h-80">
           <ResponsiveContainer width="100%" height="100%">
