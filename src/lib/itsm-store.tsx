@@ -267,6 +267,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       resolveAttention,
       reset,
     }),
+    // deps
     [
       state,
       createTicket,
