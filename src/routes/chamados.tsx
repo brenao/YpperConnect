@@ -4,6 +4,7 @@ import { Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/itsm/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/components/itsm/badges";
+import { SlaPanel } from "@/components/itsm/sla-panel";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
