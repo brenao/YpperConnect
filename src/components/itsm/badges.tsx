@@ -4,8 +4,11 @@ import {
   PRIORITY_LABEL,
   STATUS_LABEL,
   TYPE_LABEL,
+  evaluateSla,
+  formatSlaHoras,
   type Priority,
   type RecordType,
+  type Ticket,
   type TicketStatus,
 } from "@/lib/itsm-types";
 
@@ -73,31 +76,34 @@ export function StatusBadge({ value }: { value: TicketStatus }) {
   );
 }
 
-export function SlaPill({ prazo, status }: { prazo: string; status: TicketStatus }) {
+export function SlaPill({ ticket }: { ticket: Ticket }) {
   const hydrated = useHydrated();
-  const done = status === "resolvido" || status === "fechado";
-  const diff = new Date(prazo).getTime() - Date.now();
-  const hours = diff / 3600_000;
-  const label = done
-    ? "Dentro do SLA"
-    : hours < 0
-      ? `Vencido há ${Math.abs(Math.round(hours))}h`
-      : hours < 24
-        ? `${Math.max(1, Math.round(hours))}h restantes`
-        : `${Math.round(hours / 24)}d restantes`;
   if (!hydrated) return <span className="font-mono text-xs text-muted-foreground">—</span>;
+
+  const { estado, restanteHoras, meta, respostaAtrasada } = evaluateSla(ticket);
+  const restante = Math.abs(restanteHoras);
+  const tempo =
+    restante < 24 ? `${Math.max(1, Math.round(restante))}h` : `${Math.round(restante / 24)}d`;
+  const label =
+    estado === "atendido"
+      ? "Dentro do SLA"
+      : estado === "estourado"
+        ? `SLA vencido há ${tempo}`
+        : respostaAtrasada
+          ? "Resposta em atraso"
+          : `${tempo} restantes`;
+  const tone =
+    estado === "atendido"
+      ? "text-success"
+      : estado === "estourado"
+        ? "text-destructive"
+        : estado === "em_risco"
+          ? "text-warning"
+          : "text-muted-foreground";
   return (
     <span
-      className={cn(
-        "font-mono text-xs",
-        done
-          ? "text-success"
-          : hours < 0
-            ? "text-destructive"
-            : hours < 8
-              ? "text-warning"
-              : "text-muted-foreground",
-      )}
+      className={cn("font-mono text-xs", tone)}
+      title={`Meta ${formatSlaHoras(meta.resposta)} resposta · ${formatSlaHoras(meta.solucao)} solução`}
     >
       {label}
     </span>
