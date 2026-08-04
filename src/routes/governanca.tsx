@@ -91,7 +91,7 @@ const slaPrioridades: Priority[] = ["P1", "P2", "P3", "P4"];
 const slaTipos: RecordType[] = ["incidente", "requisicao", "tarefa", "problema", "melhoria"];
 
 const regrasSla = [
-  "O relógio inicia no registro do chamado e é pausado no status Aguardando terceiros.",
+  "O relógio inicia no registro do chamado e segue contando até a resolução, inclusive em Aguardando terceiros.",
   "Incidentes P1 seguem regime 24×7; demais classificações contam horas corridas.",
   "Chamado sem primeiro retorno dentro do prazo de resposta entra automaticamente em risco (amarelo).",
   "Ao ultrapassar 75% do prazo de solução o chamado é sinalizado em risco; após o vencimento, vermelho.",
