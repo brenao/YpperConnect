@@ -529,6 +529,104 @@ function ProjetoDetalhe() {
           </div>
         </TabsContent>
 
+        <TabsContent value="recursos">
+          <div className="glass-panel rounded-2xl border border-border/60 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-semibold">Capacidade e ritmo real</h3>
+              <span
+                className={cn(
+                  "text-xs",
+                  desvioDias > 0 ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                Previsão com disponibilidade: {fmtDateFull(toISODate(previsaoFim))}
+                {desvioDias > 0 ? ` · ${desvioDias} dia(s) além do planejado` : " · dentro do plano"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              A duração real considera o percentual do dia que cada pessoa tem para projetos e a
+              concorrência com tarefas de outros projetos do portfólio.
+            </p>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b border-border/60">
+                    <th className="py-2 text-left">Tarefa</th>
+                    <th className="py-2 text-left">Responsáveis</th>
+                    <th className="py-2 text-left">Alocação</th>
+                    <th className="py-2 text-left">Duração planejada</th>
+                    <th className="py-2 text-left">Duração real</th>
+                    <th className="py-2 text-left">Término previsto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {project.tarefas.map((t) => {
+                    const real = effectiveDurationDays(t, resources, projects);
+                    const plano = taskDurationDays(t);
+                    return (
+                      <tr key={t.id} className="border-b border-border/40">
+                        <td className="py-2">{t.nome}</td>
+                        <td className="py-2 text-muted-foreground">{taskResponsibles(t).join(", ")}</td>
+                        <td className="py-2 text-muted-foreground">{taskAllocation(t)}%</td>
+                        <td className="py-2 text-muted-foreground">{Math.round(plano)} d</td>
+                        <td className={cn("py-2", real > plano * 1.2 && "text-warning")}>
+                          {Math.ceil(real)} d
+                        </td>
+                        <td className="py-2 text-muted-foreground">
+                          {fmtDate(toISODate(cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {!project.tarefas.length ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  Cadastre tarefas para simular a capacidade da equipe.
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {cargas.map((c) => (
+              <div
+                key={c.recurso.id}
+                className={cn(
+                  "glass-panel rounded-2xl border p-5",
+                  c.conflito ? "border-destructive/50" : "border-border/60",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-medium">{c.recurso.nome}</h4>
+                    <p className="text-xs text-muted-foreground">
+                      {c.recurso.disponibilidadeProjetos}% do dia para projetos ·{" "}
+                      {c.capacidadeHoras.toFixed(1)}h/dia
+                    </p>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={c.conflito ? HEALTH_CLASS.vermelho : HEALTH_CLASS.verde}
+                  >
+                    {Math.round(c.demandaPct)}% alocado
+                  </Badge>
+                </div>
+                <Progress value={Math.min(c.demandaPct, 100)} className="mt-3 h-1.5" />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Atua em {c.projetos.length} projeto(s): {c.projetos.join(", ") || "—"}
+                </p>
+              </div>
+            ))}
+            {semCadastro.length ? (
+              <p className="text-sm text-warning">
+                Sem cadastro de recurso: {semCadastro.join(", ")} — considerados 100% disponíveis até
+                serem cadastrados em Recursos e capacidade.
+              </p>
+            ) : null}
+          </div>
+        </TabsContent>
+
         <TabsContent value="atualizacoes">
           <div className="space-y-3">
             {(project.atualizacoes ?? []).map((u) => (
