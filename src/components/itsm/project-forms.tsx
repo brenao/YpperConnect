@@ -145,10 +145,13 @@ export function TaskDialog({
   project,
   task,
   trigger,
+  afterTask,
 }: {
   project: Project;
   task?: ProjectTask;
   trigger: React.ReactNode;
+  /** Quando informado, a nova tarefa é inserida logo abaixo desta. */
+  afterTask?: ProjectTask;
 }) {
   const { addTask, updateTask, resources, projects } = useItsm();
   const [open, setOpen] = useState(false);
@@ -159,7 +162,8 @@ export function TaskDialog({
   const [unidade, setUnidade] = useState<"dias" | "horas">(task?.duracaoUnidade ?? "dias");
   const [progresso, setProgresso] = useState(String(task?.progresso ?? 0));
   const [responsaveis, setResponsaveis] = useState((task?.responsaveis ?? [task?.responsavel ?? ""]).join(", "));
-  const [paiId, setPaiId] = useState(task?.paiId ?? "");
+  const [paiId, setPaiId] = useState(task?.paiId ?? afterTask?.paiId ?? "");
+  const [filhaDaAcima, setFilhaDaAcima] = useState(false);
   const [preds, setPreds] = useState<string[]>(task?.predecessoras ?? []);
   const [marco, setMarco] = useState(Boolean(task?.marco));
   const [alocacao, setAlocacao] = useState(String(task?.alocacaoPct ?? 100));
@@ -195,6 +199,7 @@ export function TaskDialog({
       .filter(Boolean);
     if (!pessoas.length) { toast.error("Atribua a tarefa a pelo menos uma pessoa."); return; }
 
+    const paiFinal = !task && afterTask && filhaDaAcima ? afterTask.id : paiId || undefined;
     const payload = {
       nome: nome.trim().slice(0, 120),
       atividade: atividade.trim().slice(0, 80),
@@ -206,13 +211,13 @@ export function TaskDialog({
       responsavel: pessoas[0]!,
       responsaveis: pessoas,
       predecessoras: preds,
-      paiId: paiId || undefined,
+      paiId: paiFinal,
       marco,
       alocacaoPct: alocNum,
     };
 
     if (task) updateTask(project.id, task.id, payload);
-    else addTask(project.id, payload);
+    else addTask(project.id, payload, afterTask?.id);
     toast.success(task ? "Tarefa atualizada" : "Tarefa adicionada");
     setOpen(false);
   }
@@ -224,11 +229,27 @@ export function TaskDialog({
         <DialogHeader>
           <DialogTitle>{task ? "Editar tarefa" : "Nova tarefa"}</DialogTitle>
           <DialogDescription>
-            Duração em dias ou horas, predecessoras e hierarquia (tarefa pai) alimentam o caminho
-            crítico.
+            {afterTask && !task
+              ? `Será inserida logo abaixo de "${afterTask.nome}". Duração, predecessoras e hierarquia alimentam o caminho crítico.`
+              : "Duração em dias ou horas, predecessoras e hierarquia (tarefa pai) alimentam o caminho crítico."}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
+          {afterTask && !task ? (
+            <label className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+              <Checkbox
+                checked={filhaDaAcima}
+                onCheckedChange={(c) => setFilhaDaAcima(Boolean(c))}
+                className="mt-0.5"
+              />
+              <span>
+                Criar como subtarefa de <span className="font-medium">{afterTask.nome}</span>
+                <span className="block text-xs text-muted-foreground">
+                  Deixe desmarcado para criar no mesmo nível da tarefa acima.
+                </span>
+              </span>
+            </label>
+          ) : null}
           <div className="grid gap-2">
             <Label htmlFor="t-nome">Nome da tarefa</Label>
             <Input id="t-nome" value={nome} maxLength={120} onChange={(e) => setNome(e.target.value)} />
