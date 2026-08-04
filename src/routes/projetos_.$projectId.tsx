@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/itsm/app-shell";
 import {
@@ -9,6 +10,7 @@ import {
   TaskDialog,
   WeeklyUpdateDialog,
 } from "@/components/itsm/project-forms";
+import { ProjectKanban } from "@/components/itsm/project-kanban";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -83,8 +85,11 @@ function Gantt({ project }: { project: Project }) {
   const hydrated = useHydrated();
   const { resources, projects } = useItsm();
   const cpm = useMemo(
-    () => criticalPath(project, durationWithResources(resources, projects)),
-    [project, resources, projects],
+    () =>
+      hydrated
+        ? criticalPath(project, durationWithResources(resources, projects))
+        : criticalPath(project),
+    [project, resources, projects, hydrated],
   );
   const start = Math.min(parseDate(project.inicio), ...project.tarefas.map((t) => parseDate(t.inicio)));
   const end = Math.max(
@@ -119,7 +124,22 @@ function Gantt({ project }: { project: Project }) {
         const critica = sched?.critica;
         return (
           <div key={t.id} className="flex items-center gap-3 text-sm">
-            <div className="w-64 shrink-0" style={{ paddingLeft: t.paiId ? 16 : 0 }}>
+            <div className="flex w-64 shrink-0 items-start gap-1" style={{ paddingLeft: t.paiId ? 16 : 0 }}>
+              <TaskDialog
+                project={project}
+                afterTask={t}
+                trigger={
+                  <button
+                    type="button"
+                    title="Adicionar tarefa abaixo desta"
+                    aria-label={`Adicionar tarefa abaixo de ${t.nome}`}
+                    className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded border border-border/60 text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                }
+              />
+              <div className="min-w-0">
               <div className="flex items-center gap-2">
                 {critica ? (
                   <span className="h-1.5 w-1.5 rounded-full bg-destructive" title="Tarefa crítica" />
@@ -130,6 +150,7 @@ function Gantt({ project }: { project: Project }) {
                 {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
                 {taskAllocation(t)}% alocado
               </span>
+              </div>
             </div>
             <div className="relative h-7 flex-1 rounded-md bg-muted/40">
               <div
