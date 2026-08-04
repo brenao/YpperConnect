@@ -213,7 +213,7 @@ export function formatSlaHoras(horas: number): string {
   return `${Number.isInteger(dias) ? dias : dias.toFixed(1)}d`;
 }
 
-export type SlaState = "atendido" | "violado" | "no_prazo" | "em_risco" | "estourado";
+export type SlaState = "atendido" | "no_prazo" | "em_risco" | "estourado";
 
 export interface SlaEvaluation {
   estado: SlaState;
@@ -241,9 +241,7 @@ export function evaluateSla(ticket: Ticket, agora: number = Date.now()): SlaEval
       new Date(ticket.prazoResposta).getTime() < agora,
   );
   const estado: SlaState = encerrado
-    ? agora > prazo && !ticket.respondidoEm
-      ? "atendido"
-      : "atendido"
+    ? "atendido"
     : restanteHoras < 0
       ? "estourado"
       : consumo >= 75 || respostaAtrasada
