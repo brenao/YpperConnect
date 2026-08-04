@@ -1,4 +1,4 @@
-import type { Article, Project, ServiceItem, Ticket } from "./itsm-types";
+import type { Article, Project, Resource, ServiceItem, Ticket } from "./itsm-types";
 import { resolvePriority, slaFor } from "./itsm-types";
 
 const now = Date.now();
@@ -450,6 +450,7 @@ export const SEED_PROJECTS: Project[] = BASE_PROJECTS.map((p, pi) => ({
     responsaveis: [t.responsavel],
     predecessoras: i > 0 ? [p.tarefas[i - 1]!.id] : [],
     duracaoUnidade: "dias" as const,
+    alocacaoPct: t.marco ? 25 : 100,
     atividade: t.marco ? "Marco de aprovação" : "Execução",
   })),
   atualizacoes:
@@ -495,3 +496,11 @@ export const SEED_PROJECTS: Project[] = BASE_PROJECTS.map((p, pi) => ({
         ]
       : [],
 }));
+
+export const SEED_RESOURCES: Resource[] = [
+  { id: "RES-01", nome: "Rafael Lima", papel: "Analista de Sistemas Sênior", equipe: "Sustentação de Sistemas", horasDia: 8, disponibilidadeProjetos: 80 },
+  { id: "RES-02", nome: "Bruna Sato", papel: "Analista de Infraestrutura", equipe: "Infraestrutura", horasDia: 8, disponibilidadeProjetos: 70 },
+  { id: "RES-03", nome: "João Vitor", papel: "Analista de Service Desk", equipe: "Service Desk", horasDia: 8, disponibilidadeProjetos: 50 },
+  { id: "RES-04", nome: "Patrícia Nunes", papel: "Analista de Processos", equipe: "Governança de TI", horasDia: 8, disponibilidadeProjetos: 70 },
+  { id: "RES-05", nome: "Tiago Mendes", papel: "Especialista em Dados", equipe: "Dados e BI", horasDia: 8, disponibilidadeProjetos: 60 },
+];

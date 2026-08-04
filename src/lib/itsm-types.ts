@@ -78,6 +78,23 @@ export interface ProjectTask {
   duracao?: number | undefined;
   duracaoUnidade?: "dias" | "horas" | undefined;
   atividade?: string | undefined;
+  /**
+   * Percentual da capacidade de projetos do(s) responsável(is) dedicada a esta
+   * tarefa (100 = dedicação integral da parcela disponível para projetos).
+   */
+  alocacaoPct?: number | undefined;
+}
+
+/** Recurso (pessoa) disponível para atuar em projetos. */
+export interface Resource {
+  id: string;
+  nome: string;
+  papel: string;
+  equipe: string;
+  /** Jornada diária em horas. */
+  horasDia: number;
+  /** Percentual do dia disponível para projetos (o restante é operação/chamados). */
+  disponibilidadeProjetos: number;
 }
 
 export type ProjectStatus =

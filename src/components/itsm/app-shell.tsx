@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Sparkles,
   PieChart,
+  Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import logo from "@/assets/ypperconnect-logo.png";
@@ -20,6 +21,7 @@ const nav = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
   { to: "/chamados", label: "Chamados", icon: Ticket },
   { to: "/projetos", label: "Projetos e cronograma", icon: GanttChartSquare },
+  { to: "/recursos", label: "Recursos e capacidade", icon: Users },
   { to: "/diretoria", label: "Visão diretoria", icon: PieChart },
   { to: "/catalogo", label: "Catálogo de serviços", icon: Boxes },
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },

@@ -29,6 +29,7 @@ import {
   type ProjectTask,
 } from "@/lib/itsm-types";
 import { toISODate } from "@/lib/project-utils";
+import { capacityHours, demandAt, findResource } from "@/lib/resource-utils";
 
 const hoje = () => toISODate(Date.now());
 const emDias = (n: number) => toISODate(Date.now() + n * 86_400_000);
@@ -149,7 +150,7 @@ export function TaskDialog({
   task?: ProjectTask;
   trigger: React.ReactNode;
 }) {
-  const { addTask, updateTask } = useItsm();
+  const { addTask, updateTask, resources, projects } = useItsm();
   const [open, setOpen] = useState(false);
   const [nome, setNome] = useState(task?.nome ?? "");
   const [atividade, setAtividade] = useState(task?.atividade ?? "Execução");
@@ -161,8 +162,26 @@ export function TaskDialog({
   const [paiId, setPaiId] = useState(task?.paiId ?? "");
   const [preds, setPreds] = useState<string[]>(task?.predecessoras ?? []);
   const [marco, setMarco] = useState(Boolean(task?.marco));
+  const [alocacao, setAlocacao] = useState(String(task?.alocacaoPct ?? 100));
 
   const candidatas = project.tarefas.filter((t) => t.id !== task?.id);
+
+  const pessoasSelecionadas = responsaveis
+    .split(",")
+    .map((r) => r.trim())
+    .filter(Boolean);
+  const alocNum = Math.max(5, Math.min(100, Number(alocacao) || 100));
+  const capacidade = pessoasSelecionadas.map((nome) => {
+    const r = findResource(resources, nome);
+    const jaAlocado = demandAt(nome, projects) - (task ? (task.alocacaoPct ?? 100) : 0);
+    return {
+      nome,
+      cadastrado: Boolean(r),
+      disponibilidade: r?.disponibilidadeProjetos ?? 100,
+      horasDia: r ? (capacityHours(r) * alocNum) / 100 : (8 * alocNum) / 100,
+      total: Math.max(jaAlocado, 0) + alocNum,
+    };
+  });
 
   function submit() {
     if (nome.trim().length < 3) { toast.error("Informe o nome da tarefa."); return; }
@@ -189,6 +208,7 @@ export function TaskDialog({
       predecessoras: preds,
       paiId: paiId || undefined,
       marco,
+      alocacaoPct: alocNum,
     };
 
     if (task) updateTask(project.id, task.id, payload);
@@ -280,6 +300,47 @@ export function TaskDialog({
               onChange={(e) => setResponsaveis(e.target.value)}
               placeholder="Rafael Lima, Bruna Sato"
             />
+            {resources.length ? (
+              <div className="flex flex-wrap gap-1">
+                {resources.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                    onClick={() =>
+                      setResponsaveis((prev) => {
+                        const atuais = prev.split(",").map((x) => x.trim()).filter(Boolean);
+                        return atuais.includes(r.nome)
+                          ? atuais.filter((x) => x !== r.nome).join(", ")
+                          : [...atuais, r.nome].join(", ");
+                      })
+                    }
+                  >
+                    {r.nome} · {r.disponibilidadeProjetos}%
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="t-aloc">% de alocação do recurso nesta tarefa</Label>
+            <Input
+              id="t-aloc"
+              type="number"
+              min={5}
+              max={100}
+              value={alocacao}
+              onChange={(e) => setAlocacao(e.target.value)}
+            />
+            <div className="space-y-1 text-[11px] text-muted-foreground">
+              {capacidade.map((c) => (
+                <p key={c.nome} className={c.total > 100 ? "text-destructive" : undefined}>
+                  {c.nome}: {c.cadastrado ? `${c.disponibilidade}% do dia para projetos` : "não cadastrado como recurso"} ·{" "}
+                  {c.horasDia.toFixed(1)}h/dia nesta tarefa · carga total no portfólio {Math.round(c.total)}%
+                  {c.total > 100 ? " (sobrealocado)" : ""}
+                </p>
+              ))}
+            </div>
           </div>
           {candidatas.length > 0 && (
             <div className="grid gap-2">

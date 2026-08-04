@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { SEED_ARTICLES, SEED_PROJECTS, SEED_SERVICES, SEED_TICKETS } from "./itsm-seed";
+import { SEED_ARTICLES, SEED_PROJECTS, SEED_RESOURCES, SEED_SERVICES, SEED_TICKETS } from "./itsm-seed";
 import type {
   Article,
   Project,
@@ -8,6 +8,7 @@ import type {
   ProjectRisk,
   ProjectTask,
   ProjectUpdate,
+  Resource,
   ServiceItem,
   Ticket,
   UserRole,
@@ -21,6 +22,7 @@ interface State {
   services: ServiceItem[];
   articles: Article[];
   projects: Project[];
+  resources: Resource[];
   role: UserRole;
 }
 
@@ -29,6 +31,7 @@ const initial: State = {
   services: SEED_SERVICES,
   articles: SEED_ARTICLES,
   projects: SEED_PROJECTS,
+  resources: SEED_RESOURCES,
   role: "ti",
 };
 
@@ -60,6 +63,9 @@ interface Store extends State {
   addRisk: (projectId: string, r: Omit<ProjectRisk, "id">) => void;
   addAttention: (projectId: string, a: Omit<ProjectAttention, "id" | "criadoEm" | "status">) => void;
   resolveAttention: (projectId: string, attentionId: string) => void;
+  addResource: (r: Omit<Resource, "id">) => void;
+  updateResource: (id: string, patch: Partial<Resource>) => void;
+  removeResource: (id: string) => void;
   reset: () => void;
 }
 
@@ -257,6 +263,27 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     [patchProject],
   );
 
+  const addResource = useCallback<Store["addResource"]>((r) => {
+    setState((s) => ({
+      ...s,
+      resources: [
+        ...s.resources,
+        { ...r, id: `RES-${Math.floor(10 + Math.random() * 89)}${s.resources.length}` },
+      ],
+    }));
+  }, []);
+
+  const updateResource = useCallback<Store["updateResource"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      resources: s.resources.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+    }));
+  }, []);
+
+  const removeResource = useCallback<Store["removeResource"]>((id) => {
+    setState((s) => ({ ...s, resources: s.resources.filter((r) => r.id !== id) }));
+  }, []);
+
   const reset = useCallback(() => setState(initial), []);
 
   const value = useMemo<Store>(
@@ -276,6 +303,9 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       addRisk,
       addAttention,
       resolveAttention,
+      addResource,
+      updateResource,
+      removeResource,
       reset,
     }),
     // deps
@@ -295,6 +325,9 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       addRisk,
       addAttention,
       resolveAttention,
+      addResource,
+      updateResource,
+      removeResource,
       reset,
     ],
   );

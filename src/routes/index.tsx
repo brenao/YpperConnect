@@ -19,6 +19,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { AppShell } from "@/components/itsm/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/components/itsm/badges";
 import { useItsm } from "@/lib/itsm-store";
@@ -89,10 +90,12 @@ function Kpi({
 
 function Dashboard() {
   const { tickets, articles, projects } = useItsm();
+  const hydrated = useHydrated();
 
   const abertos = tickets.filter((t) => t.status !== "resolvido" && t.status !== "fechado");
   const criticos = abertos.filter((t) => t.prioridade === "P1");
-  const vencidos = abertos.filter((t) => new Date(t.prazoSla).getTime() < Date.now());
+  const agora = hydrated ? Date.now() : 0;
+  const vencidos = agora ? abertos.filter((t) => new Date(t.prazoSla).getTime() < agora) : [];
   const aderencia = Math.round(((abertos.length - vencidos.length) / (abertos.length || 1)) * 100);
 
   const porPrioridade = (["P1", "P2", "P3", "P4"] as Priority[]).map((p) => ({

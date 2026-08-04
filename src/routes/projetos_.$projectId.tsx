@@ -37,7 +37,16 @@ import {
   projectProgress,
   taskDurationDays,
   taskDurationLabel,
+  toISODate,
 } from "@/lib/project-utils";
+import {
+  durationWithResources,
+  effectiveDurationDays,
+  findResource,
+  portfolioLoad,
+  taskAllocation,
+  taskResponsibles,
+} from "@/lib/resource-utils";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/projetos_/$projectId")({
@@ -72,9 +81,16 @@ function Semaforo({ tone, label }: { tone: "verde" | "amarelo" | "vermelho"; lab
 
 function Gantt({ project }: { project: Project }) {
   const hydrated = useHydrated();
-  const cpm = useMemo(() => criticalPath(project), [project]);
+  const { resources, projects } = useItsm();
+  const cpm = useMemo(
+    () => criticalPath(project, durationWithResources(resources, projects)),
+    [project, resources, projects],
+  );
   const start = Math.min(parseDate(project.inicio), ...project.tarefas.map((t) => parseDate(t.inicio)));
-  const end = Math.max(parseDate(project.fim), ...project.tarefas.map((t) => parseDate(t.fim)));
+  const end = Math.max(
+    parseDate(project.fim),
+    ...project.tarefas.map((t) => cpm.get(t.id)?.ef ?? parseDate(t.fim)),
+  );
   const span = Math.max(end - start, 1);
   const hojePct = ((Date.now() - start) / span) * 100;
 
@@ -96,8 +112,10 @@ function Gantt({ project }: { project: Project }) {
       ) : null}
       {project.tarefas.map((t) => {
         const sched = cpm.get(t.id);
-        const left = ((parseDate(t.inicio) - start) / span) * 100;
-        const width = Math.max(((parseDate(t.fim) - parseDate(t.inicio)) / span) * 100, 1.5);
+        const ini = sched?.es ?? parseDate(t.inicio);
+        const fim = sched?.ef ?? parseDate(t.fim);
+        const left = ((ini - start) / span) * 100;
+        const width = Math.max(((fim - ini) / span) * 100, 1.5);
         const critica = sched?.critica;
         return (
           <div key={t.id} className="flex items-center gap-3 text-sm">
@@ -109,7 +127,8 @@ function Gantt({ project }: { project: Project }) {
                 <span className="truncate">{t.nome}</span>
               </div>
               <span className="text-[11px] text-muted-foreground">
-                {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)}
+                {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
+                {taskAllocation(t)}% alocado
               </span>
             </div>
             <div className="relative h-7 flex-1 rounded-md bg-muted/40">
@@ -131,7 +150,7 @@ function Gantt({ project }: { project: Project }) {
               </div>
             </div>
             <span className="w-28 shrink-0 text-right text-[11px] text-muted-foreground">
-              {fmtDate(t.inicio)} — {fmtDate(t.fim)}
+              {fmtDate(toISODate(ini))} — {fmtDate(toISODate(fim))}
             </span>
             <span className="w-10 shrink-0 text-right text-xs">{t.progresso}%</span>
           </div>
@@ -260,7 +279,7 @@ function AiCoach({ project }: { project: Project }) {
 
 function ProjetoDetalhe() {
   const { projectId } = Route.useParams();
-  const { projects, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
+  const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
   const hydrated = useHydrated();
   const project = projects.find((p) => p.id === projectId);
 
@@ -279,6 +298,14 @@ function ProjetoDetalhe() {
   const esperado = hydrated ? expectedProgress(project) : 0;
   const cpm = criticalPath(project);
   const criticas = project.tarefas.filter((t) => cpm.get(t.id)?.critica);
+  const cpmReal = criticalPath(project, durationWithResources(resources, projects));
+  const previsaoFim = project.tarefas.length
+    ? Math.max(...project.tarefas.map((t) => cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))
+    : parseDate(project.fim);
+  const desvioDias = Math.round((previsaoFim - parseDate(project.fim)) / 86_400_000);
+  const equipe = Array.from(new Set(project.tarefas.flatMap(taskResponsibles)));
+  const cargas = portfolioLoad(resources, projects).filter((c) => equipe.includes(c.recurso.nome));
+  const semCadastro = equipe.filter((n) => !findResource(resources, n));
 
   return (
     <AppShell
@@ -363,6 +390,7 @@ function ProjetoDetalhe() {
         <TabsList>
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
+          <TabsTrigger value="recursos">Recursos</TabsTrigger>
           <TabsTrigger value="atualizacoes">Atualizações</TabsTrigger>
           <TabsTrigger value="riscos">Riscos</TabsTrigger>
           <TabsTrigger value="atencoes">Atenções</TabsTrigger>
@@ -498,6 +526,104 @@ function ProjetoDetalhe() {
               {Math.round(project.tarefas.reduce((a, t) => a + taskDurationDays(t), 0))} dias de
               trabalho distribuídos.
             </p>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="recursos">
+          <div className="glass-panel rounded-2xl border border-border/60 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-semibold">Capacidade e ritmo real</h3>
+              <span
+                className={cn(
+                  "text-xs",
+                  desvioDias > 0 ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                Previsão com disponibilidade: {fmtDateFull(toISODate(previsaoFim))}
+                {desvioDias > 0 ? ` · ${desvioDias} dia(s) além do planejado` : " · dentro do plano"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              A duração real considera o percentual do dia que cada pessoa tem para projetos e a
+              concorrência com tarefas de outros projetos do portfólio.
+            </p>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b border-border/60">
+                    <th className="py-2 text-left">Tarefa</th>
+                    <th className="py-2 text-left">Responsáveis</th>
+                    <th className="py-2 text-left">Alocação</th>
+                    <th className="py-2 text-left">Duração planejada</th>
+                    <th className="py-2 text-left">Duração real</th>
+                    <th className="py-2 text-left">Término previsto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {project.tarefas.map((t) => {
+                    const real = effectiveDurationDays(t, resources, projects);
+                    const plano = taskDurationDays(t);
+                    return (
+                      <tr key={t.id} className="border-b border-border/40">
+                        <td className="py-2">{t.nome}</td>
+                        <td className="py-2 text-muted-foreground">{taskResponsibles(t).join(", ")}</td>
+                        <td className="py-2 text-muted-foreground">{taskAllocation(t)}%</td>
+                        <td className="py-2 text-muted-foreground">{Math.round(plano)} d</td>
+                        <td className={cn("py-2", real > plano * 1.2 && "text-warning")}>
+                          {Math.ceil(real)} d
+                        </td>
+                        <td className="py-2 text-muted-foreground">
+                          {fmtDate(toISODate(cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {!project.tarefas.length ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  Cadastre tarefas para simular a capacidade da equipe.
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {cargas.map((c) => (
+              <div
+                key={c.recurso.id}
+                className={cn(
+                  "glass-panel rounded-2xl border p-5",
+                  c.conflito ? "border-destructive/50" : "border-border/60",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-medium">{c.recurso.nome}</h4>
+                    <p className="text-xs text-muted-foreground">
+                      {c.recurso.disponibilidadeProjetos}% do dia para projetos ·{" "}
+                      {c.capacidadeHoras.toFixed(1)}h/dia
+                    </p>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={c.conflito ? HEALTH_CLASS.vermelho : HEALTH_CLASS.verde}
+                  >
+                    {Math.round(c.demandaPct)}% alocado
+                  </Badge>
+                </div>
+                <Progress value={Math.min(c.demandaPct, 100)} className="mt-3 h-1.5" />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Atua em {c.projetos.length} projeto(s): {c.projetos.join(", ") || "—"}
+                </p>
+              </div>
+            ))}
+            {semCadastro.length ? (
+              <p className="text-sm text-warning">
+                Sem cadastro de recurso: {semCadastro.join(", ")} — considerados 100% disponíveis até
+                serem cadastrados em Recursos e capacidade.
+              </p>
+            ) : null}
           </div>
         </TabsContent>
 
