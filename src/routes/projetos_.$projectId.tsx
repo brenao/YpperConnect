@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/itsm/app-shell";
 import {
@@ -307,6 +307,57 @@ function AiCoach({ project }: { project: Project }) {
   );
 }
 
+function Metric({
+  label,
+  value,
+  hint,
+  alerta,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  alerta?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-border/50 bg-surface/60 p-3">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold">{value}</p>
+      {hint ? (
+        <p className={cn("text-[11px]", alerta ? "text-destructive" : "text-muted-foreground")}>
+          {hint}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function SidePanel({
+  titulo,
+  contagem,
+  acao,
+  children,
+}: {
+  titulo: string;
+  contagem: number;
+  acao?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="glass-panel rounded-2xl border border-border/60 p-5">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">
+          {titulo}
+          <span className="ml-2 rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+            {contagem}
+          </span>
+        </h3>
+        {acao}
+      </div>
+      <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">{children}</div>
+    </div>
+  );
+}
+
 function ProjetoDetalhe() {
   const { projectId } = Route.useParams();
   const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
@@ -342,90 +393,54 @@ function ProjetoDetalhe() {
       title={project.nome}
       subtitle={`${project.id} · GP ${project.gerente} · Sponsor ${project.sponsor}`}
       actions={
-        <div className="flex flex-wrap gap-2">
-          <WeeklyUpdateDialog project={project} />
-          <RiskDialog project={project} />
-          <AttentionDialog project={project} />
-          <TaskDialog project={project} trigger={<Button size="sm">Nova tarefa</Button>} />
-        </div>
+        <TaskDialog project={project} trigger={<Button size="sm">Nova tarefa</Button>} />
       }
     >
       <Link to="/projetos" className="text-xs text-muted-foreground hover:text-foreground">
         ← Portfólio de projetos
       </Link>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-4">
-        <div className="glass-panel rounded-2xl border border-border/60 p-5 lg:col-span-2">
-          <p className="text-sm text-muted-foreground">{project.objetivo}</p>
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-            <span>
-              {fmtDateFull(project.inicio)} — {fmtDateFull(project.fim)}
-            </span>
-            <Select
-              value={project.status}
-              onValueChange={(v) => updateProject(project.id, { status: v as ProjectStatus })}
-            >
-              <SelectTrigger className="h-8 w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {PROJECT_STATUS_LABEL[s]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="mt-4">
-            <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">
-                Progresso {progresso}% · esperado {esperado}%
-              </span>
-              <span className="font-medium">{project.tarefas.length} tarefas</span>
+      <div className="mt-4 grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
+        <div className="min-w-0 space-y-5">
+          <div className="glass-panel rounded-2xl border border-border/60 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <p className="max-w-2xl text-sm text-muted-foreground">{project.objetivo}</p>
+              <Select
+                value={project.status}
+                onValueChange={(v) => updateProject(project.id, { status: v as ProjectStatus })}
+              >
+                <SelectTrigger className="h-8 w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {PROJECT_STATUS_LABEL[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <Progress value={progresso} className="h-2" />
-          </div>
-        </div>
-
-        <div className="glass-panel space-y-3 rounded-2xl border border-border/60 p-5 lg:col-span-2">
-          <h3 className="text-sm font-semibold">Semáforos de governança</h3>
-          {health ? (
-            <div className="grid gap-2 sm:grid-cols-3">
-              <Semaforo tone={health.prazo} label={`Prazo (${health.atrasoPct}% atraso)`} />
-              <Semaforo
-                tone={health.atualizacao}
-                label={
-                  health.diasSemAtualizacao === null
-                    ? "Sem atualização"
-                    : `${health.diasSemAtualizacao}d sem update`
-                }
+            <div className="mt-4 grid gap-4 sm:grid-cols-4">
+              <Metric label="Período" value={`${fmtDate(project.inicio)} — ${fmtDate(project.fim)}`} />
+              <Metric label="Tarefas" value={`${project.tarefas.length}`} hint={`${criticas.length} crítica(s)`} />
+              <Metric label="Progresso" value={`${progresso}%`} hint={`esperado ${esperado}%`} />
+              <Metric
+                label="Previsão real"
+                value={fmtDate(toISODate(previsaoFim))}
+                hint={desvioDias > 0 ? `${desvioDias}d de desvio` : "dentro do plano"}
+                alerta={desvioDias > 0}
               />
-              <Semaforo tone={health.risco} label={`Riscos (${(project.riscos ?? []).length})`} />
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Calculando...</p>
-          )}
-          {health?.alertas.length ? (
-            <ul className="space-y-1 text-xs text-muted-foreground">
-              {health.alertas.map((a) => (
-                <li key={a}>• {a}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      </div>
+            <Progress value={progresso} className="mt-4 h-2" />
+          </div>
 
-      <Tabs defaultValue="cronograma" className="mt-6">
+      <Tabs defaultValue="tarefas">
         <TabsList>
+          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
           <TabsTrigger value="kanban">Kanban</TabsTrigger>
-          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
           <TabsTrigger value="recursos">Recursos</TabsTrigger>
-          <TabsTrigger value="atualizacoes">Atualizações</TabsTrigger>
-          <TabsTrigger value="riscos">Riscos</TabsTrigger>
-          <TabsTrigger value="atencoes">Atenções</TabsTrigger>
-          <TabsTrigger value="ia">Instrutor IA</TabsTrigger>
         </TabsList>
 
         <TabsContent value="cronograma">
@@ -484,13 +499,12 @@ function ProjetoDetalhe() {
               <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="w-10 py-2 text-left">#</th>
-                  <th className="py-2 text-left">Tarefa</th>
-                  <th className="py-2 text-left">Responsáveis</th>
-                  <th className="py-2 text-left">Duração</th>
-                  <th className="py-2 text-left">Período</th>
-                  <th className="py-2 text-left">Folga</th>
-                  <th className="py-2 text-left">%</th>
-                  <th className="py-2 text-right">Ações</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Tarefa</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Responsáveis</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Duração</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Período</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">%</th>
+                  <th className="px-2 py-2 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -498,11 +512,25 @@ function ProjetoDetalhe() {
                   const s = cpm.get(t.id);
                   return (
                     <tr key={t.id} className="border-b border-border/40">
-                      <td className="py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+                      <td className="px-2 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
                         {idx + 1}
                       </td>
-                      <td className="py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
+                      <td className="px-2 py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
                         <div className="flex items-center gap-2">
+                          <TaskDialog
+                            project={project}
+                            afterTask={t}
+                            trigger={
+                              <button
+                                type="button"
+                                title="Adicionar tarefa abaixo desta"
+                                aria-label={`Adicionar tarefa abaixo de ${t.nome}`}
+                                className="grid h-5 w-5 shrink-0 place-items-center rounded border border-border/60 text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            }
+                          />
                           {s?.critica ? (
                             <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
                           ) : null}
@@ -515,6 +543,11 @@ function ProjetoDetalhe() {
                         </div>
                         <span className="text-[11px] text-muted-foreground">
                           {t.atividade ?? "Execução"}
+                          {s?.critica ? (
+                            <span className="text-destructive"> · caminho crítico</span>
+                          ) : (
+                            ` · folga ${s?.folga ?? 0}d`
+                          )}
                           {(t.predecessoras ?? []).length
                             ? ` · após ${(t.predecessoras ?? [])
                                 .map((p) => {
@@ -527,21 +560,14 @@ function ProjetoDetalhe() {
                             : ""}
                         </span>
                       </td>
-                      <td className="py-2 text-muted-foreground">
+                      <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
                         {(t.responsaveis ?? [t.responsavel]).join(", ")}
                       </td>
-                      <td className="py-2 text-muted-foreground">{taskDurationLabel(t)}</td>
-                      <td className="py-2 text-muted-foreground">
+                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{taskDurationLabel(t)}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
                         {fmtDate(t.inicio)} — {fmtDate(t.fim)}
                       </td>
-                      <td className="py-2 text-muted-foreground">
-                        {s?.critica ? (
-                          <span className="text-destructive">crítica</span>
-                        ) : (
-                          `${s?.folga ?? 0}d`
-                        )}
-                      </td>
-                      <td className="py-2">
+                      <td className="px-2 py-2">
                         <input
                           type="number"
                           min={0}
@@ -552,27 +578,28 @@ function ProjetoDetalhe() {
                               progresso: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
                             })
                           }
-                          className="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-sm"
+                          className="w-16 rounded-md border border-border bg-transparent px-1.5 py-1 text-center text-xs tabular-nums"
                         />
                       </td>
-                      <td className="py-2 text-right">
+                      <td className="px-2 py-2 text-right">
                         <div className="flex justify-end gap-1">
                           <TaskDialog
                             project={project}
                             task={t}
                             trigger={
-                              <Button size="sm" variant="ghost">
-                                Editar
+                              <Button size="icon" variant="ghost" className="h-7 w-7" title="Editar tarefa">
+                                <Pencil className="h-3.5 w-3.5" />
                               </Button>
                             }
                           />
                           <Button
-                            size="sm"
+                            size="icon"
                             variant="ghost"
-                            className="text-destructive"
+                            className="h-7 w-7 text-destructive"
+                            title="Excluir tarefa"
                             onClick={() => removeTask(project.id, t.id)}
                           >
-                            Excluir
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       </td>
@@ -692,110 +719,144 @@ function ProjetoDetalhe() {
           </div>
         </TabsContent>
 
-        <TabsContent value="atualizacoes">
-          <div className="space-y-3">
-            {(project.atualizacoes ?? []).map((u) => (
-              <div key={u.id} className="glass-panel rounded-2xl border border-border/60 p-5">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{new Date(u.data).toLocaleDateString("pt-BR")}</span>
-                  <span>{u.autor}</span>
-                </div>
-                <p className="mt-2 text-sm">{u.descricao}</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm">
-                  <div>
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Últimas entregas
-                    </span>
-                    <p>{u.ultimasEntregas || "—"}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Próximas entregas
-                    </span>
-                    <p>{u.proximasEntregas || "—"}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {!(project.atualizacoes ?? []).length ? (
-              <p className="text-sm text-muted-foreground">
-                Nenhuma atualização registrada — o projeto está sinalizado em vermelho.
-              </p>
-            ) : null}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="riscos">
-          <div className="grid gap-3 md:grid-cols-2">
-            {(project.riscos ?? []).map((r) => (
-              <div key={r.id} className="glass-panel rounded-2xl border border-border/60 p-5">
-                <div className="flex items-center gap-2 text-xs">
-                  <Badge variant="outline">Prob. {r.probabilidade}</Badge>
-                  <Badge variant="outline">Impacto {r.impacto}</Badge>
-                  <Badge variant="outline">{r.status}</Badge>
-                </div>
-                <p className="mt-2 text-sm">{r.descricao}</p>
-                <p className="mt-2 text-xs text-muted-foreground">Mitigação: {r.mitigacao || "—"}</p>
-              </div>
-            ))}
-            {!(project.riscos ?? []).length ? (
-              <p className="text-sm text-warning">
-                Nenhum risco cadastrado — projeto sinalizado em alerta.
-              </p>
-            ) : null}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="atencoes">
-          <div className="space-y-3">
-            {(project.atencoes ?? []).map((a) => (
-              <div
-                key={a.id}
-                className={cn(
-                  "glass-panel rounded-2xl border p-5",
-                  a.status === "aberto" ? "border-destructive/40" : "border-border/60",
-                )}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h4 className="font-medium">{a.titulo}</h4>
-                    <p className="mt-1 text-sm text-muted-foreground">{a.descricao}</p>
-                    <p className="mt-2 text-sm">
-                      <span className="text-muted-foreground">Decisão necessária: </span>
-                      {a.decisaoNecessaria}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Responsável: {a.responsavelDecisao}
-                    </p>
-                  </div>
-                  {a.status === "aberto" ? (
-                    <Button size="sm" variant="outline" onClick={() => resolveAttention(project.id, a.id)}>
-                      Marcar resolvido
-                    </Button>
-                  ) : (
-                    <Badge variant="outline" className={HEALTH_CLASS.verde}>
-                      Resolvido
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            ))}
-            {!(project.atencoes ?? []).length ? (
-              <p className="text-sm text-muted-foreground">Nenhum ponto de atenção aberto.</p>
-            ) : null}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="ia">
-          <AiCoach project={project} />
-        </TabsContent>
       </Tabs>
 
-      {health ? (
-        <p className="mt-6 text-xs text-muted-foreground">
-          Saúde geral do projeto: {HEALTH_LABEL[health.geral]}
-        </p>
-      ) : null}
+          {health ? (
+            <p className="text-xs text-muted-foreground">
+              Saúde geral do projeto: {HEALTH_LABEL[health.geral]}
+            </p>
+          ) : null}
+        </div>
+
+        <aside className="space-y-4 xl:sticky xl:top-4">
+          <div className="glass-panel space-y-3 rounded-2xl border border-border/60 p-5">
+            <h3 className="text-sm font-semibold">Semáforos de governança</h3>
+            {health ? (
+              <div className="grid gap-2">
+                <Semaforo tone={health.prazo} label={`Prazo (${health.atrasoPct}% atraso)`} />
+                <Semaforo
+                  tone={health.atualizacao}
+                  label={
+                    health.diasSemAtualizacao === null
+                      ? "Sem atualização"
+                      : `${health.diasSemAtualizacao}d sem update`
+                  }
+                />
+                <Semaforo tone={health.risco} label={`Riscos (${(project.riscos ?? []).length})`} />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Calculando...</p>
+            )}
+            {health?.alertas.length ? (
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                {health.alertas.map((a) => (
+                  <li key={a}>• {a}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+
+          <SidePanel
+            titulo="Riscos"
+            contagem={(project.riscos ?? []).length}
+            acao={<RiskDialog project={project} />}
+          >
+            {(project.riscos ?? []).length ? (
+              <ul className="space-y-2">
+                {(project.riscos ?? []).map((r) => (
+                  <li key={r.id} className="rounded-lg border border-border/60 p-3">
+                    <div className="flex flex-wrap items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      <span>Prob. {r.probabilidade}</span>
+                      <span>· Impacto {r.impacto}</span>
+                      <span>· {r.status}</span>
+                    </div>
+                    <p className="mt-1 text-sm">{r.descricao}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Mitigação: {r.mitigacao || "—"}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-warning">Nenhum risco cadastrado — projeto em alerta.</p>
+            )}
+          </SidePanel>
+
+          <SidePanel
+            titulo="Atualizações"
+            contagem={(project.atualizacoes ?? []).length}
+            acao={<WeeklyUpdateDialog project={project} />}
+          >
+            {(project.atualizacoes ?? []).length ? (
+              <ul className="space-y-2">
+                {(project.atualizacoes ?? []).map((u) => (
+                  <li key={u.id} className="rounded-lg border border-border/60 p-3">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span>{new Date(u.data).toLocaleDateString("pt-BR")}</span>
+                      <span>{u.autor}</span>
+                    </div>
+                    <p className="mt-1 text-sm">{u.descricao}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Próximas: {u.proximasEntregas || "—"}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Nenhuma atualização registrada — o projeto está sinalizado em vermelho.
+              </p>
+            )}
+          </SidePanel>
+
+          <SidePanel
+            titulo="Pontos de atenção"
+            contagem={(project.atencoes ?? []).filter((a) => a.status === "aberto").length}
+            acao={<AttentionDialog project={project} />}
+          >
+            {(project.atencoes ?? []).length ? (
+              <ul className="space-y-2">
+                {(project.atencoes ?? []).map((a) => (
+                  <li
+                    key={a.id}
+                    className={cn(
+                      "rounded-lg border p-3",
+                      a.status === "aberto" ? "border-destructive/40" : "border-border/60",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium">{a.titulo}</p>
+                      {a.status === "aberto" ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-[11px]"
+                          onClick={() => resolveAttention(project.id, a.id)}
+                        >
+                          Resolver
+                        </Button>
+                      ) : (
+                        <Badge variant="outline" className={HEALTH_CLASS.verde}>
+                          Resolvido
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{a.descricao}</p>
+                    <p className="mt-1 text-xs">
+                      <span className="text-muted-foreground">Decisão: </span>
+                      {a.decisaoNecessaria} · {a.responsavelDecisao}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">Nenhum ponto de atenção aberto.</p>
+            )}
+          </SidePanel>
+
+          <AiCoach project={project} />
+        </aside>
+      </div>
     </AppShell>
   );
 }

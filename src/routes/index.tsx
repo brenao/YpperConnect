@@ -284,7 +284,7 @@ function Dashboard() {
               <div className="rounded-lg border border-border bg-surface p-3">
                 <p className="text-xs font-medium text-muted-foreground">Projetos</p>
                 <p className="mt-1 text-sm">
-                  {projects.filter((p) => p.status === "risco").length} projeto em risco de prazo na
+                  {projects.filter((p) => p.status === "execucao").length} projeto(s) em execução na
                   estruturação das práticas ITIL.
                 </p>
               </div>

@@ -408,7 +408,7 @@ const BASE_PROJECTS: Project[] = [
       "Estruturar detecção de recorrências, análise de causa raiz e ciclo de melhoria contínua.",
     sponsor: "Gerência de TI",
     gerente: "Bruna Sato",
-    status: "risco",
+    status: "execucao",
     inicio: "2026-08-17",
     fim: "2026-12-18",
     tarefas: [
