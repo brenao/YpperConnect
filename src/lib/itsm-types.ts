@@ -114,7 +114,6 @@ export interface Resource {
 export type ProjectStatus =
   | "planejamento"
   | "execucao"
-  | "risco"
   | "paralisado"
   | "cancelado"
   | "concluido";
@@ -165,7 +164,6 @@ export interface Project {
 export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
   planejamento: "Planejamento",
   execucao: "Em execução",
-  risco: "Em risco",
   paralisado: "Paralisado",
   cancelado: "Cancelado",
   concluido: "Concluído",

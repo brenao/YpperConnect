@@ -49,7 +49,6 @@ export const Route = createFileRoute("/projetos")({
 const statusStyle: Record<ProjectStatus, string> = {
   planejamento: "bg-info/12 text-info border-info/30",
   execucao: "bg-primary/12 text-primary border-primary/30",
-  risco: "bg-destructive/12 text-destructive border-destructive/30",
   paralisado: "bg-warning/12 text-warning border-warning/30",
   cancelado: "bg-muted text-muted-foreground border-border",
   concluido: "bg-success/12 text-success border-success/30",
