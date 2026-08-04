@@ -578,7 +578,7 @@ function ProjetoDetalhe() {
                               progresso: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
                             })
                           }
-                          className="w-12 rounded-md border border-border bg-transparent px-2 py-1 text-sm"
+                          className="w-16 rounded-md border border-border bg-transparent px-1.5 py-1 text-center text-xs tabular-nums"
                         />
                       </td>
                       <td className="px-2 py-2 text-right">
