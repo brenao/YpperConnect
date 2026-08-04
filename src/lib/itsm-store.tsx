@@ -49,6 +49,7 @@ interface Store extends State {
   createTicket: (t: NewTicket) => Ticket;
   updateTicket: (id: string, patch: Partial<Ticket>) => void;
   addArticle: (a: Omit<Article, "id" | "visualizacoes">) => void;
+  addService: (s: Omit<ServiceItem, "id">) => void;
   setRole: (r: UserRole) => void;
   createProject: (p: Omit<Project, "id" | "tarefas" | "atualizacoes" | "riscos" | "atencoes">) => Project;
   updateProject: (id: string, patch: Partial<Project>) => void;
@@ -129,6 +130,16 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setRole = useCallback((role: UserRole) => setState((s) => ({ ...s, role })), []);
+
+  const addService = useCallback((item: Omit<ServiceItem, "id">) => {
+    setState((s) => ({
+      ...s,
+      services: [
+        ...s.services,
+        { ...item, id: `SVC-${Math.floor(100 + Math.random() * 899)}` },
+      ],
+    }));
+  }, []);
 
   const patchProject = useCallback((id: string, fn: (p: Project) => Project) => {
     setState((s) => ({
