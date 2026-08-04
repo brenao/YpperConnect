@@ -266,6 +266,8 @@ function Chamados() {
                   ))}
                 </dl>
 
+                <SlaPanel ticket={atual} />
+
                 {atual.problemaVinculado ? (
                   <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
                     <p className="flex items-center gap-2 text-xs font-medium text-warning">
