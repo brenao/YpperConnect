@@ -279,7 +279,7 @@ function AiCoach({ project }: { project: Project }) {
 
 function ProjetoDetalhe() {
   const { projectId } = Route.useParams();
-  const { projects, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
+  const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
   const hydrated = useHydrated();
   const project = projects.find((p) => p.id === projectId);
 
@@ -298,6 +298,14 @@ function ProjetoDetalhe() {
   const esperado = hydrated ? expectedProgress(project) : 0;
   const cpm = criticalPath(project);
   const criticas = project.tarefas.filter((t) => cpm.get(t.id)?.critica);
+  const cpmReal = criticalPath(project, durationWithResources(resources, projects));
+  const previsaoFim = project.tarefas.length
+    ? Math.max(...project.tarefas.map((t) => cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))
+    : parseDate(project.fim);
+  const desvioDias = Math.round((previsaoFim - parseDate(project.fim)) / 86_400_000);
+  const equipe = Array.from(new Set(project.tarefas.flatMap(taskResponsibles)));
+  const cargas = portfolioLoad(resources, projects).filter((c) => equipe.includes(c.recurso.nome));
+  const semCadastro = equipe.filter((n) => !findResource(resources, n));
 
   return (
     <AppShell
@@ -382,6 +390,7 @@ function ProjetoDetalhe() {
         <TabsList>
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
+          <TabsTrigger value="recursos">Recursos</TabsTrigger>
           <TabsTrigger value="atualizacoes">Atualizações</TabsTrigger>
           <TabsTrigger value="riscos">Riscos</TabsTrigger>
           <TabsTrigger value="atencoes">Atenções</TabsTrigger>
