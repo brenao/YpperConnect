@@ -89,6 +89,22 @@ const praticas = [
 
 const fluxoP1 = [
   "Detecção e registro imediato como Incidente P1",
+] as string[];
+
+const slaPrioridades: Priority[] = ["P1", "P2", "P3", "P4"];
+const slaTipos: RecordType[] = ["incidente", "requisicao", "tarefa", "problema", "melhoria"];
+
+const regrasSla = [
+  "O relógio inicia no registro do chamado e é pausado no status Aguardando terceiros.",
+  "Incidentes P1 seguem regime 24×7; demais classificações contam horas corridas.",
+  "Chamado sem primeiro retorno dentro do prazo de resposta entra automaticamente em risco (amarelo).",
+  "Ao ultrapassar 75% do prazo de solução o chamado é sinalizado em risco; após o vencimento, vermelho.",
+  "Problemas têm prazo de solução ampliado por exigirem RCA; o prazo de resposta cobre o aceite da investigação.",
+  "Reclassificação de prioridade recalcula os prazos a partir da data original do registro.",
+];
+
+const fluxoP1Steps = [
+  "Detecção e registro imediato como Incidente P1",
   "Acionamento da ponte de crise e do gestor de plantão",
   "Comunicação às áreas impactadas a cada 30 minutos",
   "Aplicação de contorno e restabelecimento do serviço",
