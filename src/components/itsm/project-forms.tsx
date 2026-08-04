@@ -333,7 +333,7 @@ export function TaskDialog({
                   <SelectItem value="none">Sem tarefa pai</SelectItem>
                   {candidatas.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
-                      {t.nome}
+                      {numeroPorId.get(t.id)}. {t.nome}
                     </SelectItem>
                   ))}
                 </SelectContent>
