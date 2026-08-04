@@ -444,8 +444,32 @@ function ProjetoDetalhe() {
           ) : null}
         </TabsContent>
 
+        <TabsContent value="kanban">
+          <div className="glass-panel rounded-2xl border border-border/60 p-5">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+              <div className="min-w-0">
+                <h3 className="font-semibold">Quadro de tarefas</h3>
+                <p className="text-xs text-muted-foreground">
+                  Arraste os post-its entre as colunas. Ao mover para <strong>Concluído</strong>, a
+                  tarefa vai a 100% e assume a data de hoje como fim.
+                </p>
+              </div>
+              <TaskDialog
+                project={project}
+                trigger={
+                  <Button size="sm" variant="outline">
+                    Nova tarefa
+                  </Button>
+                }
+              />
+            </div>
+            <div className="mt-4">
+              <ProjectKanban project={project} />
+            </div>
+          </div>
+        </TabsContent>
+
         <TabsContent value="tarefas">
-          <div />
           <div className="glass-panel overflow-x-auto rounded-2xl border border-border/60 p-5">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase tracking-wide text-muted-foreground">
