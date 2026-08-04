@@ -17,6 +17,7 @@ import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
 import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
 import { Route as ProjetosRouteImport } from './routes/projetos'
+import { Route as RecursosRouteImport } from './routes/recursos'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ProjetosProjectIdRouteImport } from './routes/projetos_.$projectId'
 
@@ -60,6 +61,11 @@ const ProjetosRoute = ProjetosRouteImport.update({
   path: '/projetos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RecursosRoute = RecursosRouteImport.update({
+  id: '/recursos',
+  path: '/recursos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiChatRoute = ApiChatRouteImport.update({
   id: '/api/chat',
   path: '/api/chat',
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
+  '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
@@ -92,6 +99,7 @@ export interface FileRoutesByTo {
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
+  '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/projetos': typeof ProjetosRoute
+  '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
   '/projetos_/$projectId': typeof ProjetosProjectIdRoute
 }
@@ -119,6 +128,7 @@ export interface FileRouteTypes {
     | '/diretoria'
     | '/governanca'
     | '/projetos'
+    | '/recursos'
     | '/api/chat'
     | '/projetos/$projectId'
   fileRoutesByTo: FileRoutesByTo
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/diretoria'
     | '/governanca'
     | '/projetos'
+    | '/recursos'
     | '/api/chat'
     | '/projetos/$projectId'
   id:
@@ -143,6 +154,7 @@ export interface FileRouteTypes {
     | '/diretoria'
     | '/governanca'
     | '/projetos'
+    | '/recursos'
     | '/api/chat'
     | '/projetos_/$projectId'
   fileRoutesById: FileRoutesById
@@ -156,6 +168,7 @@ export interface RootRouteChildren {
   DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
   ProjetosRoute: typeof ProjetosRoute
+  RecursosRoute: typeof RecursosRoute
   ApiChatRoute: typeof ApiChatRoute
   ProjetosProjectIdRoute: typeof ProjetosProjectIdRoute
 }
@@ -218,6 +231,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjetosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/recursos': {
+      id: '/recursos'
+      path: '/recursos'
+      fullPath: '/recursos'
+      preLoaderRoute: typeof RecursosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/chat': {
       id: '/api/chat'
       path: '/api/chat'
@@ -244,6 +264,7 @@ const rootRouteChildren: RootRouteChildren = {
   DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
   ProjetosRoute: ProjetosRoute,
+  RecursosRoute: RecursosRoute,
   ApiChatRoute: ApiChatRoute,
   ProjetosProjectIdRoute: ProjetosProjectIdRoute,
 }
