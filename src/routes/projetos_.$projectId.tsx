@@ -483,6 +483,7 @@ function ProjetoDetalhe() {
             <table className="w-full text-sm">
               <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                 <tr className="border-b border-border/60">
+                  <th className="w-10 py-2 text-left">#</th>
                   <th className="py-2 text-left">Tarefa</th>
                   <th className="py-2 text-left">Responsáveis</th>
                   <th className="py-2 text-left">Duração</th>
@@ -493,10 +494,13 @@ function ProjetoDetalhe() {
                 </tr>
               </thead>
               <tbody>
-                {project.tarefas.map((t) => {
+                {project.tarefas.map((t, idx) => {
                   const s = cpm.get(t.id);
                   return (
                     <tr key={t.id} className="border-b border-border/40">
+                      <td className="py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+                        {idx + 1}
+                      </td>
                       <td className="py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
                         <div className="flex items-center gap-2">
                           {s?.critica ? (
@@ -513,7 +517,12 @@ function ProjetoDetalhe() {
                           {t.atividade ?? "Execução"}
                           {(t.predecessoras ?? []).length
                             ? ` · após ${(t.predecessoras ?? [])
-                                .map((p) => project.tarefas.find((x) => x.id === p)?.nome ?? p)
+                                .map((p) => {
+                                  const i = project.tarefas.findIndex((x) => x.id === p);
+                                  return i >= 0
+                                    ? `${i + 1}. ${project.tarefas[i]!.nome}`
+                                    : p;
+                                })
                                 .join(", ")}`
                             : ""}
                         </span>
