@@ -164,11 +164,34 @@ export function TaskDialog({
   const [responsaveis, setResponsaveis] = useState((task?.responsaveis ?? [task?.responsavel ?? ""]).join(", "));
   const [paiId, setPaiId] = useState(task?.paiId ?? afterTask?.paiId ?? "");
   const [filhaDaAcima, setFilhaDaAcima] = useState(false);
-  const [preds, setPreds] = useState<string[]>(task?.predecessoras ?? []);
   const [marco, setMarco] = useState(Boolean(task?.marco));
   const [alocacao, setAlocacao] = useState(String(task?.alocacaoPct ?? 100));
 
   const candidatas = project.tarefas.filter((t) => t.id !== task?.id);
+  /** Número visível da tarefa = posição no cronograma (1..n). */
+  const numeroPorId = new Map(project.tarefas.map((t, i) => [t.id, i + 1]));
+  const idPorNumero = new Map(project.tarefas.map((t, i) => [i + 1, t.id]));
+  const [predsTexto, setPredsTexto] = useState(
+    (task?.predecessoras ?? [])
+      .map((id) => numeroPorId.get(id))
+      .filter((n): n is number => Boolean(n))
+      .join(", "),
+  );
+  const numerosInformados = predsTexto
+    .split(/[,;\s]+/)
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const numeroProprio = task ? numeroPorId.get(task.id) : undefined;
+  const predsInvalidas = numerosInformados.filter(
+    (n) => !idPorNumero.has(n) || (numeroProprio !== undefined && n === numeroProprio),
+  );
+  const predsIds = Array.from(
+    new Set(
+      numerosInformados
+        .filter((n) => !predsInvalidas.includes(n))
+        .map((n) => idPorNumero.get(n)!),
+    ),
+  );
 
   const pessoasSelecionadas = responsaveis
     .split(",")
@@ -189,6 +212,10 @@ export function TaskDialog({
 
   function submit() {
     if (nome.trim().length < 3) { toast.error("Informe o nome da tarefa."); return; }
+    if (predsInvalidas.length) {
+      toast.error(`Predecessoras inválidas: ${predsInvalidas.join(", ")}`);
+      return;
+    }
     const dur = Number(duracao);
     if (!Number.isFinite(dur) || dur <= 0) { toast.error("Informe uma duração válida."); return; }
     const dias = unidade === "horas" ? Math.max(dur / 8, 0.125) : dur;
@@ -210,7 +237,7 @@ export function TaskDialog({
       progresso: Math.max(0, Math.min(100, Number(progresso) || 0)),
       responsavel: pessoas[0]!,
       responsaveis: pessoas,
-      predecessoras: preds,
+      predecessoras: predsIds,
       paiId: paiFinal,
       marco,
       alocacaoPct: alocNum,
