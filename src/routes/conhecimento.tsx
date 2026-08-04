@@ -1,10 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { BookOpen, Eye, Search, Sparkles } from "lucide-react";
+import { BookOpen, Eye, Loader2, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/itsm/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   Accordion,
   AccordionContent,
@@ -12,6 +22,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { useItsm } from "@/lib/itsm-store";
+import { generateKnowledgeArticle } from "@/lib/ai-knowledge.functions";
 import type { Article } from "@/lib/itsm-types";
 import { cn } from "@/lib/utils";
 
@@ -41,28 +52,47 @@ const statusStyle: Record<Article["status"], string> = {
 };
 
 function Conhecimento() {
-  const { articles, addArticle } = useItsm();
+  const { articles, addArticle, tickets } = useItsm();
   const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [tema, setTema] = useState("");
+  const [gerando, setGerando] = useState(false);
 
   const filtered = articles.filter((a) =>
     `${a.titulo} ${a.categoria} ${a.resumo}`.toLowerCase().includes(q.toLowerCase()),
   );
 
-  function gerarComIA() {
-    addArticle({
-      titulo: "Erros recorrentes de conexão VPN: solução padronizada",
-      categoria: "Infraestrutura",
-      resumo:
-        "Rascunho gerado por IA a partir do histórico de incidentes correlatos dos últimos 30 dias.",
-      conteudo:
-        "Sintoma: falha de autenticação MFA após atualização do cliente.\nSolução: reinstalar o cliente homologado, sincronizar horário do dispositivo e revalidar o token. Escalar para Infraestrutura caso o erro persista após duas tentativas.",
-      atualizadoEm: new Date().toISOString().slice(0, 10),
-      status: "rascunho",
-      geradoPorIA: true,
-    });
-    toast.success("Rascunho criado pela IA", {
-      description: "Disponível para curadoria da equipe de TI.",
-    });
+  async function gerarComIA() {
+    if (tema.trim().length < 5) {
+      toast.error("Descreva o tema do artigo.");
+      return;
+    }
+    setGerando(true);
+    try {
+      const contexto = tickets
+        .filter((t) => t.tipo === "incidente")
+        .slice(0, 12)
+        .map((t) => `- ${t.titulo} (${t.sistema ?? t.servico})`)
+        .join("\n");
+      const artigo = await generateKnowledgeArticle({
+        data: { tema: tema.trim(), contexto },
+      });
+      addArticle({
+        ...artigo,
+        atualizadoEm: new Date().toISOString().slice(0, 10),
+        status: "rascunho",
+        geradoPorIA: true,
+      });
+      setOpen(false);
+      setTema("");
+      toast.success("Rascunho criado pela IA", {
+        description: "Disponível para curadoria da equipe de TI.",
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao gerar o artigo.");
+    } finally {
+      setGerando(false);
+    }
   }
 
   return (
@@ -82,9 +112,35 @@ function Conhecimento() {
               className="pl-9"
             />
           </div>
-          <Button variant="secondary" className="gap-2" onClick={gerarComIA}>
-            <Sparkles className="size-4" /> Gerar rascunho com IA
-          </Button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button variant="secondary" className="gap-2">
+                <Sparkles className="size-4" /> Gerar rascunho com IA
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Gerar artigo com IA</DialogTitle>
+                <DialogDescription>
+                  A IA padroniza o procedimento em sintoma, causa, solução e escalonamento, usando
+                  também os incidentes registrados como contexto.
+                </DialogDescription>
+              </DialogHeader>
+              <Textarea
+                value={tema}
+                maxLength={300}
+                rows={4}
+                onChange={(e) => setTema(e.target.value)}
+                placeholder="Ex.: procedimento para falha de autenticação MFA na VPN"
+              />
+              <DialogFooter>
+                <Button onClick={gerarComIA} disabled={gerando} className="gap-2">
+                  {gerando ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  Gerar rascunho
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
