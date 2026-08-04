@@ -56,7 +56,7 @@ interface Store extends State {
   setRole: (r: UserRole) => void;
   createProject: (p: Omit<Project, "id" | "tarefas" | "atualizacoes" | "riscos" | "atencoes">) => Project;
   updateProject: (id: string, patch: Partial<Project>) => void;
-  addTask: (projectId: string, t: Omit<ProjectTask, "id">) => void;
+  addTask: (projectId: string, t: Omit<ProjectTask, "id">, afterTaskId?: string) => void;
   updateTask: (projectId: string, taskId: string, patch: Partial<ProjectTask>) => void;
   removeTask: (projectId: string, taskId: string) => void;
   addProjectUpdate: (projectId: string, u: Omit<ProjectUpdate, "id">) => void;
@@ -183,11 +183,18 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   );
 
   const addTask = useCallback<Store["addTask"]>(
-    (projectId, t) =>
-      patchProject(projectId, (p) => ({
-        ...p,
-        tarefas: [...p.tarefas, { ...t, id: `T${p.tarefas.length + 1}-${Math.floor(Math.random() * 900 + 100)}` }],
-      })),
+    (projectId, t, afterTaskId) =>
+      patchProject(projectId, (p) => {
+        const nova: ProjectTask = {
+          ...t,
+          id: `T${p.tarefas.length + 1}-${Math.floor(Math.random() * 900 + 100)}`,
+        };
+        const idx = afterTaskId ? p.tarefas.findIndex((x) => x.id === afterTaskId) : -1;
+        if (idx < 0) return { ...p, tarefas: [...p.tarefas, nova] };
+        const tarefas = [...p.tarefas];
+        tarefas.splice(idx + 1, 0, nova);
+        return { ...p, tarefas };
+      }),
     [patchProject],
   );
 

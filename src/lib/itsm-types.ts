@@ -61,6 +61,16 @@ export interface Article {
   geradoPorIA?: boolean;
 }
 
+/** Colunas do quadro kanban de tarefas de projeto. */
+export type KanbanStatus = "backlog" | "todo" | "doing" | "done";
+
+export const KANBAN_LABEL: Record<KanbanStatus, string> = {
+  backlog: "Backlog",
+  todo: "A fazer",
+  doing: "Em andamento",
+  done: "Concluído",
+};
+
 export interface ProjectTask {
   id: string;
   nome: string;
@@ -69,6 +79,10 @@ export interface ProjectTask {
   progresso: number;
   responsavel: string;
   marco?: boolean;
+  /** Coluna no quadro kanban do projeto. */
+  quadro?: KanbanStatus | undefined;
+  /** Data em que o card foi movido para "Concluído". */
+  concluidoEm?: string | undefined;
   /** Responsáveis adicionais (1 ou vários). */
   responsaveis?: string[] | undefined;
   /** IDs de tarefas predecessoras dentro do mesmo projeto. */
