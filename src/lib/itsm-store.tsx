@@ -273,6 +273,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       updateTicket,
       addArticle,
       setRole,
+      addService,
       createProject,
       updateProject,
       addTask,
