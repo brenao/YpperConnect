@@ -12,7 +12,7 @@ import type {
   Ticket,
   UserRole,
 } from "./itsm-types";
-import { SLA_HORAS, resolvePriority } from "./itsm-types";
+import { resolvePriority, slaFor } from "./itsm-types";
 
 const KEY = "govti.state.v2";
 
@@ -96,6 +96,8 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   const createTicket = useCallback((input: NewTicket) => {
     const prioridade = resolvePriority(input.impacto, input.urgencia);
     const criadoEm = new Date().toISOString();
+    const meta = slaFor(input.tipo, prioridade);
+    const base = new Date(criadoEm).getTime();
     const ticket: Ticket = {
       ...input,
       id: `${PREFIX[input.tipo]}-${Math.floor(1000 + Math.random() * 8999)}`,
@@ -104,9 +106,8 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       responsavel: "Não atribuído",
       equipe: input.tipo === "incidente" ? "Service Desk" : "Service Desk",
       criadoEm,
-      prazoSla: new Date(
-        Date.now() + SLA_HORAS[prioridade].solucao * 3600_000,
-      ).toISOString(),
+      prazoSla: new Date(base + meta.solucao * 3600_000).toISOString(),
+      prazoResposta: new Date(base + meta.resposta * 3600_000).toISOString(),
     };
     setState((s) => ({ ...s, tickets: [ticket, ...s.tickets] }));
     return ticket;
@@ -115,7 +116,16 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   const updateTicket = useCallback((id: string, patch: Partial<Ticket>) => {
     setState((s) => ({
       ...s,
-      tickets: s.tickets.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      tickets: s.tickets.map((t) => {
+        if (t.id !== id) return t;
+        const next = { ...t, ...patch };
+        // Primeiro atendimento: registra o cumprimento do SLA de resposta.
+        const atendeu =
+          (patch.status && patch.status !== "novo" && patch.status !== "triagem") ||
+          (patch.responsavel && patch.responsavel !== "Não atribuído");
+        if (atendeu && !next.respondidoEm) next.respondidoEm = new Date().toISOString();
+        return next;
+      }),
     }));
   }, []);
 
