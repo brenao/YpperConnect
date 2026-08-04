@@ -50,7 +50,10 @@ export interface TaskSchedule {
  * Método do caminho crítico (CPM) sobre as tarefas do projeto.
  * Datas iniciais vêm do cronograma informado; predecessoras empurram o início.
  */
-export function criticalPath(project: Project): Map<string, TaskSchedule> {
+export function criticalPath(
+  project: Project,
+  durDays: (t: ProjectTask) => number = taskDurationDays,
+): Map<string, TaskSchedule> {
   const tasks = project.tarefas;
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const preds = (t: ProjectTask) => (t.predecessoras ?? []).filter((p) => byId.has(p));
@@ -78,7 +81,7 @@ export function criticalPath(project: Project): Map<string, TaskSchedule> {
     const base = parseDate(t.inicio);
     const porPredecessora = preds(t).map((p) => (ef.get(p) ?? base) + DAY);
     const inicio = Math.max(base, ...(porPredecessora.length ? porPredecessora : [base]));
-    const dur = taskDurationDays(t) * DAY;
+    const dur = durDays(t) * DAY;
     es.set(t.id, inicio);
     ef.set(t.id, inicio + Math.max(dur - DAY, 0));
   }
@@ -98,7 +101,7 @@ export function criticalPath(project: Project): Map<string, TaskSchedule> {
     const limite = suc.length
       ? Math.min(...suc.map((s) => (ls.get(s) ?? fimProjeto) - DAY))
       : fimProjeto;
-    const dur = taskDurationDays(t) * DAY;
+    const dur = durDays(t) * DAY;
     lf.set(t.id, limite);
     ls.set(t.id, limite - Math.max(dur - DAY, 0));
   }
