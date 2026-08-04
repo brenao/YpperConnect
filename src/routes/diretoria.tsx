@@ -160,9 +160,7 @@ function Diretoria() {
     const emAberto = tickets.filter((t) => !encerrado(t.status));
     const backlog = emAberto.filter((t) => noPeriodo(t.criadoEm));
     const primeiroRetorno = criados.filter((t) => Boolean(t.respondidoEm));
-    const dentroSla = hydrated
-      ? atendidos.filter((t) => evaluateSla(t).estado === "atendido").length
-      : 0;
+    const dentroSla = atendidos.filter((t) => evaluateSla(t).estado === "atendido").length;
     const emRisco = hydrated
       ? emAberto.filter((t) => {
           const e = evaluateSla(t).estado;
