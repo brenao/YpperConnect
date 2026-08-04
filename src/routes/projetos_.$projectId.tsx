@@ -532,6 +532,7 @@ function ProjetoDetalhe() {
         <TabsContent value="atualizacoes">
           <div className="space-y-3">
             {(project.atualizacoes ?? []).map((u) => (
+
               <div key={u.id} className="glass-panel rounded-2xl border border-border/60 p-5">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{new Date(u.data).toLocaleDateString("pt-BR")}</span>
