@@ -28,6 +28,10 @@ export interface Ticket {
   equipe: string;
   criadoEm: string;
   prazoSla: string;
+  /** Prazo máximo para o primeiro retorno da TI ao solicitante. */
+  prazoResposta?: string | undefined;
+  /** Momento do primeiro atendimento (saída de Novo/Triagem ou atribuição). */
+  respondidoEm?: string | undefined;
   problemaVinculado?: string;
   /** Obrigatória ao resolver/fechar o chamado. */
   descricaoEncerramento?: string | undefined;
@@ -150,6 +154,101 @@ export const SLA_HORAS: Record<Priority, { resposta: number; solucao: number }> 
   P3: { resposta: 4, solucao: 24 },
   P4: { resposta: 8, solucao: 72 },
 };
+
+export interface SlaTarget {
+  /** Horas para o primeiro retorno ao solicitante. */
+  resposta: number;
+  /** Horas para solução / entrega. */
+  solucao: number;
+}
+
+/**
+ * Acordo de nível de serviço por classificação e prioridade (horas corridas).
+ * Incidentes têm o relógio mais agressivo; problemas seguem prazos de
+ * investigação de causa raiz; tarefas e melhorias seguem prazos planejáveis.
+ */
+export const SLA_MATRIX: Record<RecordType, Record<Priority, SlaTarget>> = {
+  incidente: {
+    P1: { resposta: 0.25, solucao: 4 },
+    P2: { resposta: 1, solucao: 8 },
+    P3: { resposta: 4, solucao: 24 },
+    P4: { resposta: 8, solucao: 72 },
+  },
+  requisicao: {
+    P1: { resposta: 1, solucao: 8 },
+    P2: { resposta: 4, solucao: 24 },
+    P3: { resposta: 8, solucao: 72 },
+    P4: { resposta: 16, solucao: 120 },
+  },
+  tarefa: {
+    P1: { resposta: 1, solucao: 12 },
+    P2: { resposta: 4, solucao: 40 },
+    P3: { resposta: 8, solucao: 80 },
+    P4: { resposta: 24, solucao: 160 },
+  },
+  problema: {
+    P1: { resposta: 2, solucao: 120 },
+    P2: { resposta: 8, solucao: 240 },
+    P3: { resposta: 24, solucao: 480 },
+    P4: { resposta: 40, solucao: 720 },
+  },
+  melhoria: {
+    P1: { resposta: 8, solucao: 120 },
+    P2: { resposta: 16, solucao: 240 },
+    P3: { resposta: 40, solucao: 480 },
+    P4: { resposta: 80, solucao: 720 },
+  },
+};
+
+/** Meta de SLA aplicável a uma classificação + prioridade. */
+export function slaFor(tipo: RecordType, prioridade: Priority): SlaTarget {
+  return SLA_MATRIX[tipo][prioridade];
+}
+
+/** Formata horas em h / d para exibição. */
+export function formatSlaHoras(horas: number): string {
+  if (horas < 1) return `${Math.round(horas * 60)}min`;
+  if (horas < 24) return `${horas}h`;
+  const dias = horas / 24;
+  return `${Number.isInteger(dias) ? dias : dias.toFixed(1)}d`;
+}
+
+export type SlaState = "atendido" | "no_prazo" | "em_risco" | "estourado";
+
+export interface SlaEvaluation {
+  estado: SlaState;
+  /** Percentual do prazo já consumido (0-100+). */
+  consumo: number;
+  /** Horas restantes (negativo quando vencido). */
+  restanteHoras: number;
+  meta: SlaTarget;
+  respostaAtrasada: boolean;
+}
+
+/** Avalia o SLA de solução de um chamado em relação a `agora`. */
+export function evaluateSla(ticket: Ticket, agora: number = Date.now()): SlaEvaluation {
+  const meta = slaFor(ticket.tipo, ticket.prioridade);
+  const inicio = new Date(ticket.criadoEm).getTime();
+  const prazo = new Date(ticket.prazoSla).getTime();
+  const encerrado = ticket.status === "resolvido" || ticket.status === "fechado";
+  const referencia = encerrado ? Math.min(agora, prazo) : agora;
+  const total = Math.max(prazo - inicio, 1);
+  const consumo = ((referencia - inicio) / total) * 100;
+  const restanteHoras = (prazo - agora) / 3600_000;
+  const respostaAtrasada = Boolean(
+    ticket.prazoResposta &&
+      !ticket.respondidoEm &&
+      new Date(ticket.prazoResposta).getTime() < agora,
+  );
+  const estado: SlaState = encerrado
+    ? "atendido"
+    : restanteHoras < 0
+      ? "estourado"
+      : consumo >= 75 || respostaAtrasada
+        ? "em_risco"
+        : "no_prazo";
+  return { estado, consumo, restanteHoras, meta, respostaAtrasada };
+}
 
 export const TYPE_LABEL: Record<RecordType, string> = {
   incidente: "Incidente",

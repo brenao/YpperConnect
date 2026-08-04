@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertOctagon, ShieldCheck } from "lucide-react";
+import { AlertOctagon, ShieldCheck, Timer } from "lucide-react";
 import { AppShell } from "@/components/itsm/app-shell";
 import { PriorityBadge, TypeBadge } from "@/components/itsm/badges";
 import {
   PRIORITY_MATRIX,
-  SLA_HORAS,
+  PRIORITY_LABEL,
+  SLA_MATRIX,
   TYPE_LABEL,
+  formatSlaHoras,
   type Impact,
   type Priority,
   type RecordType,
@@ -85,6 +87,18 @@ const praticas = [
   },
 ];
 
+const slaPrioridades: Priority[] = ["P1", "P2", "P3", "P4"];
+const slaTipos: RecordType[] = ["incidente", "requisicao", "tarefa", "problema", "melhoria"];
+
+const regrasSla = [
+  "O relógio inicia no registro do chamado e segue contando até a resolução, inclusive em Aguardando terceiros.",
+  "Incidentes P1 seguem regime 24×7; demais classificações contam horas corridas.",
+  "Chamado sem primeiro retorno dentro do prazo de resposta entra automaticamente em risco (amarelo).",
+  "Ao ultrapassar 75% do prazo de solução o chamado é sinalizado em risco; após o vencimento, vermelho.",
+  "Problemas têm prazo de solução ampliado por exigirem RCA; o prazo de resposta cobre o aceite da investigação.",
+  "Reclassificação de prioridade recalcula os prazos a partir da data original do registro.",
+];
+
 const fluxoP1 = [
   "Detecção e registro imediato como Incidente P1",
   "Acionamento da ponte de crise e do gestor de plantão",
@@ -143,13 +157,69 @@ function Governanca() {
                 <div className="flex items-center justify-between">
                   <PriorityBadge value={p} full />
                   <span className="font-mono text-xs text-muted-foreground">
-                    resposta {SLA_HORAS[p].resposta}h · solução {SLA_HORAS[p].solucao}h
+                    incidente: {formatSlaHoras(SLA_MATRIX.incidente[p].resposta)} resposta ·{" "}
+                    {formatSlaHoras(SLA_MATRIX.incidente[p].solucao)} solução
                   </span>
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">{prioridadeDescricao[p]}</p>
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="panel p-5">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Timer className="size-4 text-primary" /> Acordo de nível de serviço (SLA) por
+            classificação
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Tempo de <strong>resposta</strong> = primeiro retorno da TI ao solicitante. Tempo de{" "}
+            <strong>solução</strong> = restabelecimento ou entrega. Horas corridas contadas a partir
+            do registro do chamado; P1 é atendido em regime 24×7.
+          </p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[44rem] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="py-2 pr-4 font-normal">Classificação</th>
+                  {slaPrioridades.map((p) => (
+                    <th key={p} className="py-2 pr-4 font-normal">
+                      {PRIORITY_LABEL[p]}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {slaTipos.map((t) => (
+                  <tr key={t} className="border-b border-border/60 last:border-0">
+                    <td className="py-3 pr-4">
+                      <TypeBadge value={t} />
+                    </td>
+                    {slaPrioridades.map((p) => (
+                      <td key={p} className="py-3 pr-4 font-mono text-xs">
+                        <span className="text-foreground">
+                          {formatSlaHoras(SLA_MATRIX[t][p].resposta)}
+                        </span>
+                        <span className="text-muted-foreground"> resp.</span>
+                        <span className="mx-1 text-muted-foreground">/</span>
+                        <span className="text-foreground">
+                          {formatSlaHoras(SLA_MATRIX[t][p].solucao)}
+                        </span>
+                        <span className="text-muted-foreground"> sol.</span>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className="mt-4 grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
+            {regrasSla.map((r) => (
+              <li key={r} className="rounded-lg border border-border bg-surface p-3">
+                {r}
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">

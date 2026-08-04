@@ -4,6 +4,7 @@ import { Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/itsm/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/components/itsm/badges";
+import { SlaPanel } from "@/components/itsm/sla-panel";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -212,7 +213,7 @@ function Chamados() {
                   <span>
                     <StatusBadge value={t.status} />
                   </span>
-                  <SlaPill prazo={t.prazoSla} status={t.status} />
+                  <SlaPill ticket={t} />
                 </button>
               </li>
             ))}
@@ -265,6 +266,8 @@ function Chamados() {
                     </div>
                   ))}
                 </dl>
+
+                <SlaPanel ticket={atual} />
 
                 {atual.problemaVinculado ? (
                   <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">

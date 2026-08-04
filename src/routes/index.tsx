@@ -253,7 +253,7 @@ function Dashboard() {
                   <TypeBadge value={t.tipo} />
                   <PriorityBadge value={t.prioridade} />
                   <StatusBadge value={t.status} />
-                  <SlaPill prazo={t.prazoSla} status={t.status} />
+                  <SlaPill ticket={t} />
                 </li>
               ))}
             </ul>
