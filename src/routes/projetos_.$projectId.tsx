@@ -445,6 +445,7 @@ function ProjetoDetalhe() {
         </TabsContent>
 
         <TabsContent value="tarefas">
+          <div />
           <div className="glass-panel overflow-x-auto rounded-2xl border border-border/60 p-5">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase tracking-wide text-muted-foreground">
