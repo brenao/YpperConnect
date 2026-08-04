@@ -1,21 +1,27 @@
 import type { Article, Project, ServiceItem, Ticket } from "./itsm-types";
-import { SLA_HORAS, resolvePriority } from "./itsm-types";
+import { resolvePriority, slaFor } from "./itsm-types";
 
 const now = Date.now();
 const h = (n: number) => new Date(now + n * 3600_000).toISOString();
 
 function mk(
-  t: Omit<Ticket, "prioridade" | "prazoSla" | "criadoEm"> & { criadoHaHoras: number },
+  t: Omit<Ticket, "prioridade" | "prazoSla" | "prazoResposta" | "criadoEm"> & {
+    criadoHaHoras: number;
+  },
 ): Ticket {
   const prioridade = resolvePriority(t.impacto, t.urgencia);
   const criadoEm = h(-t.criadoHaHoras);
+  const meta = slaFor(t.tipo, prioridade);
+  const base = new Date(criadoEm).getTime();
   return {
     ...t,
     prioridade,
     criadoEm,
-    prazoSla: new Date(
-      new Date(criadoEm).getTime() + SLA_HORAS[prioridade].solucao * 3600_000,
-    ).toISOString(),
+    prazoSla: new Date(base + meta.solucao * 3600_000).toISOString(),
+    prazoResposta: new Date(base + meta.resposta * 3600_000).toISOString(),
+    ...(t.status !== "novo" && t.status !== "triagem"
+      ? { respondidoEm: new Date(base + (meta.resposta / 2) * 3600_000).toISOString() }
+      : {}),
   };
 }
 
