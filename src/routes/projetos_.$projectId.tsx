@@ -115,7 +115,7 @@ function Gantt({ project }: { project: Project }) {
           style={{ left: `calc(16rem + (100% - 16rem) * ${hojePct / 100})` }}
         />
       ) : null}
-      {project.tarefas.map((t) => {
+      {project.tarefas.map((t, idx) => {
         const sched = cpm.get(t.id);
         const ini = sched?.es ?? parseDate(t.inicio);
         const fim = sched?.ef ?? parseDate(t.fim);
@@ -124,7 +124,10 @@ function Gantt({ project }: { project: Project }) {
         const critica = sched?.critica;
         return (
           <div key={t.id} className="flex items-center gap-3 text-sm">
-            <div className="flex w-64 shrink-0 items-start gap-1" style={{ paddingLeft: t.paiId ? 16 : 0 }}>
+            <div className="flex w-64 shrink-0 items-start gap-1">
+              <span className="mt-0.5 w-6 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+                {idx + 1}
+              </span>
               <TaskDialog
                 project={project}
                 afterTask={t}
@@ -139,7 +142,7 @@ function Gantt({ project }: { project: Project }) {
                   </button>
                 }
               />
-              <div className="min-w-0">
+              <div className="min-w-0" style={{ paddingLeft: t.paiId ? 12 : 0 }}>
               <div className="flex items-center gap-2">
                 {critica ? (
                   <span className="h-1.5 w-1.5 rounded-full bg-destructive" title="Tarefa crítica" />
@@ -149,6 +152,12 @@ function Gantt({ project }: { project: Project }) {
               <span className="text-[11px] text-muted-foreground">
                 {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
                 {taskAllocation(t)}% alocado
+                {(t.predecessoras ?? []).length
+                  ? ` · após ${(t.predecessoras ?? [])
+                      .map((p) => project.tarefas.findIndex((x) => x.id === p) + 1)
+                      .filter((n) => n > 0)
+                      .join(", ")}`
+                  : ""}
               </span>
               </div>
             </div>
@@ -474,6 +483,7 @@ function ProjetoDetalhe() {
             <table className="w-full text-sm">
               <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                 <tr className="border-b border-border/60">
+                  <th className="w-10 py-2 text-left">#</th>
                   <th className="py-2 text-left">Tarefa</th>
                   <th className="py-2 text-left">Responsáveis</th>
                   <th className="py-2 text-left">Duração</th>
@@ -484,10 +494,13 @@ function ProjetoDetalhe() {
                 </tr>
               </thead>
               <tbody>
-                {project.tarefas.map((t) => {
+                {project.tarefas.map((t, idx) => {
                   const s = cpm.get(t.id);
                   return (
                     <tr key={t.id} className="border-b border-border/40">
+                      <td className="py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+                        {idx + 1}
+                      </td>
                       <td className="py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
                         <div className="flex items-center gap-2">
                           {s?.critica ? (
@@ -504,7 +517,12 @@ function ProjetoDetalhe() {
                           {t.atividade ?? "Execução"}
                           {(t.predecessoras ?? []).length
                             ? ` · após ${(t.predecessoras ?? [])
-                                .map((p) => project.tarefas.find((x) => x.id === p)?.nome ?? p)
+                                .map((p) => {
+                                  const i = project.tarefas.findIndex((x) => x.id === p);
+                                  return i >= 0
+                                    ? `${i + 1}. ${project.tarefas[i]!.nome}`
+                                    : p;
+                                })
                                 .join(", ")}`
                             : ""}
                         </span>

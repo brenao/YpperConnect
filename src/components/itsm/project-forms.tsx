@@ -164,11 +164,34 @@ export function TaskDialog({
   const [responsaveis, setResponsaveis] = useState((task?.responsaveis ?? [task?.responsavel ?? ""]).join(", "));
   const [paiId, setPaiId] = useState(task?.paiId ?? afterTask?.paiId ?? "");
   const [filhaDaAcima, setFilhaDaAcima] = useState(false);
-  const [preds, setPreds] = useState<string[]>(task?.predecessoras ?? []);
   const [marco, setMarco] = useState(Boolean(task?.marco));
   const [alocacao, setAlocacao] = useState(String(task?.alocacaoPct ?? 100));
 
   const candidatas = project.tarefas.filter((t) => t.id !== task?.id);
+  /** Número visível da tarefa = posição no cronograma (1..n). */
+  const numeroPorId = new Map(project.tarefas.map((t, i) => [t.id, i + 1]));
+  const idPorNumero = new Map(project.tarefas.map((t, i) => [i + 1, t.id]));
+  const [predsTexto, setPredsTexto] = useState(
+    (task?.predecessoras ?? [])
+      .map((id) => numeroPorId.get(id))
+      .filter((n): n is number => Boolean(n))
+      .join(", "),
+  );
+  const numerosInformados = predsTexto
+    .split(/[,;\s]+/)
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const numeroProprio = task ? numeroPorId.get(task.id) : undefined;
+  const predsInvalidas = numerosInformados.filter(
+    (n) => !idPorNumero.has(n) || (numeroProprio !== undefined && n === numeroProprio),
+  );
+  const predsIds = Array.from(
+    new Set(
+      numerosInformados
+        .filter((n) => !predsInvalidas.includes(n))
+        .map((n) => idPorNumero.get(n)!),
+    ),
+  );
 
   const pessoasSelecionadas = responsaveis
     .split(",")
@@ -189,6 +212,10 @@ export function TaskDialog({
 
   function submit() {
     if (nome.trim().length < 3) { toast.error("Informe o nome da tarefa."); return; }
+    if (predsInvalidas.length) {
+      toast.error(`Predecessoras inválidas: ${predsInvalidas.join(", ")}`);
+      return;
+    }
     const dur = Number(duracao);
     if (!Number.isFinite(dur) || dur <= 0) { toast.error("Informe uma duração válida."); return; }
     const dias = unidade === "horas" ? Math.max(dur / 8, 0.125) : dur;
@@ -210,7 +237,7 @@ export function TaskDialog({
       progresso: Math.max(0, Math.min(100, Number(progresso) || 0)),
       responsavel: pessoas[0]!,
       responsaveis: pessoas,
-      predecessoras: preds,
+      predecessoras: predsIds,
       paiId: paiFinal,
       marco,
       alocacaoPct: alocNum,
@@ -306,7 +333,7 @@ export function TaskDialog({
                   <SelectItem value="none">Sem tarefa pai</SelectItem>
                   {candidatas.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
-                      {t.nome}
+                      {numeroPorId.get(t.id)}. {t.nome}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -365,20 +392,30 @@ export function TaskDialog({
           </div>
           {candidatas.length > 0 && (
             <div className="grid gap-2">
-              <Label>Predecessoras</Label>
-              <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border border-border p-3">
-                {candidatas.map((t) => (
-                  <label key={t.id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={preds.includes(t.id)}
-                      onCheckedChange={(c) =>
-                        setPreds((prev) => (c ? [...prev, t.id] : prev.filter((x) => x !== t.id)))
-                      }
-                    />
-                    <span className="truncate">{t.nome}</span>
-                  </label>
-                ))}
-              </div>
+              <Label htmlFor="t-preds">Predecessoras (números das tarefas, separados por vírgula)</Label>
+              <Input
+                id="t-preds"
+                value={predsTexto}
+                onChange={(e) => setPredsTexto(e.target.value)}
+                placeholder="Ex.: 2, 5, 7"
+                className={predsInvalidas.length ? "border-destructive" : undefined}
+              />
+              {predsInvalidas.length ? (
+                <p className="text-[11px] text-destructive">
+                  Número(s) inexistente(s) ou inválido(s): {predsInvalidas.join(", ")}
+                </p>
+              ) : predsIds.length ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Após:{" "}
+                  {predsIds
+                    .map((id) => `${numeroPorId.get(id)}. ${project.tarefas.find((x) => x.id === id)?.nome ?? id}`)
+                    .join(" · ")}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  Use a coluna <strong>#</strong> do cronograma para identificar o número de cada tarefa.
+                </p>
+              )}
             </div>
           )}
           <label className="flex items-center gap-2 text-sm">
