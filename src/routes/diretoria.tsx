@@ -3,6 +3,8 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import type { DateRange } from "react-day-picker";
 import {
   CartesianGrid,
+  Bar,
+  BarChart,
   Legend,
   Line,
   LineChart,
@@ -24,7 +26,16 @@ import {
 } from "@/components/ui/select";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useItsm } from "@/lib/itsm-store";
-import { PROJECT_STATUS_LABEL, type Priority, type ProjectStatus } from "@/lib/itsm-types";
+import {
+  PROJECT_STATUS_LABEL,
+  STATUS_LABEL,
+  TYPE_LABEL,
+  evaluateSla,
+  type Priority,
+  type ProjectStatus,
+  type RecordType,
+  type TicketStatus,
+} from "@/lib/itsm-types";
 import { HEALTH_DOT, isLate, parseDate, projectHealth } from "@/lib/project-utils";
 import { cn } from "@/lib/utils";
 
@@ -134,6 +145,101 @@ function Diretoria() {
     return [...map.entries()].sort((a, b) => b[1] - a[1]);
   }, [filtrados]);
 
+  // ---- Visão executiva de chamados (criados x atendidos no período) ----
+  const noPeriodo = (iso: string | undefined) => {
+    if (!iso) return false;
+    if (inicioMs === null || fimMs === null) return true;
+    const ms = new Date(iso).getTime();
+    return ms >= inicioMs && ms <= fimMs;
+  };
+
+  const chamados = useMemo(() => {
+    const encerrado = (s: TicketStatus) => s === "resolvido" || s === "fechado";
+    const criados = tickets.filter((t) => noPeriodo(t.criadoEm));
+    const atendidos = tickets.filter((t) => encerrado(t.status) && noPeriodo(t.criadoEm));
+    const emAberto = tickets.filter((t) => !encerrado(t.status));
+    const backlog = emAberto.filter((t) => noPeriodo(t.criadoEm));
+    const primeiroRetorno = criados.filter((t) => Boolean(t.respondidoEm));
+    const dentroSla = hydrated
+      ? atendidos.filter((t) => evaluateSla(t).estado === "atendido").length
+      : 0;
+    const emRisco = hydrated
+      ? emAberto.filter((t) => {
+          const e = evaluateSla(t).estado;
+          return e === "em_risco" || e === "estourado";
+        }).length
+      : 0;
+    const taxaAtendimento = criados.length
+      ? Math.round((atendidos.length / criados.length) * 100)
+      : 0;
+    const aderenciaSla = atendidos.length
+      ? Math.round((dentroSla / atendidos.length) * 100)
+      : 0;
+
+    const porTipo = (Object.keys(TYPE_LABEL) as RecordType[])
+      .map((tipo) => ({
+        tipo,
+        label: TYPE_LABEL[tipo],
+        criados: criados.filter((t) => t.tipo === tipo).length,
+        atendidos: atendidos.filter((t) => t.tipo === tipo).length,
+      }))
+      .filter((r) => r.criados || r.atendidos);
+
+    const porStatus = (Object.keys(STATUS_LABEL) as TicketStatus[])
+      .map((s) => ({ status: s, total: criados.filter((t) => t.status === s).length }))
+      .filter((r) => r.total > 0);
+
+    const equipes = new Map<string, { criados: number; atendidos: number }>();
+    criados.forEach((t) => {
+      const atual = equipes.get(t.equipe) ?? { criados: 0, atendidos: 0 };
+      atual.criados += 1;
+      if (encerrado(t.status)) atual.atendidos += 1;
+      equipes.set(t.equipe, atual);
+    });
+    const porEquipe = [...equipes.entries()].sort((a, b) => b[1].criados - a[1].criados);
+
+    return {
+      criados: criados.length,
+      atendidos: atendidos.length,
+      backlog: backlog.length,
+      emRisco,
+      taxaAtendimento,
+      aderenciaSla,
+      primeiroRetorno: criados.length
+        ? Math.round((primeiroRetorno.length / criados.length) * 100)
+        : 0,
+      porTipo,
+      porStatus,
+      porEquipe,
+    };
+  }, [tickets, inicioMs, fimMs, hydrated]);
+
+  /** Série mensal de chamados criados x atendidos dentro da janela analisada. */
+  const serieChamados = useMemo(() => {
+    const hoje = new Date();
+    const primeiro =
+      inicioMs !== null ? new Date(inicioMs) : new Date(hoje.getFullYear(), hoje.getMonth() - 5, 1);
+    const ultimo = fimMs !== null ? new Date(fimMs) : hoje;
+    const total =
+      (ultimo.getFullYear() - primeiro.getFullYear()) * 12 +
+      (ultimo.getMonth() - primeiro.getMonth());
+    const linhas: { mes: string; criados: number; atendidos: number }[] = [];
+    for (let i = 0; i <= Math.max(total, 0); i++) {
+      const ini = new Date(primeiro.getFullYear(), primeiro.getMonth() + i, 1).getTime();
+      const fim = new Date(primeiro.getFullYear(), primeiro.getMonth() + i + 1, 1).getTime();
+      const doMes = tickets.filter((t) => {
+        const ms = new Date(t.criadoEm).getTime();
+        return ms >= ini && ms < fim;
+      });
+      linhas.push({
+        mes: MES(new Date(ini)),
+        criados: doMes.length,
+        atendidos: doMes.filter((t) => t.status === "resolvido" || t.status === "fechado").length,
+      });
+    }
+    return linhas;
+  }, [tickets, inicioMs, fimMs]);
+
   // Gráfico de baleia: 3 meses entregues + 6 meses previstos, com curva acumulada.
   const baleia = useMemo(() => {
     const meses: { mes: string; acumulado: number }[] = [];
@@ -226,6 +332,109 @@ function Diretoria() {
             }
           />
         ))}
+      </div>
+
+      <h2 className="mt-8 text-lg font-semibold">Atendimento (chamados no período)</h2>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <Kpi label="Chamados criados" value={chamados.criados} />
+        <Kpi
+          label="Chamados atendidos"
+          value={chamados.atendidos}
+          tone="text-success"
+          hint={`${chamados.taxaAtendimento}% do que foi criado`}
+        />
+        <Kpi label="Backlog em aberto" value={chamados.backlog} tone="text-warning" />
+        <Kpi
+          label="SLA em risco / estourado"
+          value={chamados.emRisco}
+          tone="text-destructive"
+          hint="Chamados abertos fora do prazo ou próximos"
+        />
+        <Kpi
+          label="Aderência ao SLA"
+          value={`${chamados.aderenciaSla}%`}
+          tone="text-primary"
+          hint={`Primeiro retorno registrado em ${chamados.primeiroRetorno}%`}
+        />
+      </div>
+
+      <div className="glass-panel mt-4 rounded-2xl border border-border/60 p-5">
+        <h3 className="font-semibold">Chamados criados x atendidos</h3>
+        <p className="text-sm text-muted-foreground">
+          Volume mensal de entrada e de encerramento dentro do período selecionado.
+        </p>
+        <div className="mt-4 h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={serieChamados}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="mes" stroke="currentColor" className="text-xs" />
+              <YAxis stroke="currentColor" className="text-xs" allowDecimals={false} />
+              <Tooltip
+                contentStyle={{
+                  background: "var(--color-card)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 12,
+                }}
+              />
+              <Legend />
+              <Bar dataKey="criados" name="Criados" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="atendidos" name="Atendidos" fill="var(--color-success)" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <div className="glass-panel rounded-2xl border border-border/60 p-5">
+          <h3 className="font-semibold">Por classificação</h3>
+          <ul className="mt-3 space-y-2 text-sm">
+            {chamados.porTipo.map((r) => (
+              <li key={r.tipo} className="flex items-center justify-between gap-3">
+                <span className="truncate">{r.label}</span>
+                <span className="font-mono text-muted-foreground">
+                  {r.criados} / <span className="text-success">{r.atendidos}</span>
+                </span>
+              </li>
+            ))}
+            {!chamados.porTipo.length ? (
+              <li className="text-muted-foreground">Sem chamados no período.</li>
+            ) : null}
+          </ul>
+          <p className="mt-3 text-xs text-muted-foreground">criados / atendidos</p>
+        </div>
+
+        <div className="glass-panel rounded-2xl border border-border/60 p-5">
+          <h3 className="font-semibold">Por status</h3>
+          <ul className="mt-3 space-y-2 text-sm">
+            {chamados.porStatus.map((r) => (
+              <li key={r.status} className="flex items-center justify-between gap-3">
+                <span className="truncate">{STATUS_LABEL[r.status]}</span>
+                <span className="font-mono text-muted-foreground">{r.total}</span>
+              </li>
+            ))}
+            {!chamados.porStatus.length ? (
+              <li className="text-muted-foreground">Sem chamados no período.</li>
+            ) : null}
+          </ul>
+        </div>
+
+        <div className="glass-panel rounded-2xl border border-border/60 p-5">
+          <h3 className="font-semibold">Por equipe</h3>
+          <ul className="mt-3 space-y-2 text-sm">
+            {chamados.porEquipe.map(([equipe, r]) => (
+              <li key={equipe} className="flex items-center justify-between gap-3">
+                <span className="truncate">{equipe}</span>
+                <span className="font-mono text-muted-foreground">
+                  {r.criados} / <span className="text-success">{r.atendidos}</span>
+                </span>
+              </li>
+            ))}
+            {!chamados.porEquipe.length ? (
+              <li className="text-muted-foreground">Sem chamados no período.</li>
+            ) : null}
+          </ul>
+          <p className="mt-3 text-xs text-muted-foreground">criados / atendidos</p>
+        </div>
       </div>
 
       <div className="glass-panel mt-6 rounded-2xl border border-border/60 p-5">
