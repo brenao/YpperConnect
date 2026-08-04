@@ -28,6 +28,10 @@ export interface Ticket {
   equipe: string;
   criadoEm: string;
   prazoSla: string;
+  /** Prazo máximo para o primeiro retorno da TI ao solicitante. */
+  prazoResposta?: string | undefined;
+  /** Momento do primeiro atendimento (saída de Novo/Triagem ou atribuição). */
+  respondidoEm?: string | undefined;
   problemaVinculado?: string;
   /** Obrigatória ao resolver/fechar o chamado. */
   descricaoEncerramento?: string | undefined;
