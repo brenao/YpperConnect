@@ -260,6 +260,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       updateProject,
       addTask,
       updateTask,
+      addService,
       removeTask,
       addProjectUpdate,
       addRisk,
