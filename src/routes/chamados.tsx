@@ -212,7 +212,7 @@ function Chamados() {
                   <span>
                     <StatusBadge value={t.status} />
                   </span>
-                  <SlaPill prazo={t.prazoSla} status={t.status} />
+                  <SlaPill ticket={t} />
                 </button>
               </li>
             ))}
