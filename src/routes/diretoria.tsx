@@ -1,11 +1,10 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import {
-  Bar,
   CartesianGrid,
-  ComposedChart,
   Legend,
   Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -117,7 +116,7 @@ function Diretoria() {
   const baleia = useMemo(() => {
     const base = new Date();
     base.setDate(1);
-    const meses: { mes: string; entregues: number; previstos: number; acumulado: number }[] = [];
+    const meses: { mes: string; acumulado: number }[] = [];
     let acumulado = 0;
     for (let i = -3; i <= 6; i++) {
       const ini = new Date(base.getFullYear(), base.getMonth() + i, 1).getTime();
@@ -126,15 +125,8 @@ function Diretoria() {
         const f = parseDate(p.fim);
         return f >= ini && f < fim && p.status !== "cancelado";
       });
-      const entregues = doMes.filter((p) => p.status === "concluido").length;
-      const previstos = doMes.length - entregues;
       acumulado += doMes.length;
-      meses.push({
-        mes: MES(new Date(ini)),
-        entregues,
-        previstos: i >= 0 ? previstos : 0,
-        acumulado,
-      });
+      meses.push({ mes: MES(new Date(ini)), acumulado });
     }
     return meses;
   }, [filtrados]);
@@ -206,11 +198,11 @@ function Diretoria() {
       <div className="glass-panel mt-6 rounded-2xl border border-border/60 p-5">
         <h3 className="font-semibold">Curva de entregas (baleia)</h3>
         <p className="text-sm text-muted-foreground">
-          Entregas dos últimos 3 meses e previstas para os próximos 6, com acumulado do portfólio.
+          Acumulado de projetos entregues e previstos, mês a mês (3 meses passados e 6 futuros).
         </p>
         <div className="mt-4 h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={baleia}>
+            <LineChart data={baleia}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
               <XAxis dataKey="mes" stroke="currentColor" className="text-xs" />
               <YAxis stroke="currentColor" className="text-xs" allowDecimals={false} />
@@ -222,17 +214,15 @@ function Diretoria() {
                 }}
               />
               <Legend />
-              <Bar dataKey="entregues" name="Entregues" fill="var(--color-success)" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="previstos" name="Previstos" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
               <Line
                 type="monotone"
                 dataKey="acumulado"
-                name="Acumulado"
-                stroke="var(--color-warning)"
+                name="Acumulado de entregas"
+                stroke="var(--color-primary)"
                 strokeWidth={2}
-                dot={false}
+                dot={{ r: 3 }}
               />
-            </ComposedChart>
+            </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
