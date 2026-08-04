@@ -1,7 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Sparkles, Clock, Users } from "lucide-react";
+import { useState } from "react";
+import { Sparkles, Clock, Loader2, Users } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "@/components/itsm/app-shell";
 import { TypeBadge } from "@/components/itsm/badges";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { suggestCatalogServices } from "@/lib/ai-catalog.functions";
 import { useItsm } from "@/lib/itsm-store";
 
 export const Route = createFileRoute("/catalogo")({
@@ -24,8 +38,34 @@ export const Route = createFileRoute("/catalogo")({
 });
 
 function Catalogo() {
-  const { services } = useItsm();
+  const { services, addService, role } = useItsm();
   const categorias = [...new Set(services.map((s) => s.categoria))];
+  const [open, setOpen] = useState(false);
+  const [contexto, setContexto] = useState("");
+  const [gerando, setGerando] = useState(false);
+
+  async function gerar() {
+    if (contexto.trim().length < 10) {
+      toast.error("Descreva os serviços prestados pela área.");
+      return;
+    }
+    setGerando(true);
+    try {
+      const { servicos } = await suggestCatalogServices({
+        data: { contexto: contexto.trim(), existentes: services.map((s) => s.nome) },
+      });
+      servicos.forEach((s) => addService({ ...s, geradoPorIA: true }));
+      setOpen(false);
+      setContexto("");
+      toast.success(`${servicos.length} serviço(s) sugerido(s) pela IA`, {
+        description: "Revise e ajuste antes de publicar para os usuários.",
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao sugerir serviços.");
+    } finally {
+      setGerando(false);
+    }
+  }
 
   return (
     <AppShell
@@ -41,6 +81,37 @@ function Catalogo() {
             <Sparkles className="size-3.5" />
             {services.filter((s) => s.geradoPorIA).length} rascunhos gerados por IA em curadoria
           </span>
+          {role === "ti" ? (
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button variant="secondary" size="sm" className="ml-auto gap-2">
+                  <Sparkles className="size-4" /> Sugerir serviços com IA
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Ampliar catálogo com IA</DialogTitle>
+                  <DialogDescription>
+                    Descreva os serviços prestados hoje pela área de TI. A IA propõe itens de
+                    catálogo com categoria, classificação padrão, SLA e equipe.
+                  </DialogDescription>
+                </DialogHeader>
+                <Textarea
+                  rows={5}
+                  maxLength={3000}
+                  value={contexto}
+                  onChange={(e) => setContexto(e.target.value)}
+                  placeholder="Ex.: suporte a estações Windows, acessos ao ERP, telefonia, backup, redes das lojas..."
+                />
+                <DialogFooter>
+                  <Button onClick={gerar} disabled={gerando} className="gap-2">
+                    {gerando ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                    Gerar sugestões
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          ) : null}
         </div>
 
         {categorias.map((cat) => (
