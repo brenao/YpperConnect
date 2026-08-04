@@ -410,6 +410,7 @@ function ProjetoDetalhe() {
       <Tabs defaultValue="cronograma" className="mt-6">
         <TabsList>
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
+          <TabsTrigger value="kanban">Kanban</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
           <TabsTrigger value="recursos">Recursos</TabsTrigger>
           <TabsTrigger value="atualizacoes">Atualizações</TabsTrigger>
