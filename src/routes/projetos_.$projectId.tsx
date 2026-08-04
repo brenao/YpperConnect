@@ -499,12 +499,12 @@ function ProjetoDetalhe() {
               <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="w-10 py-2 text-left">#</th>
-                  <th className="whitespace-nowrap px-3 py-2 text-left">Tarefa</th>
-                  <th className="whitespace-nowrap px-3 py-2 text-left">Responsáveis</th>
-                  <th className="whitespace-nowrap px-3 py-2 text-left">Duração</th>
-                  <th className="whitespace-nowrap px-3 py-2 text-left">Período</th>
-                  <th className="whitespace-nowrap px-3 py-2 text-left">%</th>
-                  <th className="px-3 py-2 text-right">Ações</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Tarefa</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Responsáveis</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Duração</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Período</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">%</th>
+                  <th className="px-2 py-2 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -512,10 +512,10 @@ function ProjetoDetalhe() {
                   const s = cpm.get(t.id);
                   return (
                     <tr key={t.id} className="border-b border-border/40">
-                      <td className="px-3 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+                      <td className="px-2 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
                         {idx + 1}
                       </td>
-                      <td className="px-3 py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
+                      <td className="px-2 py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
                         <div className="flex items-center gap-2">
                           <TaskDialog
                             project={project}
@@ -560,14 +560,14 @@ function ProjetoDetalhe() {
                             : ""}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                      <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
                         {(t.responsaveis ?? [t.responsavel]).join(", ")}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{taskDurationLabel(t)}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{taskDurationLabel(t)}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
                         {fmtDate(t.inicio)} — {fmtDate(t.fim)}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         <input
                           type="number"
                           min={0}
@@ -578,10 +578,10 @@ function ProjetoDetalhe() {
                               progresso: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
                             })
                           }
-                          className="w-14 rounded-md border border-border bg-transparent px-2 py-1 text-sm"
+                          className="w-12 rounded-md border border-border bg-transparent px-2 py-1 text-sm"
                         />
                       </td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-2 py-2 text-right">
                         <div className="flex justify-end gap-1">
                           <TaskDialog
                             project={project}
