@@ -292,245 +292,301 @@ function Diretoria() {
       title="Visão diretoria"
       subtitle="Panorama executivo do portfólio de projetos e da operação de atendimento"
     >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_260px_200px_200px]">
-        <Input
-          placeholder="Filtrar por nome do projeto..."
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-        />
-        <DateRangePicker
-          value={periodo}
-          onChange={setPeriodo}
-          placeholder="Período (início → fim)"
-        />
-        <Select value={gp} onValueChange={setGp}>
-          <SelectTrigger>
-            <SelectValue placeholder="Responsável (GP)" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos os GPs</SelectItem>
-            {gerentes.map((g) => (
-              <SelectItem key={g} value={g}>
-                {g}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
-          <SelectTrigger>
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos os status</SelectItem>
-            {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
-              <SelectItem key={s} value={s}>
-                {PROJECT_STATUS_LABEL[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <Kpi label="Projetos cadastrados" value={filtrados.length} />
-        <Kpi label="Em execução" value={emExecucao} tone="text-primary" />
-        <Kpi label="Em atraso" value={atrasados} tone="text-destructive" hint="Prazo estourado ou >15% de desvio" />
-        <Kpi label="Paralisados / cancelados" value={parados} tone="text-warning" />
-        <Kpi label="Concluídos" value={concluidos} tone="text-success" />
-      </div>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-4">
-        {porPrioridade.map((p) => (
-          <Kpi
-            key={p.prioridade}
-            label={`Chamados ${p.prioridade} abertos`}
-            value={p.total}
-            tone={
-              p.prioridade === "P1"
-                ? "text-destructive"
-                : p.prioridade === "P2"
-                  ? "text-warning"
-                  : undefined
-            }
-          />
-        ))}
-      </div>
-
-      <h2 className="mt-8 text-lg font-semibold">Atendimento (chamados no período)</h2>
-      <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <Kpi label="Chamados criados" value={chamados.criados} />
-        <Kpi
-          label="Chamados atendidos"
-          value={chamados.atendidos}
-          tone="text-success"
-          hint={`${chamados.taxaAtendimento}% do que foi criado`}
-        />
-        <Kpi label="Backlog em aberto" value={chamados.backlog} tone="text-warning" />
-        <Kpi
-          label="SLA em risco / estourado"
-          value={chamados.emRisco}
-          tone="text-destructive"
-          hint="Chamados abertos fora do prazo ou próximos"
-        />
-        <Kpi
-          label="Aderência ao SLA"
-          value={`${chamados.aderenciaSla}%`}
-          tone="text-primary"
-          hint={`Primeiro retorno registrado em ${chamados.primeiroRetorno}%`}
-        />
-      </div>
-
-      <div className="glass-panel mt-4 rounded-2xl border border-border/60 p-5">
-        <h3 className="font-semibold">Chamados criados x atendidos</h3>
-        <p className="text-sm text-muted-foreground">
-          Volume mensal de entrada e de encerramento dentro do período selecionado.
-        </p>
-        <div className="mt-4 h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={serieChamados}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="mes" stroke="currentColor" className="text-xs" />
-              <YAxis stroke="currentColor" className="text-xs" allowDecimals={false} />
-              <Tooltip
-                contentStyle={{
-                  background: "var(--color-card)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: 12,
-                }}
-              />
-              <Legend />
-              <Bar dataKey="criados" name="Criados" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="atendidos" name="Atendidos" fill="var(--color-success)" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <div className="glass-panel rounded-2xl border border-border/60 p-5">
-          <h3 className="font-semibold">Por classificação</h3>
-          <ul className="mt-3 space-y-2 text-sm">
-            {chamados.porTipo.map((r) => (
-              <li key={r.tipo} className="flex items-center justify-between gap-3">
-                <span className="truncate">{r.label}</span>
-                <span className="font-mono text-muted-foreground">
-                  {r.criados} / <span className="text-success">{r.atendidos}</span>
-                </span>
-              </li>
-            ))}
-            {!chamados.porTipo.length ? (
-              <li className="text-muted-foreground">Sem chamados no período.</li>
-            ) : null}
-          </ul>
-          <p className="mt-3 text-xs text-muted-foreground">criados / atendidos</p>
+      <Tabs defaultValue="projetos" className="w-full">
+        <div className="glass-panel sticky top-2 z-20 rounded-2xl border border-border/60 p-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+            <TabsList className="w-fit">
+              <TabsTrigger value="projetos">Projetos</TabsTrigger>
+              <TabsTrigger value="chamados">Chamados</TabsTrigger>
+            </TabsList>
+            <span className="hidden text-xs text-muted-foreground sm:block">
+              {periodo?.from ? "Período aplicado" : "Todo o histórico"}
+            </span>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-[1fr_260px_200px_200px]">
+            <Input
+              placeholder="Filtrar por nome do projeto..."
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+            />
+            <DateRangePicker
+              value={periodo}
+              onChange={setPeriodo}
+              placeholder="Período (início → fim)"
+            />
+            <Select value={gp} onValueChange={setGp}>
+              <SelectTrigger>
+                <SelectValue placeholder="Responsável (GP)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os GPs</SelectItem>
+                {gerentes.map((g) => (
+                  <SelectItem key={g} value={g}>
+                    {g}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os status</SelectItem>
+                {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {PROJECT_STATUS_LABEL[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
-        <div className="glass-panel rounded-2xl border border-border/60 p-5">
-          <h3 className="font-semibold">Por status</h3>
-          <ul className="mt-3 space-y-2 text-sm">
-            {chamados.porStatus.map((r) => (
-              <li key={r.status} className="flex items-center justify-between gap-3">
-                <span className="truncate">{STATUS_LABEL[r.status]}</span>
-                <span className="font-mono text-muted-foreground">{r.total}</span>
-              </li>
-            ))}
-            {!chamados.porStatus.length ? (
-              <li className="text-muted-foreground">Sem chamados no período.</li>
-            ) : null}
-          </ul>
-        </div>
+        {/* ---------------- PROJETOS ---------------- */}
+        <TabsContent value="projetos" className="mt-5 space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <Kpi label="Projetos cadastrados" value={filtrados.length} />
+            <Kpi label="Em execução" value={emExecucao} tone="text-primary" />
+            <Kpi
+              label="Em atraso"
+              value={atrasados}
+              tone="text-destructive"
+              hint="Prazo estourado ou >15% de desvio"
+            />
+            <Kpi label="Paralisados / cancelados" value={parados} tone="text-warning" />
+            <Kpi label="Concluídos" value={concluidos} tone="text-success" />
+          </div>
 
-        <div className="glass-panel rounded-2xl border border-border/60 p-5">
-          <h3 className="font-semibold">Por equipe</h3>
-          <ul className="mt-3 space-y-2 text-sm">
-            {chamados.porEquipe.map(([equipe, r]) => (
-              <li key={equipe} className="flex items-center justify-between gap-3">
-                <span className="truncate">{equipe}</span>
-                <span className="font-mono text-muted-foreground">
-                  {r.criados} / <span className="text-success">{r.atendidos}</span>
-                </span>
-              </li>
-            ))}
-            {!chamados.porEquipe.length ? (
-              <li className="text-muted-foreground">Sem chamados no período.</li>
-            ) : null}
-          </ul>
-          <p className="mt-3 text-xs text-muted-foreground">criados / atendidos</p>
-        </div>
-      </div>
+          <Panel
+            title="Curva de entregas (baleia)"
+            description="Acumulado de projetos entregues e previstos, mês a mês, dentro do período selecionado."
+          >
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={baleia}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                  <XAxis dataKey="mes" stroke="currentColor" className="text-xs" />
+                  <YAxis stroke="currentColor" className="text-xs" allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--color-card)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 12,
+                    }}
+                  />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="acumulado"
+                    name="Acumulado de entregas"
+                    stroke="var(--color-primary)"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
 
-      <div className="glass-panel mt-6 rounded-2xl border border-border/60 p-5">
-        <h3 className="font-semibold">Curva de entregas (baleia)</h3>
-        <p className="text-sm text-muted-foreground">
-          Acumulado de projetos entregues e previstos, mês a mês, dentro do período selecionado.
-        </p>
-        <div className="mt-4 h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={baleia}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="mes" stroke="currentColor" className="text-xs" />
-              <YAxis stroke="currentColor" className="text-xs" allowDecimals={false} />
-              <Tooltip
-                contentStyle={{
-                  background: "var(--color-card)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: 12,
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="acumulado"
-                name="Acumulado de entregas"
-                stroke="var(--color-primary)"
-                strokeWidth={2}
-                dot={{ r: 3 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+          <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+            <Panel title="Projetos por responsável" description="Distribuição do portfólio por GP.">
+              <ul className="space-y-2.5">
+                {porResponsavel.map(([nome, total]) => {
+                  const max = porResponsavel[0]?.[1] ?? 1;
+                  return (
+                    <li key={nome} className="space-y-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="truncate">{nome}</span>
+                        <span className="font-mono text-muted-foreground">{total}</span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary"
+                          style={{ width: `${Math.round((total / max) * 100)}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+                {!porResponsavel.length ? (
+                  <li className="text-sm text-muted-foreground">Sem projetos no filtro atual.</li>
+                ) : null}
+              </ul>
+            </Panel>
 
-      <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <div className="glass-panel rounded-2xl border border-border/60 p-5">
-          <h3 className="font-semibold">Projetos por responsável</h3>
-          <ul className="mt-3 space-y-2">
-            {porResponsavel.map(([nome, total]) => (
-              <li key={nome} className="flex items-center justify-between text-sm">
-                <span>{nome}</span>
-                <span className="font-mono text-muted-foreground">{total}</span>
-              </li>
-            ))}
-            {!porResponsavel.length ? (
-              <li className="text-sm text-muted-foreground">Sem projetos no filtro atual.</li>
-            ) : null}
-          </ul>
-        </div>
+            <Panel
+              title="Semáforo do portfólio"
+              description="Saúde de cada projeto conforme prazo e desvio."
+            >
+              <ul className="max-h-[420px] space-y-1 overflow-auto pr-1">
+                {filtrados.map((p) => {
+                  const h = hydrated ? projectHealth(p) : null;
+                  return (
+                    <li
+                      key={p.id}
+                      className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-muted/50"
+                    >
+                      <Link
+                        to="/projetos/$projectId"
+                        params={{ projectId: p.id }}
+                        className="flex min-w-0 items-center gap-2 hover:text-primary"
+                      >
+                        {h ? (
+                          <span className={cn("h-2 w-2 shrink-0 rounded-full", HEALTH_DOT[h.geral])} />
+                        ) : null}
+                        <span className="truncate">{p.nome}</span>
+                      </Link>
+                      <Badge variant="outline" className="shrink-0">
+                        {PROJECT_STATUS_LABEL[p.status]}
+                      </Badge>
+                    </li>
+                  );
+                })}
+                {!filtrados.length ? (
+                  <li className="text-sm text-muted-foreground">Sem projetos no filtro atual.</li>
+                ) : null}
+              </ul>
+            </Panel>
+          </div>
+        </TabsContent>
 
-        <div className="glass-panel rounded-2xl border border-border/60 p-5">
-          <h3 className="font-semibold">Semáforo do portfólio</h3>
-          <ul className="mt-3 space-y-2">
-            {filtrados.map((p) => {
-              const h = hydrated ? projectHealth(p) : null;
-              return (
-                <li key={p.id} className="flex items-center justify-between gap-3 text-sm">
-                  <Link
-                    to="/projetos/$projectId"
-                    params={{ projectId: p.id }}
-                    className="flex min-w-0 items-center gap-2 hover:text-primary"
+        {/* ---------------- CHAMADOS ---------------- */}
+        <TabsContent value="chamados" className="mt-5 space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <Kpi label="Chamados criados" value={chamados.criados} />
+            <Kpi
+              label="Chamados atendidos"
+              value={chamados.atendidos}
+              tone="text-success"
+              hint={`${chamados.taxaAtendimento}% do que foi criado`}
+            />
+            <Kpi label="Backlog em aberto" value={chamados.backlog} tone="text-warning" />
+            <Kpi
+              label="SLA em risco / estourado"
+              value={chamados.emRisco}
+              tone="text-destructive"
+              hint="Abertos fora do prazo ou próximos"
+            />
+            <Kpi
+              label="Aderência ao SLA"
+              value={`${chamados.aderenciaSla}%`}
+              tone="text-primary"
+              hint={`Primeiro retorno em ${chamados.primeiroRetorno}%`}
+            />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+            <Panel
+              title="Chamados criados x atendidos"
+              description="Volume mensal de entrada e de encerramento no período selecionado."
+            >
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={serieChamados}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                    <XAxis dataKey="mes" stroke="currentColor" className="text-xs" />
+                    <YAxis stroke="currentColor" className="text-xs" allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{
+                        background: "var(--color-card)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 12,
+                      }}
+                    />
+                    <Legend />
+                    <Bar
+                      dataKey="criados"
+                      name="Criados"
+                      fill="var(--color-primary)"
+                      radius={[6, 6, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="atendidos"
+                      name="Atendidos"
+                      fill="var(--color-success)"
+                      radius={[6, 6, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+
+            <Panel title="Abertos por prioridade" description="Fila atual conforme a matriz P1–P4.">
+              <ul className="space-y-2">
+                {porPrioridade.map((p) => (
+                  <li
+                    key={p.prioridade}
+                    className="flex items-center justify-between rounded-lg border border-border/50 px-3 py-2.5"
                   >
-                    {h ? <span className={cn("h-2 w-2 rounded-full", HEALTH_DOT[h.geral])} /> : null}
-                    <span className="truncate">{p.nome}</span>
-                  </Link>
-                  <Badge variant="outline" className="shrink-0">
-                    {PROJECT_STATUS_LABEL[p.status]}
-                  </Badge>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </div>
+                    <span
+                      className={cn(
+                        "text-sm font-medium",
+                        p.prioridade === "P1"
+                          ? "text-destructive"
+                          : p.prioridade === "P2"
+                            ? "text-warning"
+                            : undefined,
+                      )}
+                    >
+                      {p.prioridade}
+                    </span>
+                    <span className="font-mono text-lg tabular-nums">{p.total}</span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Panel title="Por classificação" description="criados / atendidos">
+              <ul className="space-y-2 text-sm">
+                {chamados.porTipo.map((r) => (
+                  <li key={r.tipo} className="flex items-center justify-between gap-3">
+                    <span className="truncate">{r.label}</span>
+                    <span className="font-mono text-muted-foreground">
+                      {r.criados} / <span className="text-success">{r.atendidos}</span>
+                    </span>
+                  </li>
+                ))}
+                {!chamados.porTipo.length ? (
+                  <li className="text-muted-foreground">Sem chamados no período.</li>
+                ) : null}
+              </ul>
+            </Panel>
+
+            <Panel title="Por status" description="Distribuição da fila no período">
+              <ul className="space-y-2 text-sm">
+                {chamados.porStatus.map((r) => (
+                  <li key={r.status} className="flex items-center justify-between gap-3">
+                    <span className="truncate">{STATUS_LABEL[r.status]}</span>
+                    <span className="font-mono text-muted-foreground">{r.total}</span>
+                  </li>
+                ))}
+                {!chamados.porStatus.length ? (
+                  <li className="text-muted-foreground">Sem chamados no período.</li>
+                ) : null}
+              </ul>
+            </Panel>
+
+            <Panel title="Por equipe" description="criados / atendidos">
+              <ul className="space-y-2 text-sm">
+                {chamados.porEquipe.map(([equipe, r]) => (
+                  <li key={equipe} className="flex items-center justify-between gap-3">
+                    <span className="truncate">{equipe}</span>
+                    <span className="font-mono text-muted-foreground">
+                      {r.criados} / <span className="text-success">{r.atendidos}</span>
+                    </span>
+                  </li>
+                ))}
+                {!chamados.porEquipe.length ? (
+                  <li className="text-muted-foreground">Sem chamados no período.</li>
+                ) : null}
+              </ul>
+            </Panel>
+          </div>
+        </TabsContent>
+      </Tabs>
     </AppShell>
   );
 }
