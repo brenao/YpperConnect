@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from "react";
 import {
   SEED_ARTICLES,
+  SEED_PROFILES,
   SEED_PROJECTS,
   SEED_RESOURCES,
   SEED_SERVICES,
@@ -11,6 +12,7 @@ import {
 } from "@/models/itsm-seed";
 import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "@/services/notifications";
 import type {
+  AccessProfile,
   Article,
   DirectoryUser,
   EmailNotification,
@@ -25,9 +27,9 @@ import type {
   Ticket,
   UserRole,
 } from "@/models/itsm-types";
-import { resolvePriority, slaFor } from "@/models/itsm-types";
+import { APP_FEATURES, APP_MODULES, resolvePriority, slaFor } from "@/models/itsm-types";
 
-const KEY = "govti.state.v3";
+const KEY = "govti.state.v4";
 
 interface State {
   tickets: Ticket[];
@@ -37,6 +39,7 @@ interface State {
   resources: Resource[];
   users: DirectoryUser[];
   systems: SystemRegistry[];
+  profiles: AccessProfile[];
   notifications: EmailNotification[];
   /** Usuário logado (simulação da sessão vinda do AD). */
   currentUserId: string;
@@ -51,6 +54,7 @@ const initial: State = {
   resources: SEED_RESOURCES,
   users: SEED_USERS,
   systems: SEED_SYSTEMS,
+  profiles: SEED_PROFILES,
   notifications: [],
   currentUserId: "USR-01",
   role: "ti",
@@ -73,6 +77,18 @@ interface Store extends State {
   /** Usuário da sessão atual. */
   currentUser: DirectoryUser | undefined;
   isAdmin: boolean;
+  /** Perfil de acesso da sessão atual. */
+  currentProfile: AccessProfile | undefined;
+  /** Módulos (menus) liberados para a sessão atual. */
+  allowedModules: string[];
+  /** Verifica se a sessão pode usar uma funcionalidade. */
+  can: (feature: string) => boolean;
+  /** Verifica se a sessão pode acessar um menu. */
+  canAccess: (moduleKey: string) => boolean;
+  addProfile: (p: Omit<AccessProfile, "id">) => void;
+  updateProfile: (id: string, patch: Partial<AccessProfile>) => void;
+  removeProfile: (id: string) => void;
+  assignProfile: (userId: string, profileId: string) => void;
   createTicket: (t: NewTicket) => Ticket;
   updateTicket: (id: string, patch: Partial<Ticket>) => void;
   addArticle: (a: Omit<Article, "id" | "visualizacoes">) => void;
@@ -431,11 +447,60 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
 
   const reset = useCallback(() => setState(initial), []);
 
+  const addProfile = useCallback<Store["addProfile"]>((p) => {
+    setState((s) => ({
+      ...s,
+      profiles: [...s.profiles, { ...p, id: `PRF-${Date.now().toString(36).toUpperCase()}` }],
+    }));
+  }, []);
+
+  const updateProfile = useCallback<Store["updateProfile"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      profiles: s.profiles.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    }));
+  }, []);
+
+  const removeProfile = useCallback<Store["removeProfile"]>((id) => {
+    setState((s) => ({
+      ...s,
+      profiles: s.profiles.filter((p) => p.id === id ? Boolean(p.sistema) : true),
+      users: s.users.map((u) => (u.perfilId === id ? { ...u, perfilId: undefined } : u)),
+    }));
+  }, []);
+
+  const assignProfile = useCallback<Store["assignProfile"]>((userId, profileId) => {
+    setState((s) => ({
+      ...s,
+      users: s.users.map((u) => (u.id === userId ? { ...u, perfilId: profileId } : u)),
+    }));
+  }, []);
+
   const value = useMemo<Store>(
-    () => ({
+    () => {
+      const currentUser = state.users.find((u) => u.id === state.currentUserId);
+      const isAdmin = Boolean(currentUser?.admin);
+      const currentProfile = state.profiles.find(
+        (p) => p.id === currentUser?.perfilId && p.ativo,
+      );
+      const allowedModules = isAdmin
+        ? APP_MODULES.map((m) => m.key)
+        : Array.from(new Set(["/", ...(currentProfile?.modulos ?? [])]));
+      const allowedFeatures = isAdmin
+        ? APP_FEATURES.map((f) => f.key)
+        : (currentProfile?.funcionalidades ?? []);
+      return {
       ...state,
-      currentUser: state.users.find((u) => u.id === state.currentUserId),
-      isAdmin: Boolean(state.users.find((u) => u.id === state.currentUserId)?.admin),
+      currentUser,
+      isAdmin,
+      currentProfile,
+      allowedModules,
+      can: (feature: string) => allowedFeatures.includes(feature),
+      canAccess: (moduleKey: string) => allowedModules.includes(moduleKey),
+      addProfile,
+      updateProfile,
+      removeProfile,
+      assignProfile,
       createTicket,
       updateTicket,
       addArticle,
@@ -464,10 +529,15 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       updateResource,
       removeResource,
       reset,
-    }),
+      };
+    },
     // deps
     [
       state,
+      addProfile,
+      updateProfile,
+      removeProfile,
+      assignProfile,
       createTicket,
       updateTicket,
       addArticle,

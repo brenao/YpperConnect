@@ -1,5 +1,6 @@
 import type {
   Article,
+  AccessProfile,
   DirectoryUser,
   Project,
   Resource,
@@ -8,6 +9,7 @@ import type {
   Ticket,
 } from "@/models/itsm-types";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
+import { APP_FEATURES, APP_MODULES } from "@/models/itsm-types";
 
 const now = Date.now();
 const h = (n: number) => new Date(now + n * 3600_000).toISOString();
@@ -514,14 +516,14 @@ export const SEED_RESOURCES: Resource[] = [
 ];
 
 export const SEED_USERS: DirectoryUser[] = [
-  { id: "USR-01", nome: "Marina Costa", email: "marina.costa@empresa.com.br", login: "EMPRESA\\marina.costa", departamento: "Tecnologia da Informação", equipe: "Governança de TI", origem: "ad", admin: true, ativo: true },
-  { id: "USR-02", nome: "Rafael Lima", email: "rafael.lima@empresa.com.br", login: "EMPRESA\\rafael.lima", departamento: "Tecnologia da Informação", equipe: "Sustentação de Sistemas", origem: "ad", admin: true, ativo: true },
-  { id: "USR-03", nome: "Bruna Sato", email: "bruna.sato@empresa.com.br", login: "EMPRESA\\bruna.sato", departamento: "Tecnologia da Informação", equipe: "Infraestrutura", origem: "ad", admin: false, ativo: true },
-  { id: "USR-04", nome: "João Vitor", email: "joao.vitor@empresa.com.br", login: "EMPRESA\\joao.vitor", departamento: "Tecnologia da Informação", equipe: "Service Desk", origem: "ad", admin: false, ativo: true },
-  { id: "USR-05", nome: "Patrícia Nunes", email: "patricia.nunes@empresa.com.br", login: "EMPRESA\\patricia.nunes", departamento: "Tecnologia da Informação", equipe: "Governança de TI", origem: "ad", admin: false, ativo: true },
-  { id: "USR-06", nome: "Tiago Mendes", email: "tiago.mendes@empresa.com.br", login: "EMPRESA\\tiago.mendes", departamento: "Tecnologia da Informação", equipe: "Dados e BI", origem: "ad", admin: false, ativo: true },
-  { id: "USR-07", nome: "Camila Duarte", email: "camila.duarte@empresa.com.br", login: "EMPRESA\\camila.duarte", departamento: "Financeiro", equipe: "Financeiro", origem: "ad", admin: false, ativo: true },
-  { id: "USR-08", nome: "Eduardo Prado", email: "eduardo.prado@empresa.com.br", login: "EMPRESA\\eduardo.prado", departamento: "Operações", equipe: "Logística", origem: "ad", admin: false, ativo: true },
+  { perfilId: "PRF-ADMIN", id: "USR-01", nome: "Marina Costa", email: "marina.costa@empresa.com.br", login: "EMPRESA\\marina.costa", departamento: "Tecnologia da Informação", equipe: "Governança de TI", origem: "ad", admin: true, ativo: true },
+  { perfilId: "PRF-ADMIN", id: "USR-02", nome: "Rafael Lima", email: "rafael.lima@empresa.com.br", login: "EMPRESA\\rafael.lima", departamento: "Tecnologia da Informação", equipe: "Sustentação de Sistemas", origem: "ad", admin: true, ativo: true },
+  { perfilId: "PRF-AGENTE", id: "USR-03", nome: "Bruna Sato", email: "bruna.sato@empresa.com.br", login: "EMPRESA\\bruna.sato", departamento: "Tecnologia da Informação", equipe: "Infraestrutura", origem: "ad", admin: false, ativo: true },
+  { perfilId: "PRF-AGENTE", id: "USR-04", nome: "João Vitor", email: "joao.vitor@empresa.com.br", login: "EMPRESA\\joao.vitor", departamento: "Tecnologia da Informação", equipe: "Service Desk", origem: "ad", admin: false, ativo: true },
+  { perfilId: "PRF-GESTOR", id: "USR-05", nome: "Patrícia Nunes", email: "patricia.nunes@empresa.com.br", login: "EMPRESA\\patricia.nunes", departamento: "Tecnologia da Informação", equipe: "Governança de TI", origem: "ad", admin: false, ativo: true },
+  { perfilId: "PRF-AGENTE", id: "USR-06", nome: "Tiago Mendes", email: "tiago.mendes@empresa.com.br", login: "EMPRESA\\tiago.mendes", departamento: "Tecnologia da Informação", equipe: "Dados e BI", origem: "ad", admin: false, ativo: true },
+  { perfilId: "PRF-USUARIO", id: "USR-07", nome: "Camila Duarte", email: "camila.duarte@empresa.com.br", login: "EMPRESA\\camila.duarte", departamento: "Financeiro", equipe: "Financeiro", origem: "ad", admin: false, ativo: true },
+  { perfilId: "PRF-USUARIO", id: "USR-08", nome: "Eduardo Prado", email: "eduardo.prado@empresa.com.br", login: "EMPRESA\\eduardo.prado", departamento: "Operações", equipe: "Logística", origem: "ad", admin: false, ativo: true },
 ];
 
 export const SEED_SYSTEMS: SystemRegistry[] = [
@@ -530,4 +532,60 @@ export const SEED_SYSTEMS: SystemRegistry[] = [
   { id: "SYS-03", nome: "Active Directory", descricao: "Diretório corporativo de identidade e acessos.", categoria: "Infraestrutura", responsavelId: "USR-03", atribuicaoId: "USR-03", equipe: "Infraestrutura", criticidade: "alta", ativo: true },
   { id: "SYS-04", nome: "Data Warehouse", descricao: "Base analítica e painéis executivos.", categoria: "Dados", responsavelId: "USR-06", atribuicaoId: "USR-06", equipe: "Dados e BI", criticidade: "media", ativo: true },
   { id: "SYS-05", nome: "Rede e Wi-Fi das unidades", descricao: "Conectividade das lojas e escritórios.", categoria: "Redes", responsavelId: "USR-03", atribuicaoId: "USR-03", equipe: "Infraestrutura", criticidade: "alta", ativo: true },
+];
+
+export const SEED_PROFILES: AccessProfile[] = [
+  {
+    id: "PRF-ADMIN",
+    nome: "Administrador de TI",
+    descricao: "Acesso total ao sistema, incluindo cadastros administrativos e perfis de acesso.",
+    modulos: APP_MODULES.map((m) => m.key),
+    funcionalidades: APP_FEATURES.map((f) => f.key),
+    sistema: true,
+    ativo: true,
+  },
+  {
+    id: "PRF-AGENTE",
+    nome: "Analista de TI",
+    descricao: "Atende chamados, gerencia problemas, projetos e a base de conhecimento.",
+    modulos: [
+      "/",
+      "/chamados",
+      "/catalogo",
+      "/conhecimento",
+      "/assistente",
+      "/projetos",
+      "/recursos",
+      "/governanca",
+    ],
+    funcionalidades: [
+      "chamado.criar",
+      "chamado.editar",
+      "chamado.problema",
+      "conhecimento.editar",
+      "projeto.criar",
+      "projeto.editar",
+      "recurso.editar",
+    ],
+    sistema: true,
+    ativo: true,
+  },
+  {
+    id: "PRF-GESTOR",
+    nome: "Gestor / Diretoria",
+    descricao: "Visualiza indicadores executivos de projetos e atendimento.",
+    modulos: ["/", "/chamados", "/projetos", "/recursos", "/diretoria", "/governanca", "/conhecimento"],
+    funcionalidades: ["chamado.criar"],
+    sistema: true,
+    ativo: true,
+  },
+  {
+    id: "PRF-USUARIO",
+    nome: "Usuário final",
+    descricao: "Abre chamados pelo catálogo e consulta a base de conhecimento. Não cria problemas.",
+    modulos: ["/", "/chamados", "/catalogo", "/conhecimento", "/assistente"],
+    funcionalidades: ["chamado.criar"],
+    sistema: true,
+    ativo: true,
+  },
 ];
