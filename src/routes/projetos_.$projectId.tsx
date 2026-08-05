@@ -798,7 +798,11 @@ function ProjetoDetalhe() {
                 {(project.atualizacoes ?? []).map((u) => (
                   <li key={u.id} className="rounded-lg border border-border/60 p-3">
                     <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>{new Date(u.data).toLocaleDateString("pt-BR")}</span>
+                      <span suppressHydrationWarning>
+                        {hydrated && !Number.isNaN(new Date(u.data).getTime())
+                          ? new Date(u.data).toLocaleDateString("pt-BR")
+                          : "—"}
+                      </span>
                       <span>{u.autor}</span>
                     </div>
                     <p className="mt-1 text-sm">{u.descricao}</p>
