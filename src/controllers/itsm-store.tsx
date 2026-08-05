@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from "react";
 import {
   SEED_ARTICLES,
+  SEED_PROFILES,
   SEED_PROJECTS,
   SEED_RESOURCES,
   SEED_SERVICES,
@@ -11,6 +12,7 @@ import {
 } from "@/models/itsm-seed";
 import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "@/services/notifications";
 import type {
+  AccessProfile,
   Article,
   DirectoryUser,
   EmailNotification,
@@ -27,7 +29,7 @@ import type {
 } from "@/models/itsm-types";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
 
-const KEY = "govti.state.v3";
+const KEY = "govti.state.v4";
 
 interface State {
   tickets: Ticket[];
@@ -37,6 +39,7 @@ interface State {
   resources: Resource[];
   users: DirectoryUser[];
   systems: SystemRegistry[];
+  profiles: AccessProfile[];
   notifications: EmailNotification[];
   /** Usuário logado (simulação da sessão vinda do AD). */
   currentUserId: string;
@@ -51,6 +54,7 @@ const initial: State = {
   resources: SEED_RESOURCES,
   users: SEED_USERS,
   systems: SEED_SYSTEMS,
+  profiles: SEED_PROFILES,
   notifications: [],
   currentUserId: "USR-01",
   role: "ti",
@@ -73,6 +77,18 @@ interface Store extends State {
   /** Usuário da sessão atual. */
   currentUser: DirectoryUser | undefined;
   isAdmin: boolean;
+  /** Perfil de acesso da sessão atual. */
+  currentProfile: AccessProfile | undefined;
+  /** Módulos (menus) liberados para a sessão atual. */
+  allowedModules: string[];
+  /** Verifica se a sessão pode usar uma funcionalidade. */
+  can: (feature: string) => boolean;
+  /** Verifica se a sessão pode acessar um menu. */
+  canAccess: (moduleKey: string) => boolean;
+  addProfile: (p: Omit<AccessProfile, "id">) => void;
+  updateProfile: (id: string, patch: Partial<AccessProfile>) => void;
+  removeProfile: (id: string) => void;
+  assignProfile: (userId: string, profileId: string) => void;
   createTicket: (t: NewTicket) => Ticket;
   updateTicket: (id: string, patch: Partial<Ticket>) => void;
   addArticle: (a: Omit<Article, "id" | "visualizacoes">) => void;
