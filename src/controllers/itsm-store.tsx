@@ -27,7 +27,7 @@ import type {
   Ticket,
   UserRole,
 } from "@/models/itsm-types";
-import { resolvePriority, slaFor } from "@/models/itsm-types";
+import { APP_FEATURES, APP_MODULES, resolvePriority, slaFor } from "@/models/itsm-types";
 
 const KEY = "govti.state.v4";
 
