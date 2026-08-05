@@ -54,9 +54,18 @@ export function ServiceDialog({
   const categorias = [...new Set(services.map((s) => s.categoria))];
 
   function salvar() {
-    if (form.nome.trim().length < 3) return toast.error("Informe o nome do serviço.");
-    if (form.categoria.trim().length < 2) return toast.error("Informe a categoria.");
-    if (form.descricao.trim().length < 10) return toast.error("Descreva o serviço.");
+    if (form.nome.trim().length < 3) {
+      toast.error("Informe o nome do serviço.");
+      return;
+    }
+    if (form.categoria.trim().length < 2) {
+      toast.error("Informe a categoria.");
+      return;
+    }
+    if (form.descricao.trim().length < 10) {
+      toast.error("Descreva o serviço.");
+      return;
+    }
     const payload = {
       nome: form.nome.trim(),
       categoria: form.categoria.trim(),
