@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AlertOctagon, ShieldCheck, Timer } from "lucide-react";
-import { AppShell } from "@/components/itsm/app-shell";
-import { PriorityBadge, TypeBadge } from "@/components/itsm/badges";
+import { AppShell } from "@/views/app-shell";
+import { PriorityBadge, TypeBadge } from "@/views/badges";
 import {
   PRIORITY_MATRIX,
   PRIORITY_LABEL,
@@ -12,7 +12,7 @@ import {
   type Priority,
   type RecordType,
   type Urgency,
-} from "@/lib/itsm-types";
+} from "@/models/itsm-types";
 
 export const Route = createFileRoute("/governanca")({
   head: () => ({

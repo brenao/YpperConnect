@@ -21,15 +21,15 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import {
   PROJECT_STATUS_LABEL,
   type Project,
   type ProjectStatus,
   type ProjectTask,
-} from "@/lib/itsm-types";
-import { toISODate } from "@/lib/project-utils";
-import { capacityHours, demandAt, findResource } from "@/lib/resource-utils";
+} from "@/models/itsm-types";
+import { toISODate } from "@/services/project-utils";
+import { capacityHours, demandAt, findResource } from "@/services/resource-utils";
 
 const hoje = () => toISODate(Date.now());
 const emDias = (n: number) => toISODate(Date.now() + n * 86_400_000);

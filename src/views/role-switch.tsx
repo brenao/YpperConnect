@@ -1,7 +1,7 @@
 import { ShieldCheck, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import { cn } from "@/lib/utils";
 
 /** Alterna o perfil ativo: somente TI pode atuar e responder chamados. */

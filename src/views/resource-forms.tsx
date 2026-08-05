@@ -13,8 +13,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { useItsm } from "@/lib/itsm-store";
-import type { Resource } from "@/lib/itsm-types";
+import { useItsm } from "@/controllers/itsm-store";
+import type { Resource } from "@/models/itsm-types";
 
 export function ResourceDialog({
   resource,

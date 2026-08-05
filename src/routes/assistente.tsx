@@ -5,16 +5,16 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Send, Sparkles, TicketPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { AppShell } from "@/components/itsm/app-shell";
-import { AiTicketDraft } from "@/components/itsm/ai-ticket-draft";
+import { AppShell } from "@/views/app-shell";
+import { AiTicketDraft } from "@/views/ai-ticket-draft";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import {
   draftTicketFromConversation,
   type TicketDraft,
-} from "@/lib/ai-triage.functions";
+} from "@/services/ai-triage.functions";
 
 export const Route = createFileRoute("/assistente")({
   head: () => ({

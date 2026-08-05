@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { BookOpen, Eye, Loader2, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/itsm/app-shell";
+import { AppShell } from "@/views/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,9 +21,9 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { useItsm } from "@/lib/itsm-store";
-import { generateKnowledgeArticle } from "@/lib/ai-knowledge.functions";
-import type { Article } from "@/lib/itsm-types";
+import { useItsm } from "@/controllers/itsm-store";
+import { generateKnowledgeArticle } from "@/services/ai-knowledge.functions";
+import type { Article } from "@/models/itsm-types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/conhecimento")({

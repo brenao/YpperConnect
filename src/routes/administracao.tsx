@@ -12,7 +12,7 @@ import {
   Lock,
 } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/itsm/app-shell";
+import { AppShell } from "@/views/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,14 +37,14 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import {
   CRITICALITY_LABEL,
   NOTIFICATION_LABEL,
   type SystemCriticality,
   type SystemRegistry,
-} from "@/lib/itsm-types";
-import { LEMBRETE_DIARIO_DIAS, LEMBRETE_DIAS, diasSemAtualizacao } from "@/lib/notifications";
+} from "@/models/itsm-types";
+import { LEMBRETE_DIARIO_DIAS, LEMBRETE_DIAS, diasSemAtualizacao } from "@/services/notifications";
 
 export const Route = createFileRoute("/administracao")({
   head: () => ({

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/itsm/app-shell";
-import { NewProjectDialog } from "@/components/itsm/project-forms";
+import { AppShell } from "@/views/app-shell";
+import { NewProjectDialog } from "@/views/project-forms";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -13,8 +13,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { useItsm } from "@/lib/itsm-store";
-import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/lib/itsm-types";
+import { useItsm } from "@/controllers/itsm-store";
+import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
 import {
   HEALTH_CLASS,
   HEALTH_DOT,
@@ -22,7 +22,7 @@ import {
   fmtDateFull,
   projectHealth,
   projectProgress,
-} from "@/lib/project-utils";
+} from "@/services/project-utils";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/projetos")({

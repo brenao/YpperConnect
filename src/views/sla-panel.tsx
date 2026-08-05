@@ -1,6 +1,6 @@
 import { useHydrated } from "@/hooks/use-hydrated";
 import { cn } from "@/lib/utils";
-import { evaluateSla, formatSlaHoras, type Ticket } from "@/lib/itsm-types";
+import { evaluateSla, formatSlaHoras, type Ticket } from "@/models/itsm-types";
 
 const stateLabel = {
   atendido: "SLA atendido",

@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import {
   PRIORITY_LABEL,
   TYPE_LABEL,
@@ -30,7 +30,7 @@ import {
   type Impact,
   type RecordType,
   type Urgency,
-} from "@/lib/itsm-types";
+} from "@/models/itsm-types";
 import { PriorityBadge } from "./badges";
 
 // Usuários finais não podem abrir registros do tipo "Problema".

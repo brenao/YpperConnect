@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
-import { createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
+import { createLovableAiGatewayProvider } from "@/services/ai-gateway.server";
 
 const SYSTEM_PROMPT = `Você é o assistente de atendimento de TI da plataforma YpperConnect, baseada em práticas ITIL.
 

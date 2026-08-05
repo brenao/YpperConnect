@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/itsm/app-shell";
-import { ResourceDialog } from "@/components/itsm/resource-forms";
+import { AppShell } from "@/views/app-shell";
+import { ResourceDialog } from "@/views/resource-forms";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { useItsm } from "@/lib/itsm-store";
-import { capacityHours, portfolioLoad } from "@/lib/resource-utils";
+import { useItsm } from "@/controllers/itsm-store";
+import { capacityHours, portfolioLoad } from "@/services/resource-utils";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/recursos")({

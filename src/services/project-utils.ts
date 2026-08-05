@@ -1,4 +1,4 @@
-import type { Project, ProjectTask } from "./itsm-types";
+import type { Project, ProjectTask } from "@/models/itsm-types";
 
 export const DAY = 86_400_000;
 

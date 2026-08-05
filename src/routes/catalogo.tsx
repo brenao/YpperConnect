@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Sparkles, Clock, Loader2, Users, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/itsm/app-shell";
-import { TypeBadge } from "@/components/itsm/badges";
-import { ServiceDialog } from "@/components/itsm/catalog-forms";
+import { AppShell } from "@/views/app-shell";
+import { TypeBadge } from "@/views/badges";
+import { ServiceDialog } from "@/views/catalog-forms";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -16,8 +16,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { suggestCatalogServices } from "@/lib/ai-catalog.functions";
-import { useItsm } from "@/lib/itsm-store";
+import { suggestCatalogServices } from "@/services/ai-catalog.functions";
+import { useItsm } from "@/controllers/itsm-store";
 
 export const Route = createFileRoute("/catalogo")({
   head: () => ({
