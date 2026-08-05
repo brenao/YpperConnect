@@ -427,9 +427,15 @@ function ProjetoDetalhe() {
               <Metric label="Progresso" value={`${progresso}%`} hint={`esperado ${esperado}%`} />
               <Metric
                 label="Previsão real"
-                value={fmtDate(toISODate(previsaoFim))}
-                hint={desvioDias > 0 ? `${desvioDias}d de desvio` : "dentro do plano"}
-                alerta={desvioDias > 0}
+                value={hydrated ? fmtDate(toISODate(previsaoFim)) : "—"}
+                hint={
+                  hydrated
+                    ? desvioDias > 0
+                      ? `${desvioDias}d de desvio`
+                      : "dentro do plano"
+                    : undefined
+                }
+                alerta={hydrated && desvioDias > 0}
               />
             </div>
             <Progress value={progresso} className="mt-4 h-2" />
