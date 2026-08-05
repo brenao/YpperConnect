@@ -1,8 +1,19 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { SEED_ARTICLES, SEED_PROJECTS, SEED_RESOURCES, SEED_SERVICES, SEED_TICKETS } from "./itsm-seed";
+import {
+  SEED_ARTICLES,
+  SEED_PROJECTS,
+  SEED_RESOURCES,
+  SEED_SERVICES,
+  SEED_SYSTEMS,
+  SEED_TICKETS,
+  SEED_USERS,
+} from "./itsm-seed";
+import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "./notifications";
 import type {
   Article,
+  DirectoryUser,
+  EmailNotification,
   Project,
   ProjectAttention,
   ProjectRisk,
@@ -10,12 +21,13 @@ import type {
   ProjectUpdate,
   Resource,
   ServiceItem,
+  SystemRegistry,
   Ticket,
   UserRole,
 } from "./itsm-types";
 import { resolvePriority, slaFor } from "./itsm-types";
 
-const KEY = "govti.state.v2";
+const KEY = "govti.state.v3";
 
 interface State {
   tickets: Ticket[];
@@ -23,6 +35,11 @@ interface State {
   articles: Article[];
   projects: Project[];
   resources: Resource[];
+  users: DirectoryUser[];
+  systems: SystemRegistry[];
+  notifications: EmailNotification[];
+  /** Usuário logado (simulação da sessão vinda do AD). */
+  currentUserId: string;
   role: UserRole;
 }
 
@@ -32,6 +49,10 @@ const initial: State = {
   articles: SEED_ARTICLES,
   projects: SEED_PROJECTS,
   resources: SEED_RESOURCES,
+  users: SEED_USERS,
+  systems: SEED_SYSTEMS,
+  notifications: [],
+  currentUserId: "USR-01",
   role: "ti",
 };
 
@@ -49,10 +70,23 @@ type NewTicket = Pick<
 > & { sistema?: string | undefined };
 
 interface Store extends State {
+  /** Usuário da sessão atual. */
+  currentUser: DirectoryUser | undefined;
+  isAdmin: boolean;
   createTicket: (t: NewTicket) => Ticket;
   updateTicket: (id: string, patch: Partial<Ticket>) => void;
   addArticle: (a: Omit<Article, "id" | "visualizacoes">) => void;
   addService: (s: Omit<ServiceItem, "id">) => void;
+  updateService: (id: string, patch: Partial<ServiceItem>) => void;
+  removeService: (id: string) => void;
+  addUser: (u: Omit<DirectoryUser, "id">) => void;
+  updateUser: (id: string, patch: Partial<DirectoryUser>) => void;
+  removeUser: (id: string) => void;
+  setCurrentUser: (id: string) => void;
+  syncDirectory: () => number;
+  addSystem: (s: Omit<SystemRegistry, "id">) => void;
+  updateSystem: (id: string, patch: Partial<SystemRegistry>) => void;
+  removeSystem: (id: string) => void;
   setRole: (r: UserRole) => void;
   createProject: (p: Omit<Project, "id" | "tarefas" | "atualizacoes" | "riscos" | "atencoes">) => Project;
   updateProject: (id: string, patch: Partial<Project>) => void;
@@ -81,6 +115,8 @@ const PREFIX: Record<Ticket["tipo"], string> = {
 
 export function ItsmProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>(initial);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     try {
@@ -99,27 +135,60 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
+  const notify = useCallback((mensagens: EmailNotification[]) => {
+    if (!mensagens.length) return;
+    setState((s) => ({ ...s, notifications: [...mensagens, ...s.notifications].slice(0, 200) }));
+  }, []);
+
+  // Lembretes de atualização de projeto (6 dias; diário após 7).
+  useEffect(() => {
+    const rodar = () => {
+      const s = stateRef.current;
+      notify(buildProjectReminders(s.projects, s.users, s.notifications));
+    };
+    const t = window.setTimeout(rodar, 1200);
+    const i = window.setInterval(rodar, 3600_000);
+    return () => {
+      window.clearTimeout(t);
+      window.clearInterval(i);
+    };
+  }, [notify]);
+
   const createTicket = useCallback((input: NewTicket) => {
     const prioridade = resolvePriority(input.impacto, input.urgencia);
     const criadoEm = new Date().toISOString();
     const meta = slaFor(input.tipo, prioridade);
     const base = new Date(criadoEm).getTime();
+    const s0 = stateRef.current;
+    // Atribuição automática pelo cadastro de sistemas; fallback no catálogo.
+    const sistemaCad = input.sistema
+      ? s0.systems.find(
+          (x) => x.ativo && x.nome.toLowerCase() === input.sistema!.trim().toLowerCase(),
+        )
+      : undefined;
+    const servicoCad = s0.services.find((x) => x.nome === input.servico);
+    const responsavelUser = sistemaCad
+      ? s0.users.find((u) => u.id === sistemaCad.atribuicaoId)
+      : undefined;
     const ticket: Ticket = {
       ...input,
       id: `${PREFIX[input.tipo]}-${Math.floor(1000 + Math.random() * 8999)}`,
       prioridade,
       status: "novo",
-      responsavel: "Não atribuído",
-      equipe: input.tipo === "incidente" ? "Service Desk" : "Service Desk",
+      responsavel: responsavelUser?.nome ?? "Não atribuído",
+      equipe: sistemaCad?.equipe ?? servicoCad?.equipe ?? "Service Desk",
       criadoEm,
       prazoSla: new Date(base + meta.solucao * 3600_000).toISOString(),
       prazoResposta: new Date(base + meta.resposta * 3600_000).toISOString(),
     };
     setState((s) => ({ ...s, tickets: [ticket, ...s.tickets] }));
+    const email = buildCreatedEmail(ticket, s0.users);
+    if (email) notify([email]);
     return ticket;
-  }, []);
+  }, [notify]);
 
   const updateTicket = useCallback((id: string, patch: Partial<Ticket>) => {
+    const anterior = stateRef.current.tickets.find((t) => t.id === id);
     setState((s) => ({
       ...s,
       tickets: s.tickets.map((t) => {
@@ -133,7 +202,15 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
         return next;
       }),
     }));
-  }, []);
+    if (anterior && patch.status && patch.status !== anterior.status) {
+      const email = buildStatusEmail(
+        { ...anterior, ...patch },
+        anterior.status,
+        stateRef.current.users,
+      );
+      if (email) notify([email]);
+    }
+  }, [notify]);
 
   const addArticle = useCallback((a: Omit<Article, "id" | "visualizacoes">) => {
     setState((s) => ({
@@ -155,6 +232,67 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
         { ...item, id: `SVC-${Math.floor(100 + Math.random() * 899)}` },
       ],
     }));
+  }, []);
+
+  const updateService = useCallback<Store["updateService"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      services: s.services.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+    }));
+  }, []);
+
+  const removeService = useCallback<Store["removeService"]>((id) => {
+    setState((s) => ({ ...s, services: s.services.filter((x) => x.id !== id) }));
+  }, []);
+
+  const addUser = useCallback<Store["addUser"]>((u) => {
+    setState((s) => ({
+      ...s,
+      users: [...s.users, { ...u, id: `USR-${Math.floor(100 + Math.random() * 899)}` }],
+    }));
+  }, []);
+
+  const updateUser = useCallback<Store["updateUser"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      users: s.users.map((u) => (u.id === id ? { ...u, ...patch } : u)),
+    }));
+  }, []);
+
+  const removeUser = useCallback<Store["removeUser"]>((id) => {
+    setState((s) => ({ ...s, users: s.users.filter((u) => u.id !== id) }));
+  }, []);
+
+  const setCurrentUser = useCallback<Store["setCurrentUser"]>((id) => {
+    setState((s) => ({ ...s, currentUserId: id }));
+  }, []);
+
+  /** Simula a sincronização com o Active Directory (carimba data em todos). */
+  const syncDirectory = useCallback<Store["syncDirectory"]>(() => {
+    const agora = new Date().toISOString();
+    setState((s) => ({
+      ...s,
+      users: s.users.map((u) => (u.origem === "ad" ? { ...u, sincronizadoEm: agora } : u)),
+    }));
+    return stateRef.current.users.filter((u) => u.origem === "ad").length;
+  }, []);
+
+  const addSystem = useCallback<Store["addSystem"]>((sys) => {
+    setState((s) => ({
+      ...s,
+      systems: [...s.systems, { ...sys, id: `SYS-${Math.floor(100 + Math.random() * 899)}` }],
+    }));
+  }, []);
+
+  const updateSystem = useCallback<Store["updateSystem"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      systems: s.systems.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+    }));
+  }, []);
+
+  const removeSystem = useCallback<Store["removeSystem"]>((id) => {
+    setState((s) => ({ ...s, systems: s.systems.filter((x) => x.id !== id) }));
   }, []);
 
   const patchProject = useCallback((id: string, fn: (p: Project) => Project) => {
@@ -296,10 +434,22 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   const value = useMemo<Store>(
     () => ({
       ...state,
+      currentUser: state.users.find((u) => u.id === state.currentUserId),
+      isAdmin: Boolean(state.users.find((u) => u.id === state.currentUserId)?.admin),
       createTicket,
       updateTicket,
       addArticle,
       setRole,
+      updateService,
+      removeService,
+      addUser,
+      updateUser,
+      removeUser,
+      setCurrentUser,
+      syncDirectory,
+      addSystem,
+      updateSystem,
+      removeSystem,
       createProject,
       updateProject,
       addTask,
@@ -323,6 +473,16 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       addArticle,
       setRole,
       addService,
+      updateService,
+      removeService,
+      addUser,
+      updateUser,
+      removeUser,
+      setCurrentUser,
+      syncDirectory,
+      addSystem,
+      updateSystem,
+      removeSystem,
       createProject,
       updateProject,
       addTask,

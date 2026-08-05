@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { Sparkles, Clock, Loader2, Users } from "lucide-react";
+import { Sparkles, Clock, Loader2, Users, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/itsm/app-shell";
 import { TypeBadge } from "@/components/itsm/badges";
+import { ServiceDialog } from "@/components/itsm/catalog-forms";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -38,7 +39,7 @@ export const Route = createFileRoute("/catalogo")({
 });
 
 function Catalogo() {
-  const { services, addService, role } = useItsm();
+  const { services, addService, removeService, role, isAdmin } = useItsm();
   const categorias = [...new Set(services.map((s) => s.categoria))];
   const [open, setOpen] = useState(false);
   const [contexto, setContexto] = useState("");
@@ -81,10 +82,19 @@ function Catalogo() {
             <Sparkles className="size-3.5" />
             {services.filter((s) => s.geradoPorIA).length} rascunhos gerados por IA em curadoria
           </span>
+          {isAdmin ? (
+            <ServiceDialog
+              trigger={
+                <Button size="sm" className="ml-auto gap-2">
+                  <Plus className="size-4" /> Novo serviço
+                </Button>
+              }
+            />
+          ) : null}
           {role === "ti" ? (
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
-                <Button variant="secondary" size="sm" className="ml-auto gap-2">
+                <Button variant="secondary" size="sm" className={isAdmin ? "gap-2" : "ml-auto gap-2"}>
                   <Sparkles className="size-4" /> Sugerir serviços com IA
                 </Button>
               </DialogTrigger>
@@ -126,9 +136,33 @@ function Catalogo() {
                   <article key={s.id} className="panel flex flex-col gap-3 p-5">
                     <div className="flex items-start justify-between gap-3">
                       <h3 className="text-sm font-semibold">{s.nome}</h3>
-                      {s.geradoPorIA ? (
-                        <Sparkles className="size-4 shrink-0 text-primary" />
-                      ) : null}
+                      <div className="flex shrink-0 items-center gap-1">
+                        {s.geradoPorIA ? <Sparkles className="size-4 text-primary" /> : null}
+                        {isAdmin ? (
+                          <>
+                            <ServiceDialog
+                              service={s}
+                              trigger={
+                                <Button variant="ghost" size="icon" className="size-7" title="Editar serviço">
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                              }
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 text-destructive"
+                              title="Excluir serviço"
+                              onClick={() => {
+                                removeService(s.id);
+                                toast.success("Serviço removido do catálogo");
+                              }}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                     <p className="flex-1 text-sm text-muted-foreground">{s.descricao}</p>
                     <TypeBadge value={s.tipoPadrao} />
