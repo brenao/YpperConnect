@@ -210,6 +210,70 @@ export const CRITICALITY_LABEL: Record<SystemCriticality, string> = {
 
 export type NotificationKind = "chamado_status" | "chamado_criado" | "projeto_lembrete";
 
+/* =========================================================================
+ * Controle de acesso: menus (módulos) e funcionalidades (ações)
+ * ======================================================================= */
+
+/** Menu navegável do sistema. A chave é a rota. */
+export interface AppModule {
+  key: string;
+  label: string;
+  descricao: string;
+  grupo: "Operação" | "Projetos" | "Gestão" | "Administração";
+  /** Não pode ser removido de nenhum perfil. */
+  fixo?: boolean;
+}
+
+export const APP_MODULES: AppModule[] = [
+  { key: "/", label: "Visão geral", descricao: "Painel inicial com indicadores.", grupo: "Operação", fixo: true },
+  { key: "/chamados", label: "Chamados", descricao: "Fila de incidentes, requisições, melhorias e problemas.", grupo: "Operação" },
+  { key: "/catalogo", label: "Catálogo de serviços", descricao: "Serviços de TI publicados.", grupo: "Operação" },
+  { key: "/conhecimento", label: "Base de conhecimento", descricao: "Artigos, procedimentos e soluções.", grupo: "Operação" },
+  { key: "/assistente", label: "Assistente IA", descricao: "Abertura assistida e sugestões por IA.", grupo: "Operação" },
+  { key: "/projetos", label: "Projetos e cronograma", descricao: "Cadastro de projetos, tarefas e Gantt.", grupo: "Projetos" },
+  { key: "/recursos", label: "Recursos e capacidade", descricao: "Alocação e disponibilidade de recursos.", grupo: "Projetos" },
+  { key: "/diretoria", label: "Visão diretoria", descricao: "Painéis executivos de projetos e chamados.", grupo: "Gestão" },
+  { key: "/governanca", label: "Governança ITIL", descricao: "Práticas, SLA e melhoria contínua.", grupo: "Gestão" },
+  { key: "/administracao", label: "Administração", descricao: "Usuários, sistemas e notificações.", grupo: "Administração" },
+  { key: "/permissoes", label: "Perfis de acesso", descricao: "Cadastro de menus e funcionalidades por perfil.", grupo: "Administração" },
+];
+
+/** Funcionalidade granular controlada por perfil. */
+export interface AppFeature {
+  key: string;
+  label: string;
+  descricao: string;
+  grupo: string;
+}
+
+export const APP_FEATURES: AppFeature[] = [
+  { key: "chamado.criar", label: "Abrir chamado", descricao: "Registrar novos chamados.", grupo: "Chamados" },
+  { key: "chamado.editar", label: "Tratar chamado", descricao: "Alterar status, prioridade e responsável.", grupo: "Chamados" },
+  { key: "chamado.problema", label: "Criar problema", descricao: "Registrar problemas (exclusivo da equipe de TI).", grupo: "Chamados" },
+  { key: "conhecimento.editar", label: "Publicar artigos", descricao: "Criar e atualizar a base de conhecimento.", grupo: "Conhecimento" },
+  { key: "catalogo.editar", label: "Editar catálogo", descricao: "Cadastrar e alterar serviços de TI.", grupo: "Catálogo" },
+  { key: "projeto.criar", label: "Criar projeto", descricao: "Cadastrar novos projetos.", grupo: "Projetos" },
+  { key: "projeto.editar", label: "Editar cronograma", descricao: "Criar e alterar tarefas, riscos e atualizações.", grupo: "Projetos" },
+  { key: "recurso.editar", label: "Gerir recursos", descricao: "Cadastrar recursos e percentual de disponibilidade.", grupo: "Projetos" },
+  { key: "admin.usuarios", label: "Gerir usuários", descricao: "Sincronizar AD, editar usuários e administradores.", grupo: "Administração" },
+  { key: "admin.sistemas", label: "Gerir sistemas", descricao: "Responsáveis e atribuição automática.", grupo: "Administração" },
+  { key: "admin.permissoes", label: "Gerir perfis de acesso", descricao: "Definir menus e funcionalidades por perfil.", grupo: "Administração" },
+];
+
+/** Perfil de acesso aplicado aos usuários do diretório. */
+export interface AccessProfile {
+  id: string;
+  nome: string;
+  descricao: string;
+  /** Chaves de APP_MODULES liberadas. */
+  modulos: string[];
+  /** Chaves de APP_FEATURES liberadas. */
+  funcionalidades: string[];
+  /** Perfis do sistema não podem ser excluídos. */
+  sistema?: boolean;
+  ativo: boolean;
+}
+
 /** Mensagem de e-mail gerada pelas regras de notificação. */
 export interface EmailNotification {
   id: string;
