@@ -3,14 +3,14 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/itsm/app-shell";
+import { AppShell } from "@/views/app-shell";
 import {
   AttentionDialog,
   RiskDialog,
   TaskDialog,
   WeeklyUpdateDialog,
-} from "@/components/itsm/project-forms";
-import { ProjectKanban } from "@/components/itsm/project-kanban";
+} from "@/views/project-forms";
+import { ProjectKanban } from "@/views/project-kanban";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -23,9 +23,9 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { evaluateProjectPlan, type CoachResult } from "@/lib/ai-project-coach.functions";
-import { useItsm } from "@/lib/itsm-store";
-import { PROJECT_STATUS_LABEL, type Project, type ProjectStatus } from "@/lib/itsm-types";
+import { evaluateProjectPlan, type CoachResult } from "@/services/ai-project-coach.functions";
+import { useItsm } from "@/controllers/itsm-store";
+import { PROJECT_STATUS_LABEL, type Project, type ProjectStatus } from "@/models/itsm-types";
 import {
   HEALTH_CLASS,
   HEALTH_DOT,
@@ -40,7 +40,7 @@ import {
   taskDurationDays,
   taskDurationLabel,
   toISODate,
-} from "@/lib/project-utils";
+} from "@/services/project-utils";
 import {
   durationWithResources,
   effectiveDurationDays,
@@ -48,7 +48,7 @@ import {
   portfolioLoad,
   taskAllocation,
   taskResponsibles,
-} from "@/lib/resource-utils";
+} from "@/services/resource-utils";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/projetos_/$projectId")({

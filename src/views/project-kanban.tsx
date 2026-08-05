@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { CalendarDays, GripVertical, User } from "lucide-react";
 import { toast } from "sonner";
-import { useItsm } from "@/lib/itsm-store";
-import { KANBAN_LABEL, type KanbanStatus, type Project, type ProjectTask } from "@/lib/itsm-types";
-import { fmtDate, toISODate } from "@/lib/project-utils";
+import { useItsm } from "@/controllers/itsm-store";
+import { KANBAN_LABEL, type KanbanStatus, type Project, type ProjectTask } from "@/models/itsm-types";
+import { fmtDate, toISODate } from "@/services/project-utils";
 import { cn } from "@/lib/utils";
 
 const COLUNAS: KanbanStatus[] = ["backlog", "todo", "doing", "done"];

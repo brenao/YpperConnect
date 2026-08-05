@@ -10,7 +10,7 @@ import {
   type RecordType,
   type Ticket,
   type TicketStatus,
-} from "@/lib/itsm-types";
+} from "@/models/itsm-types";
 
 const priorityStyle: Record<Priority, string> = {
   P1: "bg-p1/15 text-p1 border-p1/40",

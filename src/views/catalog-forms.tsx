@@ -21,8 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useItsm } from "@/lib/itsm-store";
-import { TYPE_LABEL, type RecordType, type ServiceItem } from "@/lib/itsm-types";
+import { useItsm } from "@/controllers/itsm-store";
+import { TYPE_LABEL, type RecordType, type ServiceItem } from "@/models/itsm-types";
 
 const TIPOS: RecordType[] = ["incidente", "requisicao", "melhoria", "tarefa"];
 

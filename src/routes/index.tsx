@@ -20,10 +20,10 @@ import {
   YAxis,
 } from "recharts";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { AppShell } from "@/components/itsm/app-shell";
-import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/components/itsm/badges";
-import { useItsm } from "@/lib/itsm-store";
-import { TYPE_LABEL, type Priority, type RecordType } from "@/lib/itsm-types";
+import { AppShell } from "@/views/app-shell";
+import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
+import { useItsm } from "@/controllers/itsm-store";
+import { TYPE_LABEL, type Priority, type RecordType } from "@/models/itsm-types";
 
 export const Route = createFileRoute("/")({
   head: () => ({

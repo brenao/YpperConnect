@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/itsm/app-shell";
-import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/components/itsm/badges";
-import { SlaPanel } from "@/components/itsm/sla-panel";
+import { AppShell } from "@/views/app-shell";
+import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
+import { SlaPanel } from "@/views/sla-panel";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -23,14 +23,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import {
   STATUS_LABEL,
   TYPE_LABEL,
   type RecordType,
   type Ticket,
   type TicketStatus,
-} from "@/lib/itsm-types";
+} from "@/models/itsm-types";
 import { useHydrated } from "@/hooks/use-hydrated";
 
 export const Route = createFileRoute("/chamados")({

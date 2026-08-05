@@ -6,8 +6,8 @@ import type {
   ServiceItem,
   SystemRegistry,
   Ticket,
-} from "./itsm-types";
-import { resolvePriority, slaFor } from "./itsm-types";
+} from "@/models/itsm-types";
+import { resolvePriority, slaFor } from "@/models/itsm-types";
 
 const now = Date.now();
 const h = (n: number) => new Date(now + n * 3600_000).toISOString();

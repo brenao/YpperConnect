@@ -8,8 +8,8 @@ import {
   SEED_SYSTEMS,
   SEED_TICKETS,
   SEED_USERS,
-} from "./itsm-seed";
-import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "./notifications";
+} from "@/models/itsm-seed";
+import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "@/services/notifications";
 import type {
   Article,
   DirectoryUser,
@@ -24,8 +24,8 @@ import type {
   SystemRegistry,
   Ticket,
   UserRole,
-} from "./itsm-types";
-import { resolvePriority, slaFor } from "./itsm-types";
+} from "@/models/itsm-types";
+import { resolvePriority, slaFor } from "@/models/itsm-types";
 
 const KEY = "govti.state.v3";
 

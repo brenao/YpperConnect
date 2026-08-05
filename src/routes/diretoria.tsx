@@ -13,8 +13,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { AppShell } from "@/components/itsm/app-shell";
-import { DateRangePicker } from "@/components/itsm/date-range-picker";
+import { AppShell } from "@/views/app-shell";
+import { DateRangePicker } from "@/views/date-range-picker";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import {
   PROJECT_STATUS_LABEL,
   STATUS_LABEL,
@@ -36,8 +36,8 @@ import {
   type ProjectStatus,
   type RecordType,
   type TicketStatus,
-} from "@/lib/itsm-types";
-import { HEALTH_DOT, isLate, parseDate, projectHealth } from "@/lib/project-utils";
+} from "@/models/itsm-types";
+import { HEALTH_DOT, isLate, parseDate, projectHealth } from "@/services/project-utils";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/diretoria")({

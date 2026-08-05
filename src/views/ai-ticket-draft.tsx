@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useItsm } from "@/lib/itsm-store";
+import { useItsm } from "@/controllers/itsm-store";
 import {
   PRIORITY_LABEL,
   TYPE_LABEL,
@@ -20,8 +20,8 @@ import {
   type RecordType,
   type Urgency,
   requiresSystem,
-} from "@/lib/itsm-types";
-import type { TicketDraft } from "@/lib/ai-triage.functions";
+} from "@/models/itsm-types";
+import type { TicketDraft } from "@/services/ai-triage.functions";
 import { PriorityBadge } from "./badges";
 
 const TIPOS: RecordType[] = ["incidente", "requisicao", "melhoria", "tarefa"];

@@ -4,8 +4,8 @@ import type {
   Project,
   Ticket,
   TicketStatus,
-} from "./itsm-types";
-import { STATUS_LABEL } from "./itsm-types";
+} from "@/models/itsm-types";
+import { STATUS_LABEL } from "@/models/itsm-types";
 
 /** Dias sem atualização a partir dos quais o gestor recebe lembrete. */
 export const LEMBRETE_DIAS = 6;

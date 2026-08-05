@@ -1,5 +1,5 @@
-import type { Project, ProjectTask, Resource } from "./itsm-types";
-import { DAY, parseDate, taskDurationDays } from "./project-utils";
+import type { Project, ProjectTask, Resource } from "@/models/itsm-types";
+import { DAY, parseDate, taskDurationDays } from "@/services/project-utils";
 
 /** Percentual da capacidade de projetos que a tarefa consome de cada responsável. */
 export function taskAllocation(t: ProjectTask): number {
