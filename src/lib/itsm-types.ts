@@ -171,6 +171,63 @@ export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
 
 export type UserRole = "ti" | "nao_ti";
 
+/** Pessoa importada do Active Directory (ou cadastrada manualmente). */
+export interface DirectoryUser {
+  id: string;
+  nome: string;
+  email: string;
+  login: string;
+  departamento: string;
+  equipe: string;
+  origem: "ad" | "manual";
+  admin: boolean;
+  ativo: boolean;
+  sincronizadoEm?: string | undefined;
+}
+
+export type SystemCriticality = "alta" | "media" | "baixa";
+
+/** Sistema corporativo com responsável e regra de atribuição automática. */
+export interface SystemRegistry {
+  id: string;
+  nome: string;
+  descricao: string;
+  categoria: string;
+  /** Dono/gestor do sistema (usuário do diretório). */
+  responsavelId: string;
+  /** Usuário que recebe automaticamente os chamados deste sistema. */
+  atribuicaoId: string;
+  equipe: string;
+  criticidade: SystemCriticality;
+  ativo: boolean;
+}
+
+export const CRITICALITY_LABEL: Record<SystemCriticality, string> = {
+  alta: "Crítica",
+  media: "Média",
+  baixa: "Baixa",
+};
+
+export type NotificationKind = "chamado_status" | "chamado_criado" | "projeto_lembrete";
+
+/** Mensagem de e-mail gerada pelas regras de notificação. */
+export interface EmailNotification {
+  id: string;
+  tipo: NotificationKind;
+  assunto: string;
+  destinatarios: string[];
+  corpo: string;
+  criadoEm: string;
+  /** ID do chamado ou projeto relacionado. */
+  referencia: string;
+}
+
+export const NOTIFICATION_LABEL: Record<NotificationKind, string> = {
+  chamado_criado: "Chamado aberto",
+  chamado_status: "Mudança de status",
+  projeto_lembrete: "Lembrete de projeto",
+};
+
 export const PRIORITY_MATRIX: Record<Impact, Record<Urgency, Priority>> = {
   alto: { alta: "P1", media: "P2", baixa: "P3" },
   medio: { alta: "P2", media: "P3", baixa: "P3" },
