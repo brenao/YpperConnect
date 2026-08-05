@@ -9,6 +9,7 @@ import {
   Sparkles,
   PieChart,
   Users,
+  Settings,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import logo from "@/assets/ypperconnect-logo.png";
@@ -27,6 +28,7 @@ const nav = [
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },
   { to: "/governanca", label: "Governança ITIL", icon: ShieldCheck },
   { to: "/assistente", label: "Assistente IA", icon: Sparkles },
+  { to: "/administracao", label: "Administração", icon: Settings },
 ] as const;
 
 export function AppShell({
