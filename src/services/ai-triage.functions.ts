@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { generateText, Output, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
-import { createLovableAiGatewayProvider } from "@/services/ai-gateway.server";
+import { createAiProvider, AI_MODEL } from "@/services/ai-provider.server";
 
 const Input = z.object({
   conversa: z.string().min(10).max(8000),
@@ -25,10 +25,7 @@ export type TicketDraft = z.infer<typeof DraftSchema>;
 export const draftTicketFromConversation = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<TicketDraft> => {
-    const key = process.env["LOVABLE_API_KEY"];
-    if (!key) throw new Error("Missing LOVABLE_API_KEY");
-
-    const gateway = createLovableAiGatewayProvider(key, { structuredOutputs: true });
+    const gateway = createAiProvider({ structuredOutputs: true });
 
     const prompt = `Estruture um registro de atendimento de TI (ITIL) a partir da conversa abaixo.
 
@@ -50,7 +47,7 @@ ${data.conversa}`;
 
     try {
       const { output } = await generateText({
-        model: gateway("google/gemini-3.6-flash"),
+        model: gateway(AI_MODEL),
         output: Output.object({ schema: DraftSchema }),
         prompt,
       });

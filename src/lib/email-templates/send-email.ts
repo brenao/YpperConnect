@@ -1,18 +1,9 @@
 import * as React from 'react'
 import { render } from '@react-email/render'
-import { EmailAPIError, sendLovableEmail } from '@lovable.dev/email-js'
+import nodemailer from 'nodemailer'
 import { TEMPLATES } from './registry'
 
-// Server-only: reads LOVABLE_API_KEY. Never import from client components.
-
-// Configuration baked in at scaffold time
-const SITE_NAME = "genie-service-flow"
-// SENDER_DOMAIN is the verified sender subdomain FQDN (e.g., "notify.example.com").
-// It MUST match the subdomain delegated to Lovable's nameservers. NEVER use the root domain.
-const SENDER_DOMAIN = "notify.rosset.com.br"
-// FROM_DOMAIN is the domain shown in the From: header (e.g., "example.com").
-// Can be the root domain when display_from_root is enabled — this is cosmetic only.
-const FROM_DOMAIN = "rosset.com.br"
+// Somente servidor: lê as variáveis SMTP_*. Nunca importar de componente cliente.
 
 export type SendTemplateEmailResult =
   | { sent: true }
@@ -20,40 +11,58 @@ export type SendTemplateEmailResult =
 
 export interface SendTemplateEmailOptions {
   templateData?: Record<string, any>
-  /** Dedupes retries of the same logical send; defaults to a random UUID (no dedupe). */
+  /** Mantido por compatibilidade de assinatura; SMTP não deduplica. */
   idempotencyKey?: string
   replyTo?: string
 }
 
+let transporter: nodemailer.Transporter | undefined
+
+function getTransporter(): nodemailer.Transporter {
+  if (transporter) return transporter
+
+  const host = process.env['SMTP_HOST']
+  if (!host) throw new Error('SMTP_HOST não configurado')
+
+  const user = process.env['SMTP_USER']
+  const pass = process.env['SMTP_PASSWORD']
+
+  transporter = nodemailer.createTransport({
+    host,
+    port: Number(process.env['SMTP_PORT'] ?? 587),
+    secure: process.env['SMTP_SECURE'] === 'true',
+    // Relay interno costuma ser anônimo; só autentica se houver usuário.
+    ...(user && pass ? { auth: { user, pass } } : {}),
+    tls: {
+      // Relay corporativo frequentemente usa certificado interno.
+      rejectUnauthorized: process.env['SMTP_REJECT_UNAUTHORIZED'] !== 'false',
+    },
+  })
+
+  return transporter
+}
+
 /**
- * Renders a registered template and sends it through Lovable's managed email
- * API. Suppression, retries, and rate limits are enforced by Lovable
- * server-side. A suppressed recipient is an expected outcome
- * ({ sent: false }); any other failure throws — EmailAPIError exposes
- * .code and .status for branching.
+ * Renderiza um template registrado e envia pelo relay SMTP da empresa.
+ * Diferente do serviço gerenciado anterior, não há supressão de
+ * destinatário nem retentativa automática — se precisar, a fila fica na
+ * tabela `notificacoes`.
  */
 export async function sendTemplateEmail(
   templateName: string,
   to: string,
   options: SendTemplateEmailOptions = {}
 ): Promise<SendTemplateEmailResult> {
-  const apiKey = process.env['LOVABLE_API_KEY']
-  if (!apiKey) {
-    throw new Error('LOVABLE_API_KEY is not configured')
-  }
-
   const template = TEMPLATES[templateName]
   if (!template) {
     throw new Error(
-      `Template '${templateName}' not found. Available: ${Object.keys(TEMPLATES).join(', ')}`
+      `Template '${templateName}' não encontrado. Disponíveis: ${Object.keys(TEMPLATES).join(', ')}`
     )
   }
 
-  // Template-level `to` takes precedence — notification templates always
-  // send to their fixed address.
   const recipient = template.to || to
   if (!recipient) {
-    throw new Error('Recipient is required (the template defines no fixed recipient)')
+    throw new Error('Destinatário é obrigatório (o template não define endereço fixo)')
   }
 
   const templateData = options.templateData ?? {}
@@ -65,28 +74,14 @@ export async function sendTemplateEmail(
       ? template.subject(templateData)
       : template.subject
 
-  try {
-    await sendLovableEmail(
-      {
-        to: recipient,
-        from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
-        sender_domain: SENDER_DOMAIN,
-        subject,
-        html,
-        text,
-        purpose: 'transactional',
-        label: templateName,
-        idempotency_key: options.idempotencyKey || crypto.randomUUID(),
-        ...(options.replyTo ? { reply_to: options.replyTo } : {}),
-      },
-      { apiKey, sendUrl: process.env['LOVABLE_SEND_URL'] }
-    )
-  } catch (error) {
-    if (error instanceof EmailAPIError && error.code === 'recipient_suppressed') {
-      return { sent: false, reason: 'recipient_suppressed' }
-    }
-    throw error
-  }
+  await getTransporter().sendMail({
+    from: process.env['SMTP_FROM'] ?? 'YpperConnect <noreply@localhost>',
+    to: recipient,
+    subject,
+    html,
+    text,
+    ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+  })
 
   return { sent: true }
 }

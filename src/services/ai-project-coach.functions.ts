@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { generateText, Output, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
-import { createLovableAiGatewayProvider } from "@/services/ai-gateway.server";
+import { createAiProvider, AI_MODEL } from "@/services/ai-provider.server";
 
 const Input = z.object({
   resumo: z.string().min(20).max(12000),
@@ -26,10 +26,7 @@ export type CoachResult = z.infer<typeof CoachSchema>;
 export const evaluateProjectPlan = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<CoachResult> => {
-    const key = process.env["LOVABLE_API_KEY"];
-    if (!key) throw new Error("Missing LOVABLE_API_KEY");
-
-    const gateway = createLovableAiGatewayProvider(key, { structuredOutputs: true });
+    const gateway = createAiProvider({ structuredOutputs: true });
 
     const prompt = `Você é um instrutor de gerenciamento de projetos baseado nas boas práticas do PMI (PMBOK) e em técnicas de cronograma (WBS, CPM, marcos, estimativas).
 
@@ -53,7 +50,7 @@ ${data.resumo}`;
 
     try {
       const { output } = await generateText({
-        model: gateway("google/gemini-3.6-flash"),
+        model: gateway(AI_MODEL),
         output: Output.object({ schema: CoachSchema }),
         prompt,
       });

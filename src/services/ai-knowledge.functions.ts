@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { generateText, Output, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
-import { createLovableAiGatewayProvider } from "@/services/ai-gateway.server";
+import { createAiProvider, AI_MODEL } from "@/services/ai-provider.server";
 
 const Input = z.object({
   tema: z.string().min(5).max(300),
@@ -20,9 +20,7 @@ export type GeneratedArticle = z.infer<typeof ArticleSchema>;
 export const generateKnowledgeArticle = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<GeneratedArticle> => {
-    const key = process.env["LOVABLE_API_KEY"];
-    if (!key) throw new Error("Missing LOVABLE_API_KEY");
-    const gateway = createLovableAiGatewayProvider(key, { structuredOutputs: true });
+    const gateway = createAiProvider({ structuredOutputs: true });
 
     const prompt = `Você é um analista de TI que escreve artigos de base de conhecimento (ITIL) padronizados.
 
@@ -37,7 +35,7 @@ Regras:
 
     try {
       const { output } = await generateText({
-        model: gateway("google/gemini-3.6-flash"),
+        model: gateway(AI_MODEL),
         output: Output.object({ schema: ArticleSchema }),
         prompt,
       });

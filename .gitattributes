@@ -1,0 +1,8 @@
+$ga = @'
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+'@
+
+[System.IO.File]::WriteAllText("$PWD\.gitattributes", $ga, (New-Object System.Text.UTF8Encoding $false))

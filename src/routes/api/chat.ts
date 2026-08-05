@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
-import { createLovableAiGatewayProvider } from "@/services/ai-gateway.server";
+import { createAiProvider, AI_MODEL } from "@/services/ai-provider.server";
 
 const SYSTEM_PROMPT = `Você é o assistente de atendimento de TI da plataforma YpperConnect, baseada em práticas ITIL.
 
@@ -28,15 +28,10 @@ export const Route = createFileRoute("/api/chat")({
           return new Response("Mensagens são obrigatórias", { status: 400 });
         }
 
-        const key = process.env["LOVABLE_API_KEY"];
-        if (!key) {
-          return new Response("Missing LOVABLE_API_KEY", { status: 500 });
-        }
-
-        const gateway = createLovableAiGatewayProvider(key);
+        const gateway = createAiProvider();
 
         const result = streamText({
-          model: gateway("google/gemini-3.6-flash"),
+          model: gateway(AI_MODEL),
           system: SYSTEM_PROMPT,
           messages: await convertToModelMessages(messages as UIMessage[]),
         });
