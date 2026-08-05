@@ -1,5 +1,6 @@
 import type {
   Article,
+  AccessProfile,
   DirectoryUser,
   Project,
   Resource,
@@ -8,6 +9,7 @@ import type {
   Ticket,
 } from "@/models/itsm-types";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
+import { APP_FEATURES, APP_MODULES } from "@/models/itsm-types";
 
 const now = Date.now();
 const h = (n: number) => new Date(now + n * 3600_000).toISOString();
