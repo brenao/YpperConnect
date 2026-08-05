@@ -23,7 +23,8 @@ export const Route = createFileRoute("/recursos")({
       { property: "og:title", content: "Recursos e capacidade · YpperConnect" },
       {
         property: "og:description",
-        content: "Disponibilidade diária, alocação multiprojeto e conflitos de capacidade da equipe de TI.",
+        content:
+          "Disponibilidade diária, alocação multiprojeto e conflitos de capacidade da equipe de TI.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -60,17 +61,22 @@ function Recursos() {
     >
       <section className="grid gap-4 sm:grid-cols-3">
         <div className="glass-panel rounded-2xl border border-border/60 p-5">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Capacidade de projetos</p>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+            Capacidade de projetos
+          </p>
           <p className="mt-2 font-mono text-3xl font-semibold">
             {capacidadeTotal.toFixed(1)}h<span className="text-base">/dia</span>
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">{resources.length} recursos cadastrados</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {resources.length} recursos cadastrados
+          </p>
         </div>
         <div className="glass-panel rounded-2xl border border-border/60 p-5">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Comprometido hoje</p>
           <p className="mt-2 font-mono text-3xl font-semibold">{comprometido.toFixed(1)}h</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {capacidadeTotal ? Math.round((comprometido / capacidadeTotal) * 100) : 0}% da capacidade
+            {capacidadeTotal ? Math.round((comprometido / capacidadeTotal) * 100) : 0}% da
+            capacidade
           </p>
         </div>
         <div className="glass-panel rounded-2xl border border-border/60 p-5">

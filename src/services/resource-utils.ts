@@ -114,11 +114,7 @@ export function portfolioLoad(
  * para projetos, o percentual alocado na tarefa e a concorrência com outros
  * projetos. 1 = uma jornada integral por dia; 0,25 = um quarto do ritmo.
  */
-export function taskFactor(
-  task: ProjectTask,
-  resources: Resource[],
-  projects: Project[],
-): number {
+export function taskFactor(task: ProjectTask, resources: Resource[], projects: Project[]): number {
   const nomes = taskResponsibles(task);
   if (!nomes.length) return 1;
   const meio = (parseDate(task.inicio) + parseDate(task.fim)) / 2;

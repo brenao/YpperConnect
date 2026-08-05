@@ -36,13 +36,7 @@ const vazio = {
 };
 
 /** Cadastro e edição de itens do catálogo de serviços. */
-export function ServiceDialog({
-  service,
-  trigger,
-}: {
-  service?: ServiceItem;
-  trigger: ReactNode;
-}) {
+export function ServiceDialog({ service, trigger }: { service?: ServiceItem; trigger: ReactNode }) {
   const { addService, updateService, services } = useItsm();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(service ? { ...vazio, ...service } : vazio);

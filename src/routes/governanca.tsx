@@ -26,7 +26,8 @@ export const Route = createFileRoute("/governanca")({
       { property: "og:title", content: "Governança ITIL · YpperConnect" },
       {
         property: "og:description",
-        content: "Matriz de prioridade, classificações padronizadas e fluxo de incidentes críticos.",
+        content:
+          "Matriz de prioridade, classificações padronizadas e fluxo de incidentes críticos.",
       },
     ],
   }),

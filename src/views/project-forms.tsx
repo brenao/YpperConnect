@@ -48,9 +48,18 @@ export function NewProjectDialog({ onCreated }: { onCreated?: (p: Project) => vo
   const [fim, setFim] = useState(emDias(90));
 
   function submit() {
-    if (nome.trim().length < 4) { toast.error("Informe o nome do projeto."); return; }
-    if (gerente.trim().length < 3) { toast.error("Informe o gerente do projeto (GP)."); return; }
-    if (new Date(fim) <= new Date(inicio)) { toast.error("A data fim deve ser após o início."); return; }
+    if (nome.trim().length < 4) {
+      toast.error("Informe o nome do projeto.");
+      return;
+    }
+    if (gerente.trim().length < 3) {
+      toast.error("Informe o gerente do projeto (GP).");
+      return;
+    }
+    if (new Date(fim) <= new Date(inicio)) {
+      toast.error("A data fim deve ser após o início.");
+      return;
+    }
     const p = createProject({
       nome: nome.trim().slice(0, 120),
       objetivo: objetivo.trim().slice(0, 600),
@@ -60,7 +69,9 @@ export function NewProjectDialog({ onCreated }: { onCreated?: (p: Project) => vo
       inicio,
       fim,
     });
-    toast.success(`${p.id} criado`, { description: "Cadastre tarefas, riscos e a atualização semanal." });
+    toast.success(`${p.id} criado`, {
+      description: "Cadastre tarefas, riscos e a atualização semanal.",
+    });
     setOpen(false);
     setNome("");
     setObjetivo("");
@@ -83,7 +94,12 @@ export function NewProjectDialog({ onCreated }: { onCreated?: (p: Project) => vo
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="p-nome">Nome do projeto</Label>
-            <Input id="p-nome" maxLength={120} value={nome} onChange={(e) => setNome(e.target.value)} />
+            <Input
+              id="p-nome"
+              maxLength={120}
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="p-obj">Objetivo</Label>
@@ -98,11 +114,21 @@ export function NewProjectDialog({ onCreated }: { onCreated?: (p: Project) => vo
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="p-gp">Gerente do projeto (GP)</Label>
-              <Input id="p-gp" maxLength={80} value={gerente} onChange={(e) => setGerente(e.target.value)} />
+              <Input
+                id="p-gp"
+                maxLength={80}
+                value={gerente}
+                onChange={(e) => setGerente(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="p-sp">Sponsor</Label>
-              <Input id="p-sp" maxLength={80} value={sponsor} onChange={(e) => setSponsor(e.target.value)} />
+              <Input
+                id="p-sp"
+                maxLength={80}
+                value={sponsor}
+                onChange={(e) => setSponsor(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label>Status</Label>
@@ -122,7 +148,12 @@ export function NewProjectDialog({ onCreated }: { onCreated?: (p: Project) => vo
             <div />
             <div className="grid gap-2">
               <Label htmlFor="p-ini">Início</Label>
-              <Input id="p-ini" type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
+              <Input
+                id="p-ini"
+                type="date"
+                value={inicio}
+                onChange={(e) => setInicio(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="p-fim">Fim</Label>
@@ -161,7 +192,9 @@ export function TaskDialog({
   const [duracao, setDuracao] = useState(String(task?.duracao ?? 5));
   const [unidade, setUnidade] = useState<"dias" | "horas">(task?.duracaoUnidade ?? "dias");
   const [progresso, setProgresso] = useState(String(task?.progresso ?? 0));
-  const [responsaveis, setResponsaveis] = useState((task?.responsaveis ?? [task?.responsavel ?? ""]).join(", "));
+  const [responsaveis, setResponsaveis] = useState(
+    (task?.responsaveis ?? [task?.responsavel ?? ""]).join(", "),
+  );
   const [paiId, setPaiId] = useState(task?.paiId ?? afterTask?.paiId ?? "");
   const [filhaDaAcima, setFilhaDaAcima] = useState(false);
   const [marco, setMarco] = useState(Boolean(task?.marco));
@@ -187,9 +220,7 @@ export function TaskDialog({
   );
   const predsIds = Array.from(
     new Set(
-      numerosInformados
-        .filter((n) => !predsInvalidas.includes(n))
-        .map((n) => idPorNumero.get(n)!),
+      numerosInformados.filter((n) => !predsInvalidas.includes(n)).map((n) => idPorNumero.get(n)!),
     ),
   );
 
@@ -211,20 +242,31 @@ export function TaskDialog({
   });
 
   function submit() {
-    if (nome.trim().length < 3) { toast.error("Informe o nome da tarefa."); return; }
+    if (nome.trim().length < 3) {
+      toast.error("Informe o nome da tarefa.");
+      return;
+    }
     if (predsInvalidas.length) {
       toast.error(`Predecessoras inválidas: ${predsInvalidas.join(", ")}`);
       return;
     }
     const dur = Number(duracao);
-    if (!Number.isFinite(dur) || dur <= 0) { toast.error("Informe uma duração válida."); return; }
+    if (!Number.isFinite(dur) || dur <= 0) {
+      toast.error("Informe uma duração válida.");
+      return;
+    }
     const dias = unidade === "horas" ? Math.max(dur / 8, 0.125) : dur;
-    const fim = toISODate(new Date(`${inicio}T00:00:00`).getTime() + Math.max(dias - 1, 0) * 86_400_000);
+    const fim = toISODate(
+      new Date(`${inicio}T00:00:00`).getTime() + Math.max(dias - 1, 0) * 86_400_000,
+    );
     const pessoas = responsaveis
       .split(",")
       .map((r) => r.trim())
       .filter(Boolean);
-    if (!pessoas.length) { toast.error("Atribua a tarefa a pelo menos uma pessoa."); return; }
+    if (!pessoas.length) {
+      toast.error("Atribua a tarefa a pelo menos uma pessoa.");
+      return;
+    }
 
     const paiFinal = !task && afterTask && filhaDaAcima ? afterTask.id : paiId || undefined;
     const payload = {
@@ -279,16 +321,31 @@ export function TaskDialog({
           ) : null}
           <div className="grid gap-2">
             <Label htmlFor="t-nome">Nome da tarefa</Label>
-            <Input id="t-nome" value={nome} maxLength={120} onChange={(e) => setNome(e.target.value)} />
+            <Input
+              id="t-nome"
+              value={nome}
+              maxLength={120}
+              onChange={(e) => setNome(e.target.value)}
+            />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="t-ativ">Atividade</Label>
-              <Input id="t-ativ" value={atividade} maxLength={80} onChange={(e) => setAtividade(e.target.value)} />
+              <Input
+                id="t-ativ"
+                value={atividade}
+                maxLength={80}
+                onChange={(e) => setAtividade(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="t-ini">Início</Label>
-              <Input id="t-ini" type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
+              <Input
+                id="t-ini"
+                type="date"
+                value={inicio}
+                onChange={(e) => setInicio(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="t-dur">Duração</Label>
@@ -325,7 +382,10 @@ export function TaskDialog({
             </div>
             <div className="grid gap-2">
               <Label>Tarefa pai</Label>
-              <Select value={paiId || "none"} onValueChange={(v) => setPaiId(v === "none" ? "" : v)}>
+              <Select
+                value={paiId || "none"}
+                onValueChange={(v) => setPaiId(v === "none" ? "" : v)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -357,7 +417,10 @@ export function TaskDialog({
                     className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
                     onClick={() =>
                       setResponsaveis((prev) => {
-                        const atuais = prev.split(",").map((x) => x.trim()).filter(Boolean);
+                        const atuais = prev
+                          .split(",")
+                          .map((x) => x.trim())
+                          .filter(Boolean);
                         return atuais.includes(r.nome)
                           ? atuais.filter((x) => x !== r.nome).join(", ")
                           : [...atuais, r.nome].join(", ");
@@ -383,16 +446,21 @@ export function TaskDialog({
             <div className="space-y-1 text-[11px] text-muted-foreground">
               {capacidade.map((c) => (
                 <p key={c.nome} className={c.total > 100 ? "text-destructive" : undefined}>
-                  {c.nome}: {c.cadastrado ? `${c.disponibilidade}% do dia para projetos` : "não cadastrado como recurso"} ·{" "}
-                  {c.horasDia.toFixed(1)}h/dia nesta tarefa · carga total no portfólio {Math.round(c.total)}%
-                  {c.total > 100 ? " (sobrealocado)" : ""}
+                  {c.nome}:{" "}
+                  {c.cadastrado
+                    ? `${c.disponibilidade}% do dia para projetos`
+                    : "não cadastrado como recurso"}{" "}
+                  · {c.horasDia.toFixed(1)}h/dia nesta tarefa · carga total no portfólio{" "}
+                  {Math.round(c.total)}%{c.total > 100 ? " (sobrealocado)" : ""}
                 </p>
               ))}
             </div>
           </div>
           {candidatas.length > 0 && (
             <div className="grid gap-2">
-              <Label htmlFor="t-preds">Predecessoras (números das tarefas, separados por vírgula)</Label>
+              <Label htmlFor="t-preds">
+                Predecessoras (números das tarefas, separados por vírgula)
+              </Label>
               <Input
                 id="t-preds"
                 value={predsTexto}
@@ -408,12 +476,16 @@ export function TaskDialog({
                 <p className="text-[11px] text-muted-foreground">
                   Após:{" "}
                   {predsIds
-                    .map((id) => `${numeroPorId.get(id)}. ${project.tarefas.find((x) => x.id === id)?.nome ?? id}`)
+                    .map(
+                      (id) =>
+                        `${numeroPorId.get(id)}. ${project.tarefas.find((x) => x.id === id)?.nome ?? id}`,
+                    )
                     .join(" · ")}
                 </p>
               ) : (
                 <p className="text-[11px] text-muted-foreground">
-                  Use a coluna <strong>#</strong> do cronograma para identificar o número de cada tarefa.
+                  Use a coluna <strong>#</strong> do cronograma para identificar o número de cada
+                  tarefa.
                 </p>
               )}
             </div>
@@ -442,7 +514,10 @@ export function WeeklyUpdateDialog({ project }: { project: Project }) {
   const [proximas, setProximas] = useState("");
 
   function submit() {
-    if (descricao.trim().length < 10) { toast.error("Descreva a situação do projeto."); return; }
+    if (descricao.trim().length < 10) {
+      toast.error("Descreva a situação do projeto.");
+      return;
+    }
     addProjectUpdate(project.id, {
       data: new Date().toISOString(),
       autor: project.gerente,
@@ -474,15 +549,30 @@ export function WeeklyUpdateDialog({ project }: { project: Project }) {
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="u-desc">Situação atual do projeto</Label>
-            <Textarea id="u-desc" rows={4} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+            <Textarea
+              id="u-desc"
+              rows={4}
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="u-ult">Últimas entregas</Label>
-            <Textarea id="u-ult" rows={3} value={ultimas} onChange={(e) => setUltimas(e.target.value)} />
+            <Textarea
+              id="u-ult"
+              rows={3}
+              value={ultimas}
+              onChange={(e) => setUltimas(e.target.value)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="u-prox">Próximas entregas</Label>
-            <Textarea id="u-prox" rows={3} value={proximas} onChange={(e) => setProximas(e.target.value)} />
+            <Textarea
+              id="u-prox"
+              rows={3}
+              value={proximas}
+              onChange={(e) => setProximas(e.target.value)}
+            />
           </div>
         </div>
         <DialogFooter>
@@ -505,7 +595,10 @@ export function RiskDialog({ project }: { project: Project }) {
   const [mitigacao, setMitigacao] = useState("");
 
   function submit() {
-    if (descricao.trim().length < 10) { toast.error("Descreva o risco."); return; }
+    if (descricao.trim().length < 10) {
+      toast.error("Descreva o risco.");
+      return;
+    }
     addRisk(project.id, {
       descricao: descricao.trim().slice(0, 500),
       probabilidade,
@@ -534,12 +627,20 @@ export function RiskDialog({ project }: { project: Project }) {
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="r-desc">Risco</Label>
-            <Textarea id="r-desc" rows={3} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+            <Textarea
+              id="r-desc"
+              rows={3}
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+            />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label>Probabilidade</Label>
-              <Select value={probabilidade} onValueChange={(v) => setProbabilidade(v as typeof probabilidade)}>
+              <Select
+                value={probabilidade}
+                onValueChange={(v) => setProbabilidade(v as typeof probabilidade)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -566,7 +667,12 @@ export function RiskDialog({ project }: { project: Project }) {
           </div>
           <div className="grid gap-2">
             <Label htmlFor="r-mit">Plano de mitigação</Label>
-            <Textarea id="r-mit" rows={3} value={mitigacao} onChange={(e) => setMitigacao(e.target.value)} />
+            <Textarea
+              id="r-mit"
+              rows={3}
+              value={mitigacao}
+              onChange={(e) => setMitigacao(e.target.value)}
+            />
           </div>
         </div>
         <DialogFooter>
@@ -589,8 +695,14 @@ export function AttentionDialog({ project }: { project: Project }) {
   const [responsavel, setResponsavel] = useState(project.sponsor);
 
   function submit() {
-    if (titulo.trim().length < 5) { toast.error("Informe o título do ponto de atenção."); return; }
-    if (decisao.trim().length < 5) { toast.error("Informe a decisão necessária."); return; }
+    if (titulo.trim().length < 5) {
+      toast.error("Informe o título do ponto de atenção.");
+      return;
+    }
+    if (decisao.trim().length < 5) {
+      toast.error("Informe a decisão necessária.");
+      return;
+    }
     addAttention(project.id, {
       titulo: titulo.trim().slice(0, 120),
       descricao: descricao.trim().slice(0, 800),
@@ -621,19 +733,39 @@ export function AttentionDialog({ project }: { project: Project }) {
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="a-tit">Título</Label>
-            <Input id="a-tit" maxLength={120} value={titulo} onChange={(e) => setTitulo(e.target.value)} />
+            <Input
+              id="a-tit"
+              maxLength={120}
+              value={titulo}
+              onChange={(e) => setTitulo(e.target.value)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="a-desc">Contexto</Label>
-            <Textarea id="a-desc" rows={3} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+            <Textarea
+              id="a-desc"
+              rows={3}
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="a-dec">Decisão necessária</Label>
-            <Textarea id="a-dec" rows={2} value={decisao} onChange={(e) => setDecisao(e.target.value)} />
+            <Textarea
+              id="a-dec"
+              rows={2}
+              value={decisao}
+              onChange={(e) => setDecisao(e.target.value)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="a-resp">Responsável pela decisão</Label>
-            <Input id="a-resp" maxLength={80} value={responsavel} onChange={(e) => setResponsavel(e.target.value)} />
+            <Input
+              id="a-resp"
+              maxLength={80}
+              value={responsavel}
+              onChange={(e) => setResponsavel(e.target.value)}
+            />
           </div>
         </div>
         <DialogFooter>

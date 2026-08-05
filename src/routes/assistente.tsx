@@ -11,10 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useItsm } from "@/controllers/itsm-store";
-import {
-  draftTicketFromConversation,
-  type TicketDraft,
-} from "@/services/ai-triage.functions";
+import { draftTicketFromConversation, type TicketDraft } from "@/services/ai-triage.functions";
 
 export const Route = createFileRoute("/assistente")({
   head: () => ({

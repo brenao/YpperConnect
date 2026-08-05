@@ -4,9 +4,11 @@ export type Theme = "dark" | "light";
 
 const STORAGE_KEY = "govti.theme";
 
-const ThemeContext = createContext<{ theme: Theme; setTheme: (t: Theme) => void; toggle: () => void }>(
-  { theme: "dark", setTheme: () => {}, toggle: () => {} },
-);
+const ThemeContext = createContext<{
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+  toggle: () => void;
+}>({ theme: "dark", setTheme: () => {}, toggle: () => {} });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("dark");

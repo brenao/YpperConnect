@@ -2,7 +2,12 @@ import { useState } from "react";
 import { CalendarDays, GripVertical, User } from "lucide-react";
 import { toast } from "sonner";
 import { useItsm } from "@/controllers/itsm-store";
-import { KANBAN_LABEL, type KanbanStatus, type Project, type ProjectTask } from "@/models/itsm-types";
+import {
+  KANBAN_LABEL,
+  type KanbanStatus,
+  type Project,
+  type ProjectTask,
+} from "@/models/itsm-types";
 import { fmtDate, toISODate } from "@/services/project-utils";
 import { cn } from "@/lib/utils";
 
@@ -47,7 +52,12 @@ function PostIt({
     >
       <div className="flex items-start gap-2">
         <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-900/40" />
-        <h4 className={cn("min-w-0 text-sm font-semibold leading-snug", done && "line-through opacity-70")}>
+        <h4
+          className={cn(
+            "min-w-0 text-sm font-semibold leading-snug",
+            done && "line-through opacity-70",
+          )}
+        >
           {task.nome}
         </h4>
       </div>
@@ -62,7 +72,10 @@ function PostIt({
       </div>
       <div className="mt-2 pl-5">
         <div className="h-1 overflow-hidden rounded-full bg-neutral-900/15">
-          <div className="h-full rounded-full bg-neutral-900/60" style={{ width: `${task.progresso}%` }} />
+          <div
+            className="h-full rounded-full bg-neutral-900/60"
+            style={{ width: `${task.progresso}%` }}
+          />
         </div>
         <div className="mt-1 flex items-center justify-between text-[10px] text-neutral-900/60">
           <span>{project.id}</span>
@@ -90,7 +103,9 @@ export function ProjectKanban({ project }: { project: Project }) {
         fim: hoje,
         concluidoEm: hoje,
       });
-      toast.success(`"${t.nome}" concluída`, { description: `100% · fim ajustado para ${fmtDate(hoje)}` });
+      toast.success(`"${t.nome}" concluída`, {
+        description: `100% · fim ajustado para ${fmtDate(hoje)}`,
+      });
       return;
     }
     updateTask(project.id, taskId, {
@@ -126,11 +141,18 @@ export function ProjectKanban({ project }: { project: Project }) {
             <header className="flex items-center gap-2 px-1 pb-3">
               <span className={cn("h-2 w-2 rounded-full", COL_ACCENT[col])} />
               <h3 className="text-sm font-semibold">{KANBAN_LABEL[col]}</h3>
-              <span className="ml-auto font-mono text-xs text-muted-foreground">{itens.length}</span>
+              <span className="ml-auto font-mono text-xs text-muted-foreground">
+                {itens.length}
+              </span>
             </header>
             <div className="flex flex-col gap-3">
               {itens.map((t) => (
-                <PostIt key={t.id} task={t} project={project} onDragStart={() => setArrastando(t.id)} />
+                <PostIt
+                  key={t.id}
+                  task={t}
+                  project={project}
+                  onDragStart={() => setArrastando(t.id)}
+                />
               ))}
               {!itens.length ? (
                 <p className="rounded-lg border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">

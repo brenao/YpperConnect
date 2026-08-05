@@ -4,12 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
-import {
-  AttentionDialog,
-  RiskDialog,
-  TaskDialog,
-  WeeklyUpdateDialog,
-} from "@/views/project-forms";
+import { AttentionDialog, RiskDialog, TaskDialog, WeeklyUpdateDialog } from "@/views/project-forms";
 import { ProjectKanban } from "@/views/project-kanban";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -91,7 +86,10 @@ function Gantt({ project }: { project: Project }) {
         : criticalPath(project),
     [project, resources, projects, hydrated],
   );
-  const start = Math.min(parseDate(project.inicio), ...project.tarefas.map((t) => parseDate(t.inicio)));
+  const start = Math.min(
+    parseDate(project.inicio),
+    ...project.tarefas.map((t) => parseDate(t.inicio)),
+  );
   const end = Math.max(
     parseDate(project.fim),
     ...project.tarefas.map((t) => cpm.get(t.id)?.ef ?? parseDate(t.fim)),
@@ -143,33 +141,32 @@ function Gantt({ project }: { project: Project }) {
                 }
               />
               <div className="min-w-0" style={{ paddingLeft: t.paiId ? 12 : 0 }}>
-              <div className="flex items-center gap-2">
-                {critica ? (
-                  <span className="h-1.5 w-1.5 rounded-full bg-destructive" title="Tarefa crítica" />
-                ) : null}
-                <span className="truncate">{t.nome}</span>
-              </div>
-              <span className="text-[11px] text-muted-foreground">
-                {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
-                {taskAllocation(t)}% alocado
-                {(t.predecessoras ?? []).length
-                  ? ` · após ${(t.predecessoras ?? [])
-                      .map((p) => project.tarefas.findIndex((x) => x.id === p) + 1)
-                      .filter((n) => n > 0)
-                      .join(", ")}`
-                  : ""}
-              </span>
+                <div className="flex items-center gap-2">
+                  {critica ? (
+                    <span
+                      className="h-1.5 w-1.5 rounded-full bg-destructive"
+                      title="Tarefa crítica"
+                    />
+                  ) : null}
+                  <span className="truncate">{t.nome}</span>
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
+                  {taskAllocation(t)}% alocado
+                  {(t.predecessoras ?? []).length
+                    ? ` · após ${(t.predecessoras ?? [])
+                        .map((p) => project.tarefas.findIndex((x) => x.id === p) + 1)
+                        .filter((n) => n > 0)
+                        .join(", ")}`
+                    : ""}
+                </span>
               </div>
             </div>
             <div className="relative h-7 flex-1 rounded-md bg-muted/40">
               <div
                 className={cn(
                   "absolute inset-y-1 rounded-md",
-                  t.marco
-                    ? "bg-warning/70"
-                    : critica
-                      ? "bg-destructive/60"
-                      : "bg-primary/50",
+                  t.marco ? "bg-warning/70" : critica ? "bg-destructive/60" : "bg-primary/50",
                 )}
                 style={{ left: `${left}%`, width: `${width}%` }}
               >
@@ -201,7 +198,9 @@ function AiCoach({ project }: { project: Project }) {
       const s = cpm.get(t.id);
       return `- ${t.nome} | atividade: ${t.atividade ?? "-"} | ${t.inicio} a ${t.fim} | duração ${taskDurationLabel(t)} | ${t.progresso}% | responsáveis: ${(t.responsaveis ?? [t.responsavel]).join(", ")} | predecessoras: ${(t.predecessoras ?? []).length} | pai: ${t.paiId ?? "-"} | marco: ${t.marco ? "sim" : "não"} | crítica: ${s?.critica ? "sim" : "não"} | folga: ${s?.folga ?? 0}d`;
     });
-    const duracaoProjeto = Math.round((parseDate(project.fim) - parseDate(project.inicio)) / 86_400_000);
+    const duracaoProjeto = Math.round(
+      (parseDate(project.fim) - parseDate(project.inicio)) / 86_400_000,
+    );
     return [
       `Projeto: ${project.nome} (${project.id})`,
       `Objetivo: ${project.objetivo}`,
@@ -264,7 +263,9 @@ function AiCoach({ project }: { project: Project }) {
           <p className="text-sm">{result.resumo}</p>
           {result.pontosFortes.length ? (
             <div>
-              <h4 className="text-xs uppercase tracking-wide text-muted-foreground">Pontos fortes</h4>
+              <h4 className="text-xs uppercase tracking-wide text-muted-foreground">
+                Pontos fortes
+              </h4>
               <ul className="mt-2 space-y-1 text-sm">
                 {result.pontosFortes.map((p) => (
                   <li key={p} className="text-success">
@@ -360,13 +361,17 @@ function SidePanel({
 
 function ProjetoDetalhe() {
   const { projectId } = Route.useParams();
-  const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
+  const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } =
+    useItsm();
   const hydrated = useHydrated();
   const project = projects.find((p) => p.id === projectId);
 
   if (!project) {
     return (
-      <AppShell title="Projeto não encontrado" subtitle="O projeto solicitado não existe no portfólio">
+      <AppShell
+        title="Projeto não encontrado"
+        subtitle="O projeto solicitado não existe no portfólio"
+      >
         <Link to="/projetos" className="text-sm text-primary underline">
           Voltar ao portfólio
         </Link>
@@ -392,9 +397,7 @@ function ProjetoDetalhe() {
     <AppShell
       title={project.nome}
       subtitle={`${project.id} · GP ${project.gerente} · Sponsor ${project.sponsor}`}
-      actions={
-        <TaskDialog project={project} trigger={<Button size="sm">Nova tarefa</Button>} />
-      }
+      actions={<TaskDialog project={project} trigger={<Button size="sm">Nova tarefa</Button>} />}
     >
       <Link to="/projetos" className="text-xs text-muted-foreground hover:text-foreground">
         ← Portfólio de projetos
@@ -422,8 +425,15 @@ function ProjetoDetalhe() {
               </Select>
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-4">
-              <Metric label="Período" value={`${fmtDate(project.inicio)} — ${fmtDate(project.fim)}`} />
-              <Metric label="Tarefas" value={`${project.tarefas.length}`} hint={`${criticas.length} crítica(s)`} />
+              <Metric
+                label="Período"
+                value={`${fmtDate(project.inicio)} — ${fmtDate(project.fim)}`}
+              />
+              <Metric
+                label="Tarefas"
+                value={`${project.tarefas.length}`}
+                hint={`${criticas.length} crítica(s)`}
+              />
               <Metric label="Progresso" value={`${progresso}%`} hint={`esperado ${esperado}%`} />
               <Metric
                 label="Previsão real"
@@ -441,291 +451,302 @@ function ProjetoDetalhe() {
             <Progress value={progresso} className="mt-4 h-2" />
           </div>
 
-      <Tabs defaultValue="tarefas">
-        <TabsList>
-          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
-          <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
-          <TabsTrigger value="kanban">Kanban</TabsTrigger>
-          <TabsTrigger value="recursos">Recursos</TabsTrigger>
-        </TabsList>
+          <Tabs defaultValue="tarefas">
+            <TabsList>
+              <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
+              <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
+              <TabsTrigger value="kanban">Kanban</TabsTrigger>
+              <TabsTrigger value="recursos">Recursos</TabsTrigger>
+            </TabsList>
 
-        <TabsContent value="cronograma">
-          <div className="glass-panel rounded-2xl border border-border/60 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-semibold">Cronograma e caminho crítico</h3>
-              <span className="text-xs text-muted-foreground">
-                {criticas.length} tarefa(s) crítica(s) · atraso nelas desloca o fim do projeto
-              </span>
-            </div>
-            <Gantt project={project} />
-          </div>
-          {criticas.length ? (
-            <div className="glass-panel mt-4 rounded-2xl border border-destructive/30 p-5">
-              <h3 className="text-sm font-semibold text-destructive">Caminho crítico</h3>
-              <ol className="mt-2 space-y-1 text-sm">
-                {criticas.map((t, i) => (
-                  <li key={t.id} className="text-muted-foreground">
-                    {i + 1}. <span className="text-foreground">{t.nome}</span> ·{" "}
-                    {taskDurationLabel(t)} · {t.progresso}% concluída
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="kanban">
-          <div className="glass-panel rounded-2xl border border-border/60 p-5">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-              <div className="min-w-0">
-                <h3 className="font-semibold">Quadro de tarefas</h3>
-                <p className="text-xs text-muted-foreground">
-                  Arraste os post-its entre as colunas. Ao mover para <strong>Concluído</strong>, a
-                  tarefa vai a 100% e assume a data de hoje como fim.
-                </p>
+            <TabsContent value="cronograma">
+              <div className="glass-panel rounded-2xl border border-border/60 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-semibold">Cronograma e caminho crítico</h3>
+                  <span className="text-xs text-muted-foreground">
+                    {criticas.length} tarefa(s) crítica(s) · atraso nelas desloca o fim do projeto
+                  </span>
+                </div>
+                <Gantt project={project} />
               </div>
-              <TaskDialog
-                project={project}
-                trigger={
-                  <Button size="sm" variant="outline">
-                    Nova tarefa
-                  </Button>
-                }
-              />
-            </div>
-            <div className="mt-4">
-              <ProjectKanban project={project} />
-            </div>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="tarefas">
-          <div className="glass-panel overflow-x-auto rounded-2xl border border-border/60 p-5">
-            <table className="w-full text-sm">
-              <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-                <tr className="border-b border-border/60">
-                  <th className="w-10 py-2 text-left">#</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Tarefa</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Responsáveis</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Duração</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Período</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">%</th>
-                  <th className="px-2 py-2 text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {project.tarefas.map((t, idx) => {
-                  const s = cpm.get(t.id);
-                  return (
-                    <tr key={t.id} className="border-b border-border/40">
-                      <td className="px-2 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
-                        {idx + 1}
-                      </td>
-                      <td className="px-2 py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
-                        <div className="flex items-center gap-2">
-                          <TaskDialog
-                            project={project}
-                            afterTask={t}
-                            trigger={
-                              <button
-                                type="button"
-                                title="Adicionar tarefa abaixo desta"
-                                aria-label={`Adicionar tarefa abaixo de ${t.nome}`}
-                                className="grid h-5 w-5 shrink-0 place-items-center rounded border border-border/60 text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary"
-                              >
-                                <Plus className="h-3 w-3" />
-                              </button>
-                            }
-                          />
-                          {s?.critica ? (
-                            <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
-                          ) : null}
-                          <span>{t.nome}</span>
-                          {t.marco ? (
-                            <Badge variant="outline" className="border-warning/40 text-warning">
-                              marco
-                            </Badge>
-                          ) : null}
-                        </div>
-                        <span className="text-[11px] text-muted-foreground">
-                          {t.atividade ?? "Execução"}
-                          {s?.critica ? (
-                            <span className="text-destructive"> · caminho crítico</span>
-                          ) : (
-                            ` · folga ${s?.folga ?? 0}d`
-                          )}
-                          {(t.predecessoras ?? []).length
-                            ? ` · após ${(t.predecessoras ?? [])
-                                .map((p) => {
-                                  const i = project.tarefas.findIndex((x) => x.id === p);
-                                  return i >= 0
-                                    ? `${i + 1}. ${project.tarefas[i]!.nome}`
-                                    : p;
-                                })
-                                .join(", ")}`
-                            : ""}
-                        </span>
-                      </td>
-                      <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
-                        {(t.responsaveis ?? [t.responsavel]).join(", ")}
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{taskDurationLabel(t)}</td>
-                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
-                        {fmtDate(t.inicio)} — {fmtDate(t.fim)}
-                      </td>
-                      <td className="px-2 py-2">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={t.progresso}
-                          onChange={(e) =>
-                            updateTask(project.id, t.id, {
-                              progresso: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
-                            })
-                          }
-                          className="w-16 rounded-md border border-border bg-transparent px-1.5 py-1 text-center text-xs tabular-nums"
-                        />
-                      </td>
-                      <td className="px-2 py-2 text-right">
-                        <div className="flex justify-end gap-1">
-                          <TaskDialog
-                            project={project}
-                            task={t}
-                            trigger={
-                              <Button size="icon" variant="ghost" className="h-7 w-7" title="Editar tarefa">
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            }
-                          />
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7 text-destructive"
-                            title="Excluir tarefa"
-                            onClick={() => removeTask(project.id, t.id)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {!project.tarefas.length ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                Nenhuma tarefa cadastrada ainda.
-              </p>
-            ) : null}
-            <p className="mt-3 text-xs text-muted-foreground">
-              Total planejado:{" "}
-              {Math.round(project.tarefas.reduce((a, t) => a + taskDurationDays(t), 0))} dias de
-              trabalho distribuídos.
-            </p>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="recursos">
-          <div className="glass-panel rounded-2xl border border-border/60 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-semibold">Capacidade e ritmo real</h3>
-              <span
-                className={cn(
-                  "text-xs",
-                  desvioDias > 0 ? "text-destructive" : "text-muted-foreground",
-                )}
-              >
-                Previsão com disponibilidade: {fmtDateFull(toISODate(previsaoFim))}
-                {desvioDias > 0 ? ` · ${desvioDias} dia(s) além do planejado` : " · dentro do plano"}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              A duração real considera o percentual do dia que cada pessoa tem para projetos e a
-              concorrência com tarefas de outros projetos do portfólio.
-            </p>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr className="border-b border-border/60">
-                    <th className="py-2 text-left">Tarefa</th>
-                    <th className="py-2 text-left">Responsáveis</th>
-                    <th className="py-2 text-left">Alocação</th>
-                    <th className="py-2 text-left">Duração planejada</th>
-                    <th className="py-2 text-left">Duração real</th>
-                    <th className="py-2 text-left">Término previsto</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {project.tarefas.map((t) => {
-                    const real = effectiveDurationDays(t, resources, projects);
-                    const plano = taskDurationDays(t);
-                    return (
-                      <tr key={t.id} className="border-b border-border/40">
-                        <td className="py-2">{t.nome}</td>
-                        <td className="py-2 text-muted-foreground">{taskResponsibles(t).join(", ")}</td>
-                        <td className="py-2 text-muted-foreground">{taskAllocation(t)}%</td>
-                        <td className="py-2 text-muted-foreground">{Math.round(plano)} d</td>
-                        <td className={cn("py-2", real > plano * 1.2 && "text-warning")}>
-                          {Math.ceil(real)} d
-                        </td>
-                        <td className="py-2 text-muted-foreground">
-                          {fmtDate(toISODate(cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {!project.tarefas.length ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">
-                  Cadastre tarefas para simular a capacidade da equipe.
-                </p>
+              {criticas.length ? (
+                <div className="glass-panel mt-4 rounded-2xl border border-destructive/30 p-5">
+                  <h3 className="text-sm font-semibold text-destructive">Caminho crítico</h3>
+                  <ol className="mt-2 space-y-1 text-sm">
+                    {criticas.map((t, i) => (
+                      <li key={t.id} className="text-muted-foreground">
+                        {i + 1}. <span className="text-foreground">{t.nome}</span> ·{" "}
+                        {taskDurationLabel(t)} · {t.progresso}% concluída
+                      </li>
+                    ))}
+                  </ol>
+                </div>
               ) : null}
-            </div>
-          </div>
+            </TabsContent>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {cargas.map((c) => (
-              <div
-                key={c.recurso.id}
-                className={cn(
-                  "glass-panel rounded-2xl border p-5",
-                  c.conflito ? "border-destructive/50" : "border-border/60",
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <h4 className="font-medium">{c.recurso.nome}</h4>
+            <TabsContent value="kanban">
+              <div className="glass-panel rounded-2xl border border-border/60 p-5">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+                  <div className="min-w-0">
+                    <h3 className="font-semibold">Quadro de tarefas</h3>
                     <p className="text-xs text-muted-foreground">
-                      {c.recurso.disponibilidadeProjetos}% do dia para projetos ·{" "}
-                      {c.capacidadeHoras.toFixed(1)}h/dia
+                      Arraste os post-its entre as colunas. Ao mover para <strong>Concluído</strong>
+                      , a tarefa vai a 100% e assume a data de hoje como fim.
                     </p>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={c.conflito ? HEALTH_CLASS.vermelho : HEALTH_CLASS.verde}
-                  >
-                    {Math.round(c.demandaPct)}% alocado
-                  </Badge>
+                  <TaskDialog
+                    project={project}
+                    trigger={
+                      <Button size="sm" variant="outline">
+                        Nova tarefa
+                      </Button>
+                    }
+                  />
                 </div>
-                <Progress value={Math.min(c.demandaPct, 100)} className="mt-3 h-1.5" />
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Atua em {c.projetos.length} projeto(s): {c.projetos.join(", ") || "—"}
+                <div className="mt-4">
+                  <ProjectKanban project={project} />
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="tarefas">
+              <div className="glass-panel overflow-x-auto rounded-2xl border border-border/60 p-5">
+                <table className="w-full text-sm">
+                  <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                    <tr className="border-b border-border/60">
+                      <th className="w-10 py-2 text-left">#</th>
+                      <th className="whitespace-nowrap px-2 py-2 text-left">Tarefa</th>
+                      <th className="whitespace-nowrap px-2 py-2 text-left">Responsáveis</th>
+                      <th className="whitespace-nowrap px-2 py-2 text-left">Duração</th>
+                      <th className="whitespace-nowrap px-2 py-2 text-left">Período</th>
+                      <th className="whitespace-nowrap px-2 py-2 text-left">%</th>
+                      <th className="px-2 py-2 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {project.tarefas.map((t, idx) => {
+                      const s = cpm.get(t.id);
+                      return (
+                        <tr key={t.id} className="border-b border-border/40">
+                          <td className="px-2 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+                            {idx + 1}
+                          </td>
+                          <td className="px-2 py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
+                            <div className="flex items-center gap-2">
+                              <TaskDialog
+                                project={project}
+                                afterTask={t}
+                                trigger={
+                                  <button
+                                    type="button"
+                                    title="Adicionar tarefa abaixo desta"
+                                    aria-label={`Adicionar tarefa abaixo de ${t.nome}`}
+                                    className="grid h-5 w-5 shrink-0 place-items-center rounded border border-border/60 text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </button>
+                                }
+                              />
+                              {s?.critica ? (
+                                <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+                              ) : null}
+                              <span>{t.nome}</span>
+                              {t.marco ? (
+                                <Badge variant="outline" className="border-warning/40 text-warning">
+                                  marco
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <span className="text-[11px] text-muted-foreground">
+                              {t.atividade ?? "Execução"}
+                              {s?.critica ? (
+                                <span className="text-destructive"> · caminho crítico</span>
+                              ) : (
+                                ` · folga ${s?.folga ?? 0}d`
+                              )}
+                              {(t.predecessoras ?? []).length
+                                ? ` · após ${(t.predecessoras ?? [])
+                                    .map((p) => {
+                                      const i = project.tarefas.findIndex((x) => x.id === p);
+                                      return i >= 0 ? `${i + 1}. ${project.tarefas[i]!.nome}` : p;
+                                    })
+                                    .join(", ")}`
+                                : ""}
+                            </span>
+                          </td>
+                          <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
+                            {(t.responsaveis ?? [t.responsavel]).join(", ")}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
+                            {taskDurationLabel(t)}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
+                            {fmtDate(t.inicio)} — {fmtDate(t.fim)}
+                          </td>
+                          <td className="px-2 py-2">
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={t.progresso}
+                              onChange={(e) =>
+                                updateTask(project.id, t.id, {
+                                  progresso: Math.max(
+                                    0,
+                                    Math.min(100, Number(e.target.value) || 0),
+                                  ),
+                                })
+                              }
+                              className="w-16 rounded-md border border-border bg-transparent px-1.5 py-1 text-center text-xs tabular-nums"
+                            />
+                          </td>
+                          <td className="px-2 py-2 text-right">
+                            <div className="flex justify-end gap-1">
+                              <TaskDialog
+                                project={project}
+                                task={t}
+                                trigger={
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-7 w-7"
+                                    title="Editar tarefa"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </Button>
+                                }
+                              />
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 text-destructive"
+                                title="Excluir tarefa"
+                                onClick={() => removeTask(project.id, t.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {!project.tarefas.length ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    Nenhuma tarefa cadastrada ainda.
+                  </p>
+                ) : null}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Total planejado:{" "}
+                  {Math.round(project.tarefas.reduce((a, t) => a + taskDurationDays(t), 0))} dias de
+                  trabalho distribuídos.
                 </p>
               </div>
-            ))}
-            {semCadastro.length ? (
-              <p className="text-sm text-warning">
-                Sem cadastro de recurso: {semCadastro.join(", ")} — considerados 100% disponíveis até
-                serem cadastrados em Recursos e capacidade.
-              </p>
-            ) : null}
-          </div>
-        </TabsContent>
+            </TabsContent>
 
-      </Tabs>
+            <TabsContent value="recursos">
+              <div className="glass-panel rounded-2xl border border-border/60 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-semibold">Capacidade e ritmo real</h3>
+                  <span
+                    className={cn(
+                      "text-xs",
+                      desvioDias > 0 ? "text-destructive" : "text-muted-foreground",
+                    )}
+                  >
+                    Previsão com disponibilidade: {fmtDateFull(toISODate(previsaoFim))}
+                    {desvioDias > 0
+                      ? ` · ${desvioDias} dia(s) além do planejado`
+                      : " · dentro do plano"}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  A duração real considera o percentual do dia que cada pessoa tem para projetos e a
+                  concorrência com tarefas de outros projetos do portfólio.
+                </p>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                      <tr className="border-b border-border/60">
+                        <th className="py-2 text-left">Tarefa</th>
+                        <th className="py-2 text-left">Responsáveis</th>
+                        <th className="py-2 text-left">Alocação</th>
+                        <th className="py-2 text-left">Duração planejada</th>
+                        <th className="py-2 text-left">Duração real</th>
+                        <th className="py-2 text-left">Término previsto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {project.tarefas.map((t) => {
+                        const real = effectiveDurationDays(t, resources, projects);
+                        const plano = taskDurationDays(t);
+                        return (
+                          <tr key={t.id} className="border-b border-border/40">
+                            <td className="py-2">{t.nome}</td>
+                            <td className="py-2 text-muted-foreground">
+                              {taskResponsibles(t).join(", ")}
+                            </td>
+                            <td className="py-2 text-muted-foreground">{taskAllocation(t)}%</td>
+                            <td className="py-2 text-muted-foreground">{Math.round(plano)} d</td>
+                            <td className={cn("py-2", real > plano * 1.2 && "text-warning")}>
+                              {Math.ceil(real)} d
+                            </td>
+                            <td className="py-2 text-muted-foreground">
+                              {fmtDate(toISODate(cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {!project.tarefas.length ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      Cadastre tarefas para simular a capacidade da equipe.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {cargas.map((c) => (
+                  <div
+                    key={c.recurso.id}
+                    className={cn(
+                      "glass-panel rounded-2xl border p-5",
+                      c.conflito ? "border-destructive/50" : "border-border/60",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-medium">{c.recurso.nome}</h4>
+                        <p className="text-xs text-muted-foreground">
+                          {c.recurso.disponibilidadeProjetos}% do dia para projetos ·{" "}
+                          {c.capacidadeHoras.toFixed(1)}h/dia
+                        </p>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={c.conflito ? HEALTH_CLASS.vermelho : HEALTH_CLASS.verde}
+                      >
+                        {Math.round(c.demandaPct)}% alocado
+                      </Badge>
+                    </div>
+                    <Progress value={Math.min(c.demandaPct, 100)} className="mt-3 h-1.5" />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Atua em {c.projetos.length} projeto(s): {c.projetos.join(", ") || "—"}
+                    </p>
+                  </div>
+                ))}
+                {semCadastro.length ? (
+                  <p className="text-sm text-warning">
+                    Sem cadastro de recurso: {semCadastro.join(", ")} — considerados 100%
+                    disponíveis até serem cadastrados em Recursos e capacidade.
+                  </p>
+                ) : null}
+              </div>
+            </TabsContent>
+          </Tabs>
 
           {health ? (
             <p className="text-xs text-muted-foreground">

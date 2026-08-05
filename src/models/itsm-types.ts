@@ -3,12 +3,7 @@ export type Priority = "P1" | "P2" | "P3" | "P4";
 export type Impact = "alto" | "medio" | "baixo";
 export type Urgency = "alta" | "media" | "baixa";
 export type TicketStatus =
-  | "novo"
-  | "triagem"
-  | "em_andamento"
-  | "aguardando"
-  | "resolvido"
-  | "fechado";
+  "novo" | "triagem" | "em_andamento" | "aguardando" | "resolvido" | "fechado";
 
 export interface Ticket {
   id: string;
@@ -111,12 +106,7 @@ export interface Resource {
   disponibilidadeProjetos: number;
 }
 
-export type ProjectStatus =
-  | "planejamento"
-  | "execucao"
-  | "paralisado"
-  | "cancelado"
-  | "concluido";
+export type ProjectStatus = "planejamento" | "execucao" | "paralisado" | "cancelado" | "concluido";
 
 export interface ProjectUpdate {
   id: string;
@@ -227,17 +217,73 @@ export interface AppModule {
 }
 
 export const APP_MODULES: AppModule[] = [
-  { key: "/", label: "Visão geral", descricao: "Painel inicial com indicadores.", grupo: "Operação", fixo: true },
-  { key: "/chamados", label: "Chamados", descricao: "Fila de incidentes, requisições, melhorias e problemas.", grupo: "Operação" },
-  { key: "/catalogo", label: "Catálogo de serviços", descricao: "Serviços de TI publicados.", grupo: "Operação" },
-  { key: "/conhecimento", label: "Base de conhecimento", descricao: "Artigos, procedimentos e soluções.", grupo: "Operação" },
-  { key: "/assistente", label: "Assistente IA", descricao: "Abertura assistida e sugestões por IA.", grupo: "Operação" },
-  { key: "/projetos", label: "Projetos e cronograma", descricao: "Cadastro de projetos, tarefas e Gantt.", grupo: "Projetos" },
-  { key: "/recursos", label: "Recursos e capacidade", descricao: "Alocação e disponibilidade de recursos.", grupo: "Projetos" },
-  { key: "/diretoria", label: "Visão diretoria", descricao: "Painéis executivos de projetos e chamados.", grupo: "Gestão" },
-  { key: "/governanca", label: "Governança ITIL", descricao: "Práticas, SLA e melhoria contínua.", grupo: "Gestão" },
-  { key: "/administracao", label: "Administração", descricao: "Usuários, sistemas e notificações.", grupo: "Administração" },
-  { key: "/permissoes", label: "Perfis de acesso", descricao: "Cadastro de menus e funcionalidades por perfil.", grupo: "Administração" },
+  {
+    key: "/",
+    label: "Visão geral",
+    descricao: "Painel inicial com indicadores.",
+    grupo: "Operação",
+    fixo: true,
+  },
+  {
+    key: "/chamados",
+    label: "Chamados",
+    descricao: "Fila de incidentes, requisições, melhorias e problemas.",
+    grupo: "Operação",
+  },
+  {
+    key: "/catalogo",
+    label: "Catálogo de serviços",
+    descricao: "Serviços de TI publicados.",
+    grupo: "Operação",
+  },
+  {
+    key: "/conhecimento",
+    label: "Base de conhecimento",
+    descricao: "Artigos, procedimentos e soluções.",
+    grupo: "Operação",
+  },
+  {
+    key: "/assistente",
+    label: "Assistente IA",
+    descricao: "Abertura assistida e sugestões por IA.",
+    grupo: "Operação",
+  },
+  {
+    key: "/projetos",
+    label: "Projetos e cronograma",
+    descricao: "Cadastro de projetos, tarefas e Gantt.",
+    grupo: "Projetos",
+  },
+  {
+    key: "/recursos",
+    label: "Recursos e capacidade",
+    descricao: "Alocação e disponibilidade de recursos.",
+    grupo: "Projetos",
+  },
+  {
+    key: "/diretoria",
+    label: "Visão diretoria",
+    descricao: "Painéis executivos de projetos e chamados.",
+    grupo: "Gestão",
+  },
+  {
+    key: "/governanca",
+    label: "Governança ITIL",
+    descricao: "Práticas, SLA e melhoria contínua.",
+    grupo: "Gestão",
+  },
+  {
+    key: "/administracao",
+    label: "Administração",
+    descricao: "Usuários, sistemas e notificações.",
+    grupo: "Administração",
+  },
+  {
+    key: "/permissoes",
+    label: "Perfis de acesso",
+    descricao: "Cadastro de menus e funcionalidades por perfil.",
+    grupo: "Administração",
+  },
 ];
 
 /** Funcionalidade granular controlada por perfil. */
@@ -249,17 +295,72 @@ export interface AppFeature {
 }
 
 export const APP_FEATURES: AppFeature[] = [
-  { key: "chamado.criar", label: "Abrir chamado", descricao: "Registrar novos chamados.", grupo: "Chamados" },
-  { key: "chamado.editar", label: "Tratar chamado", descricao: "Alterar status, prioridade e responsável.", grupo: "Chamados" },
-  { key: "chamado.problema", label: "Criar problema", descricao: "Registrar problemas (exclusivo da equipe de TI).", grupo: "Chamados" },
-  { key: "conhecimento.editar", label: "Publicar artigos", descricao: "Criar e atualizar a base de conhecimento.", grupo: "Conhecimento" },
-  { key: "catalogo.editar", label: "Editar catálogo", descricao: "Cadastrar e alterar serviços de TI.", grupo: "Catálogo" },
-  { key: "projeto.criar", label: "Criar projeto", descricao: "Cadastrar novos projetos.", grupo: "Projetos" },
-  { key: "projeto.editar", label: "Editar cronograma", descricao: "Criar e alterar tarefas, riscos e atualizações.", grupo: "Projetos" },
-  { key: "recurso.editar", label: "Gerir recursos", descricao: "Cadastrar recursos e percentual de disponibilidade.", grupo: "Projetos" },
-  { key: "admin.usuarios", label: "Gerir usuários", descricao: "Sincronizar AD, editar usuários e administradores.", grupo: "Administração" },
-  { key: "admin.sistemas", label: "Gerir sistemas", descricao: "Responsáveis e atribuição automática.", grupo: "Administração" },
-  { key: "admin.permissoes", label: "Gerir perfis de acesso", descricao: "Definir menus e funcionalidades por perfil.", grupo: "Administração" },
+  {
+    key: "chamado.criar",
+    label: "Abrir chamado",
+    descricao: "Registrar novos chamados.",
+    grupo: "Chamados",
+  },
+  {
+    key: "chamado.editar",
+    label: "Tratar chamado",
+    descricao: "Alterar status, prioridade e responsável.",
+    grupo: "Chamados",
+  },
+  {
+    key: "chamado.problema",
+    label: "Criar problema",
+    descricao: "Registrar problemas (exclusivo da equipe de TI).",
+    grupo: "Chamados",
+  },
+  {
+    key: "conhecimento.editar",
+    label: "Publicar artigos",
+    descricao: "Criar e atualizar a base de conhecimento.",
+    grupo: "Conhecimento",
+  },
+  {
+    key: "catalogo.editar",
+    label: "Editar catálogo",
+    descricao: "Cadastrar e alterar serviços de TI.",
+    grupo: "Catálogo",
+  },
+  {
+    key: "projeto.criar",
+    label: "Criar projeto",
+    descricao: "Cadastrar novos projetos.",
+    grupo: "Projetos",
+  },
+  {
+    key: "projeto.editar",
+    label: "Editar cronograma",
+    descricao: "Criar e alterar tarefas, riscos e atualizações.",
+    grupo: "Projetos",
+  },
+  {
+    key: "recurso.editar",
+    label: "Gerir recursos",
+    descricao: "Cadastrar recursos e percentual de disponibilidade.",
+    grupo: "Projetos",
+  },
+  {
+    key: "admin.usuarios",
+    label: "Gerir usuários",
+    descricao: "Sincronizar AD, editar usuários e administradores.",
+    grupo: "Administração",
+  },
+  {
+    key: "admin.sistemas",
+    label: "Gerir sistemas",
+    descricao: "Responsáveis e atribuição automática.",
+    grupo: "Administração",
+  },
+  {
+    key: "admin.permissoes",
+    label: "Gerir perfis de acesso",
+    descricao: "Definir menus e funcionalidades por perfil.",
+    grupo: "Administração",
+  },
 ];
 
 /** Perfil de acesso aplicado aos usuários do diretório. */
@@ -389,8 +490,8 @@ export function evaluateSla(ticket: Ticket, agora: number = Date.now()): SlaEval
   const restanteHoras = (prazo - agora) / 3600_000;
   const respostaAtrasada = Boolean(
     ticket.prazoResposta &&
-      !ticket.respondidoEm &&
-      new Date(ticket.prazoResposta).getTime() < agora,
+    !ticket.respondidoEm &&
+    new Date(ticket.prazoResposta).getTime() < agora,
   );
   const estado: SlaState = encerrado
     ? "atendido"

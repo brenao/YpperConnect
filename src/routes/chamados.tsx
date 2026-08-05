@@ -90,7 +90,9 @@ function Chamados() {
     return [...grupos.entries()]
       .filter(([chave, lista]) => {
         const jaExiste = tickets.some(
-          (t) => t.tipo === "problema" && `${t.titulo} ${t.sistema ?? ""}`.toLowerCase().includes(chave.toLowerCase()),
+          (t) =>
+            t.tipo === "problema" &&
+            `${t.titulo} ${t.sistema ?? ""}`.toLowerCase().includes(chave.toLowerCase()),
         );
         return lista.length >= 3 && !jaExiste;
       })
@@ -130,9 +132,13 @@ function Chamados() {
               <Sparkles className="size-4" /> Recorrência detectada — avalie abrir um Problema
             </p>
             {sugestoesProblema.map(({ chave, lista }) => (
-              <div key={chave} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3">
+              <div
+                key={chave}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"
+              >
                 <span className="text-sm">
-                  <strong>{chave}</strong> acumulou {lista.length} incidentes ({lista.map((t) => t.id).join(", ")}).
+                  <strong>{chave}</strong> acumulou {lista.length} incidentes (
+                  {lista.map((t) => t.id).join(", ")}).
                 </span>
                 <Button size="sm" variant="secondary" onClick={() => abrirProblema(chave, lista)}>
                   Criar Problema
@@ -250,8 +256,8 @@ function Chamados() {
 
                 <dl className="grid grid-cols-2 gap-3 text-sm">
                   {[
-                     ["Serviço", atual.servico],
-                     ...(atual.sistema ? [["Sistema", atual.sistema]] : []),
+                    ["Serviço", atual.servico],
+                    ...(atual.sistema ? [["Sistema", atual.sistema]] : []),
                     ["Categoria", atual.categoria],
                     ["Solicitante", atual.solicitante],
                     ["Responsável", atual.responsavel],
@@ -351,7 +357,9 @@ function Chamados() {
                   </>
                 ) : (
                   <div className="rounded-lg border border-border bg-surface p-3 text-sm text-muted-foreground">
-                    <Badge variant="outline" className="mb-2">Perfil não TI</Badge>
+                    <Badge variant="outline" className="mb-2">
+                      Perfil não TI
+                    </Badge>
                     <p>
                       Somente a equipe de TI pode responder, atuar e encerrar chamados. Você pode
                       acompanhar o andamento por aqui.

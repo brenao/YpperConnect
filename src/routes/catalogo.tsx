@@ -94,7 +94,11 @@ function Catalogo() {
           {role === "ti" ? (
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
-                <Button variant="secondary" size="sm" className={isAdmin ? "gap-2" : "ml-auto gap-2"}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={isAdmin ? "gap-2" : "ml-auto gap-2"}
+                >
                   <Sparkles className="size-4" /> Sugerir serviços com IA
                 </Button>
               </DialogTrigger>
@@ -115,7 +119,11 @@ function Catalogo() {
                 />
                 <DialogFooter>
                   <Button onClick={gerar} disabled={gerando} className="gap-2">
-                    {gerando ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                    {gerando ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-4" />
+                    )}
                     Gerar sugestões
                   </Button>
                 </DialogFooter>
@@ -143,7 +151,12 @@ function Catalogo() {
                             <ServiceDialog
                               service={s}
                               trigger={
-                                <Button variant="ghost" size="icon" className="size-7" title="Editar serviço">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  title="Editar serviço"
+                                >
                                   <Pencil className="size-3.5" />
                                 </Button>
                               }

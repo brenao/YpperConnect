@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import {
   SEED_ARTICLES,
@@ -10,7 +18,11 @@ import {
   SEED_TICKETS,
   SEED_USERS,
 } from "@/models/itsm-seed";
-import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "@/services/notifications";
+import {
+  buildCreatedEmail,
+  buildProjectReminders,
+  buildStatusEmail,
+} from "@/services/notifications";
 import type {
   AccessProfile,
   Article,
@@ -104,14 +116,19 @@ interface Store extends State {
   updateSystem: (id: string, patch: Partial<SystemRegistry>) => void;
   removeSystem: (id: string) => void;
   setRole: (r: UserRole) => void;
-  createProject: (p: Omit<Project, "id" | "tarefas" | "atualizacoes" | "riscos" | "atencoes">) => Project;
+  createProject: (
+    p: Omit<Project, "id" | "tarefas" | "atualizacoes" | "riscos" | "atencoes">,
+  ) => Project;
   updateProject: (id: string, patch: Partial<Project>) => void;
   addTask: (projectId: string, t: Omit<ProjectTask, "id">, afterTaskId?: string) => void;
   updateTask: (projectId: string, taskId: string, patch: Partial<ProjectTask>) => void;
   removeTask: (projectId: string, taskId: string) => void;
   addProjectUpdate: (projectId: string, u: Omit<ProjectUpdate, "id">) => void;
   addRisk: (projectId: string, r: Omit<ProjectRisk, "id">) => void;
-  addAttention: (projectId: string, a: Omit<ProjectAttention, "id" | "criadoEm" | "status">) => void;
+  addAttention: (
+    projectId: string,
+    a: Omit<ProjectAttention, "id" | "criadoEm" | "status">,
+  ) => void;
   resolveAttention: (projectId: string, attentionId: string) => void;
   addResource: (r: Omit<Resource, "id">) => void;
   updateResource: (id: string, patch: Partial<Resource>) => void;
@@ -187,63 +204,69 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     };
   }, [notify]);
 
-  const createTicket = useCallback((input: NewTicket) => {
-    const prioridade = resolvePriority(input.impacto, input.urgencia);
-    const criadoEm = new Date().toISOString();
-    const meta = slaFor(input.tipo, prioridade);
-    const base = new Date(criadoEm).getTime();
-    const s0 = stateRef.current;
-    // Atribuição automática pelo cadastro de sistemas; fallback no catálogo.
-    const sistemaCad = input.sistema
-      ? s0.systems.find(
-          (x) => x.ativo && x.nome.toLowerCase() === input.sistema!.trim().toLowerCase(),
-        )
-      : undefined;
-    const servicoCad = s0.services.find((x) => x.nome === input.servico);
-    const responsavelUser = sistemaCad
-      ? s0.users.find((u) => u.id === sistemaCad.atribuicaoId)
-      : undefined;
-    const ticket: Ticket = {
-      ...input,
-      id: `${PREFIX[input.tipo]}-${Math.floor(1000 + Math.random() * 8999)}`,
-      prioridade,
-      status: "novo",
-      responsavel: responsavelUser?.nome ?? "Não atribuído",
-      equipe: sistemaCad?.equipe ?? servicoCad?.equipe ?? "Service Desk",
-      criadoEm,
-      prazoSla: new Date(base + meta.solucao * 3600_000).toISOString(),
-      prazoResposta: new Date(base + meta.resposta * 3600_000).toISOString(),
-    };
-    setState((s) => ({ ...s, tickets: [ticket, ...s.tickets] }));
-    const email = buildCreatedEmail(ticket, s0.users);
-    if (email) notify([email]);
-    return ticket;
-  }, [notify]);
-
-  const updateTicket = useCallback((id: string, patch: Partial<Ticket>) => {
-    const anterior = stateRef.current.tickets.find((t) => t.id === id);
-    setState((s) => ({
-      ...s,
-      tickets: s.tickets.map((t) => {
-        if (t.id !== id) return t;
-        const next = { ...t, ...patch };
-        // Primeiro atendimento: registra o cumprimento do SLA de resposta.
-        const atendeu =
-          (patch.status && patch.status !== "novo" && patch.status !== "triagem") ||
-          (patch.responsavel && patch.responsavel !== "Não atribuído");
-        if (atendeu && !next.respondidoEm) next.respondidoEm = new Date().toISOString();
-        return next;
-      }),
-    }));
-    if (anterior && patch.status && patch.status !== anterior.status) {
-      const email = buildStatusEmail(
-        { ...anterior, ...patch },
-        anterior.status,
-        stateRef.current.users,
-      );
+  const createTicket = useCallback(
+    (input: NewTicket) => {
+      const prioridade = resolvePriority(input.impacto, input.urgencia);
+      const criadoEm = new Date().toISOString();
+      const meta = slaFor(input.tipo, prioridade);
+      const base = new Date(criadoEm).getTime();
+      const s0 = stateRef.current;
+      // Atribuição automática pelo cadastro de sistemas; fallback no catálogo.
+      const sistemaCad = input.sistema
+        ? s0.systems.find(
+            (x) => x.ativo && x.nome.toLowerCase() === input.sistema!.trim().toLowerCase(),
+          )
+        : undefined;
+      const servicoCad = s0.services.find((x) => x.nome === input.servico);
+      const responsavelUser = sistemaCad
+        ? s0.users.find((u) => u.id === sistemaCad.atribuicaoId)
+        : undefined;
+      const ticket: Ticket = {
+        ...input,
+        id: `${PREFIX[input.tipo]}-${Math.floor(1000 + Math.random() * 8999)}`,
+        prioridade,
+        status: "novo",
+        responsavel: responsavelUser?.nome ?? "Não atribuído",
+        equipe: sistemaCad?.equipe ?? servicoCad?.equipe ?? "Service Desk",
+        criadoEm,
+        prazoSla: new Date(base + meta.solucao * 3600_000).toISOString(),
+        prazoResposta: new Date(base + meta.resposta * 3600_000).toISOString(),
+      };
+      setState((s) => ({ ...s, tickets: [ticket, ...s.tickets] }));
+      const email = buildCreatedEmail(ticket, s0.users);
       if (email) notify([email]);
-    }
-  }, [notify]);
+      return ticket;
+    },
+    [notify],
+  );
+
+  const updateTicket = useCallback(
+    (id: string, patch: Partial<Ticket>) => {
+      const anterior = stateRef.current.tickets.find((t) => t.id === id);
+      setState((s) => ({
+        ...s,
+        tickets: s.tickets.map((t) => {
+          if (t.id !== id) return t;
+          const next = { ...t, ...patch };
+          // Primeiro atendimento: registra o cumprimento do SLA de resposta.
+          const atendeu =
+            (patch.status && patch.status !== "novo" && patch.status !== "triagem") ||
+            (patch.responsavel && patch.responsavel !== "Não atribuído");
+          if (atendeu && !next.respondidoEm) next.respondidoEm = new Date().toISOString();
+          return next;
+        }),
+      }));
+      if (anterior && patch.status && patch.status !== anterior.status) {
+        const email = buildStatusEmail(
+          { ...anterior, ...patch },
+          anterior.status,
+          stateRef.current.users,
+        );
+        if (email) notify([email]);
+      }
+    },
+    [notify],
+  );
 
   const addArticle = useCallback((a: Omit<Article, "id" | "visualizacoes">) => {
     setState((s) => ({
@@ -260,10 +283,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   const addService = useCallback((item: Omit<ServiceItem, "id">) => {
     setState((s) => ({
       ...s,
-      services: [
-        ...s.services,
-        { ...item, id: `SVC-${Math.floor(100 + Math.random() * 899)}` },
-      ],
+      services: [...s.services, { ...item, id: `SVC-${Math.floor(100 + Math.random() * 899)}` }],
     }));
   }, []);
 
@@ -481,7 +501,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   const removeProfile = useCallback<Store["removeProfile"]>((id) => {
     setState((s) => ({
       ...s,
-      profiles: s.profiles.filter((p) => p.id === id ? Boolean(p.sistema) : true),
+      profiles: s.profiles.filter((p) => (p.id === id ? Boolean(p.sistema) : true)),
       users: s.users.map((u) => (u.perfilId === id ? { ...u, perfilId: undefined } : u)),
     }));
   }, []);
@@ -497,9 +517,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     () => {
       const currentUser = state.users.find((u) => u.id === state.currentUserId);
       const isAdmin = Boolean(currentUser?.admin);
-      const currentProfile = state.profiles.find(
-        (p) => p.id === currentUser?.perfilId && p.ativo,
-      );
+      const currentProfile = state.profiles.find((p) => p.id === currentUser?.perfilId && p.ativo);
       const allowedModules = isAdmin
         ? APP_MODULES.map((m) => m.key)
         : Array.from(new Set(["/", ...(currentProfile?.modulos ?? [])]));
@@ -507,45 +525,45 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
         ? APP_FEATURES.map((f) => f.key)
         : (currentProfile?.funcionalidades ?? []);
       return {
-      ...state,
-      currentUser,
-      isAdmin,
-      currentProfile,
-      allowedModules,
-      can: (feature: string) => allowedFeatures.includes(feature),
-      canAccess: (moduleKey: string) => allowedModules.includes(moduleKey),
-      addProfile,
-      updateProfile,
-      removeProfile,
-      assignProfile,
-      createTicket,
-      updateTicket,
-      addArticle,
-      setRole,
-      updateService,
-      removeService,
-      addUser,
-      updateUser,
-      removeUser,
-      setCurrentUser,
-      syncDirectory,
-      addSystem,
-      updateSystem,
-      removeSystem,
-      createProject,
-      updateProject,
-      addTask,
-      updateTask,
-      addService,
-      removeTask,
-      addProjectUpdate,
-      addRisk,
-      addAttention,
-      resolveAttention,
-      addResource,
-      updateResource,
-      removeResource,
-      reset,
+        ...state,
+        currentUser,
+        isAdmin,
+        currentProfile,
+        allowedModules,
+        can: (feature: string) => allowedFeatures.includes(feature),
+        canAccess: (moduleKey: string) => allowedModules.includes(moduleKey),
+        addProfile,
+        updateProfile,
+        removeProfile,
+        assignProfile,
+        createTicket,
+        updateTicket,
+        addArticle,
+        setRole,
+        updateService,
+        removeService,
+        addUser,
+        updateUser,
+        removeUser,
+        setCurrentUser,
+        syncDirectory,
+        addSystem,
+        updateSystem,
+        removeSystem,
+        createProject,
+        updateProject,
+        addTask,
+        updateTask,
+        addService,
+        removeTask,
+        addProjectUpdate,
+        addRisk,
+        addAttention,
+        resolveAttention,
+        addResource,
+        updateResource,
+        removeResource,
+        reset,
       };
     },
     // deps

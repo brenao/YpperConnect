@@ -100,9 +100,7 @@ function Panel({
   return (
     <section className={cn("glass-panel rounded-2xl border border-border/60 p-5", className)}>
       <h3 className="text-sm font-semibold">{title}</h3>
-      {description ? (
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-      ) : null}
+      {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -145,7 +143,9 @@ function Diretoria() {
 
   const emExecucao = filtrados.filter((p) => p.status === "execucao").length;
   const atrasados = hydrated ? filtrados.filter((p) => isLate(p)).length : 0;
-  const parados = filtrados.filter((p) => p.status === "paralisado" || p.status === "cancelado").length;
+  const parados = filtrados.filter(
+    (p) => p.status === "paralisado" || p.status === "cancelado",
+  ).length;
   const concluidos = filtrados.filter((p) => p.status === "concluido").length;
 
   const porPrioridade = useMemo(() => {
@@ -155,8 +155,7 @@ function Diretoria() {
         t.status !== "resolvido" &&
         (inicioMs === null ||
           fimMs === null ||
-          (new Date(t.criadoEm).getTime() >= inicioMs &&
-            new Date(t.criadoEm).getTime() <= fimMs)),
+          (new Date(t.criadoEm).getTime() >= inicioMs && new Date(t.criadoEm).getTime() <= fimMs)),
     );
     return (["P1", "P2", "P3", "P4"] as Priority[]).map((p) => ({
       prioridade: p,
@@ -195,9 +194,7 @@ function Diretoria() {
     const taxaAtendimento = criados.length
       ? Math.round((atendidos.length / criados.length) * 100)
       : 0;
-    const aderenciaSla = atendidos.length
-      ? Math.round((dentroSla / atendidos.length) * 100)
-      : 0;
+    const aderenciaSla = atendidos.length ? Math.round((dentroSla / atendidos.length) * 100) : 0;
 
     const porTipo = (Object.keys(TYPE_LABEL) as RecordType[])
       .map((tipo) => ({
@@ -434,7 +431,9 @@ function Diretoria() {
                         className="flex min-w-0 items-center gap-2 hover:text-primary"
                       >
                         {h ? (
-                          <span className={cn("h-2 w-2 shrink-0 rounded-full", HEALTH_DOT[h.geral])} />
+                          <span
+                            className={cn("h-2 w-2 shrink-0 rounded-full", HEALTH_DOT[h.geral])}
+                          />
                         ) : null}
                         <span className="truncate">{p.nome}</span>
                       </Link>
@@ -485,7 +484,11 @@ function Diretoria() {
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={serieChamados}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="hsl(var(--border))"
+                      opacity={0.3}
+                    />
                     <XAxis dataKey="mes" stroke="currentColor" className="text-xs" />
                     <YAxis stroke="currentColor" className="text-xs" allowDecimals={false} />
                     <Tooltip

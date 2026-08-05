@@ -118,11 +118,13 @@ export function buildProjectReminders(
       );
       if (jaEnviado) continue;
     }
-    const destinatarios = [...new Set(
-      [emailDe(users, p.gerente), emailDe(users, p.sponsor)].filter(
-        (x): x is string => Boolean(x),
+    const destinatarios = [
+      ...new Set(
+        [emailDe(users, p.gerente), emailDe(users, p.sponsor)].filter((x): x is string =>
+          Boolean(x),
+        ),
       ),
-    )];
+    ];
     if (!destinatarios.length) continue;
     out.push({
       id: id("MSG"),

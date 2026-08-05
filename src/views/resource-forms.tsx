@@ -58,9 +58,7 @@ export function ResourceDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {trigger ?? <Button size="sm">Novo recurso</Button>}
-      </DialogTrigger>
+      <DialogTrigger asChild>{trigger ?? <Button size="sm">Novo recurso</Button>}</DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{resource ? "Editar recurso" : "Cadastrar recurso"}</DialogTitle>
@@ -72,16 +70,31 @@ export function ResourceDialog({
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="res-nome">Nome</Label>
-            <Input id="res-nome" maxLength={80} value={nome} onChange={(e) => setNome(e.target.value)} />
+            <Input
+              id="res-nome"
+              maxLength={80}
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+            />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="res-papel">Papel</Label>
-              <Input id="res-papel" maxLength={80} value={papel} onChange={(e) => setPapel(e.target.value)} />
+              <Input
+                id="res-papel"
+                maxLength={80}
+                value={papel}
+                onChange={(e) => setPapel(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="res-eq">Equipe</Label>
-              <Input id="res-eq" maxLength={80} value={equipe} onChange={(e) => setEquipe(e.target.value)} />
+              <Input
+                id="res-eq"
+                maxLength={80}
+                value={equipe}
+                onChange={(e) => setEquipe(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="res-h">Jornada diária (h)</Label>
@@ -97,8 +110,7 @@ export function ResourceDialog({
           </div>
           <div className="grid gap-2">
             <Label>
-              Disponibilidade para projetos: {disp}% ·{" "}
-              {((Number(horasDia) || 0) * disp) / 100}h/dia
+              Disponibilidade para projetos: {disp}% · {((Number(horasDia) || 0) * disp) / 100}h/dia
             </Label>
             <Slider
               value={[disp]}

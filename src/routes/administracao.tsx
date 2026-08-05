@@ -88,13 +88,7 @@ const sistemaVazio = {
   ativo: true,
 };
 
-function SystemDialog({
-  system,
-  trigger,
-}: {
-  system?: SystemRegistry;
-  trigger: React.ReactNode;
-}) {
+function SystemDialog({ system, trigger }: { system?: SystemRegistry; trigger: React.ReactNode }) {
   const { users, addSystem, updateSystem } = useItsm();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(system ? { ...sistemaVazio, ...system } : sistemaVazio);
@@ -226,10 +220,7 @@ function SystemDialog({
           </div>
           <div className="flex items-center justify-between rounded-lg border border-border bg-surface p-3">
             <span className="text-sm">Sistema ativo</span>
-            <Switch
-              checked={form.ativo}
-              onCheckedChange={(v) => setForm({ ...form, ativo: v })}
-            />
+            <Switch checked={form.ativo} onCheckedChange={(v) => setForm({ ...form, ativo: v })} />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label>Descrição</Label>
@@ -541,9 +532,7 @@ function Administracao() {
 
             {pendentes.length ? (
               <div className="panel space-y-2 border-warning/40 p-4">
-                <p className="text-sm font-medium text-warning">
-                  Projetos em cobrança automática
-                </p>
+                <p className="text-sm font-medium text-warning">Projetos em cobrança automática</p>
                 {pendentes.map((p) => (
                   <div
                     key={p.id}

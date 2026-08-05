@@ -205,9 +205,7 @@ function Permissoes() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() =>
-                      patch(selected, { modulos: APP_MODULES.map((m) => m.key) })
-                    }
+                    onClick={() => patch(selected, { modulos: APP_MODULES.map((m) => m.key) })}
                   >
                     Marcar todos
                   </Button>

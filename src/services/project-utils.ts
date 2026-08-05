@@ -86,7 +86,10 @@ export function criticalPath(
     ef.set(t.id, inicio + Math.max(dur - DAY, 0));
   }
 
-  const fimProjeto = Math.max(...tasks.map((t) => ef.get(t.id) ?? parseDate(t.fim)), parseDate(project.inicio));
+  const fimProjeto = Math.max(
+    ...tasks.map((t) => ef.get(t.id) ?? parseDate(t.fim)),
+    parseDate(project.inicio),
+  );
   const sucessores = new Map<string, string[]>();
   for (const t of tasks) {
     for (const p of preds(t)) {

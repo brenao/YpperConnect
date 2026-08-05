@@ -54,13 +54,7 @@ export function AppShell({
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
         <Link to="/" className="mb-8 flex items-center gap-3 px-2">
           <span className="grid size-9 place-items-center rounded-lg bg-hero ring-1 ring-primary/40">
-            <img
-              src={logo}
-              alt="Logo YpperConnect"
-              width={1024}
-              height={1024}
-              className="size-6"
-            />
+            <img src={logo} alt="Logo YpperConnect" width={1024} height={1024} className="size-6" />
           </span>
           <span>
             <span className="block text-sm font-semibold text-sidebar-foreground">
@@ -103,9 +97,7 @@ export function AppShell({
         <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-4 border-b border-border bg-background/80 px-6 py-4 backdrop-blur">
           <div className="min-w-0">
             <h1 className="truncate text-lg font-semibold">{title}</h1>
-            {subtitle ? (
-              <p className="truncate text-sm text-muted-foreground">{subtitle}</p>
-            ) : null}
+            {subtitle ? <p className="truncate text-sm text-muted-foreground">{subtitle}</p> : null}
           </div>
           <div className="flex items-center gap-2">
             {actions}

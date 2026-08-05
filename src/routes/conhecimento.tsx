@@ -135,7 +135,11 @@ function Conhecimento() {
               />
               <DialogFooter>
                 <Button onClick={gerarComIA} disabled={gerando} className="gap-2">
-                  {gerando ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  {gerando ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-4" />
+                  )}
                   Gerar rascunho
                 </Button>
               </DialogFooter>
@@ -192,8 +196,8 @@ function Conhecimento() {
                 A IA transforma procedimentos existentes em conteúdos padronizados.
               </li>
               <li className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-foreground">
-                {articles.filter((a) => a.status === "revisar").length} artigo(s) sinalizado(s)
-                como desatualizado(s) pela análise de recorrências.
+                {articles.filter((a) => a.status === "revisar").length} artigo(s) sinalizado(s) como
+                desatualizado(s) pela análise de recorrências.
               </li>
               <li className="rounded-lg border border-border bg-surface p-3">
                 Soluções sugeridas para ocorrências recorrentes viram rascunhos para aprovação da

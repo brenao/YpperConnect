@@ -1,12 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import {
-  AlertTriangle,
-  ArrowUpRight,
-  Clock,
-  Sparkles,
-  TrendingUp,
-  Users,
-} from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Clock, Sparkles, TrendingUp, Users } from "lucide-react";
 import {
   Bar,
   BarChart,

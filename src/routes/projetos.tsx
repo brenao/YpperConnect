@@ -192,7 +192,9 @@ function Projetos() {
           );
         })}
         {filtrados.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhum projeto encontrado com esses filtros.</p>
+          <p className="text-sm text-muted-foreground">
+            Nenhum projeto encontrado com esses filtros.
+          </p>
         ) : null}
       </div>
     </AppShell>
