@@ -182,6 +182,8 @@ export interface DirectoryUser {
   origem: "ad" | "manual";
   admin: boolean;
   ativo: boolean;
+  /** Perfil de acesso (menus e funcionalidades). */
+  perfilId?: string | undefined;
   sincronizadoEm?: string | undefined;
 }
 
