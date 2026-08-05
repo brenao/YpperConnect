@@ -115,6 +115,8 @@ const PREFIX: Record<Ticket["tipo"], string> = {
 
 export function ItsmProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>(initial);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     try {
@@ -133,27 +135,60 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
+  const notify = useCallback((mensagens: EmailNotification[]) => {
+    if (!mensagens.length) return;
+    setState((s) => ({ ...s, notifications: [...mensagens, ...s.notifications].slice(0, 200) }));
+  }, []);
+
+  // Lembretes de atualização de projeto (6 dias; diário após 7).
+  useEffect(() => {
+    const rodar = () => {
+      const s = stateRef.current;
+      notify(buildProjectReminders(s.projects, s.users, s.notifications));
+    };
+    const t = window.setTimeout(rodar, 1200);
+    const i = window.setInterval(rodar, 3600_000);
+    return () => {
+      window.clearTimeout(t);
+      window.clearInterval(i);
+    };
+  }, [notify]);
+
   const createTicket = useCallback((input: NewTicket) => {
     const prioridade = resolvePriority(input.impacto, input.urgencia);
     const criadoEm = new Date().toISOString();
     const meta = slaFor(input.tipo, prioridade);
     const base = new Date(criadoEm).getTime();
+    const s0 = stateRef.current;
+    // Atribuição automática pelo cadastro de sistemas; fallback no catálogo.
+    const sistemaCad = input.sistema
+      ? s0.systems.find(
+          (x) => x.ativo && x.nome.toLowerCase() === input.sistema!.trim().toLowerCase(),
+        )
+      : undefined;
+    const servicoCad = s0.services.find((x) => x.nome === input.servico);
+    const responsavelUser = sistemaCad
+      ? s0.users.find((u) => u.id === sistemaCad.atribuicaoId)
+      : undefined;
     const ticket: Ticket = {
       ...input,
       id: `${PREFIX[input.tipo]}-${Math.floor(1000 + Math.random() * 8999)}`,
       prioridade,
       status: "novo",
-      responsavel: "Não atribuído",
-      equipe: input.tipo === "incidente" ? "Service Desk" : "Service Desk",
+      responsavel: responsavelUser?.nome ?? "Não atribuído",
+      equipe: sistemaCad?.equipe ?? servicoCad?.equipe ?? "Service Desk",
       criadoEm,
       prazoSla: new Date(base + meta.solucao * 3600_000).toISOString(),
       prazoResposta: new Date(base + meta.resposta * 3600_000).toISOString(),
     };
     setState((s) => ({ ...s, tickets: [ticket, ...s.tickets] }));
+    const email = buildCreatedEmail(ticket, s0.users);
+    if (email) notify([email]);
     return ticket;
-  }, []);
+  }, [notify]);
 
   const updateTicket = useCallback((id: string, patch: Partial<Ticket>) => {
+    const anterior = stateRef.current.tickets.find((t) => t.id === id);
     setState((s) => ({
       ...s,
       tickets: s.tickets.map((t) => {
@@ -167,7 +202,15 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
         return next;
       }),
     }));
-  }, []);
+    if (anterior && patch.status && patch.status !== anterior.status) {
+      const email = buildStatusEmail(
+        { ...anterior, ...patch },
+        anterior.status,
+        stateRef.current.users,
+      );
+      if (email) notify([email]);
+    }
+  }, [notify]);
 
   const addArticle = useCallback((a: Omit<Article, "id" | "visualizacoes">) => {
     setState((s) => ({
@@ -189,6 +232,67 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
         { ...item, id: `SVC-${Math.floor(100 + Math.random() * 899)}` },
       ],
     }));
+  }, []);
+
+  const updateService = useCallback<Store["updateService"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      services: s.services.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+    }));
+  }, []);
+
+  const removeService = useCallback<Store["removeService"]>((id) => {
+    setState((s) => ({ ...s, services: s.services.filter((x) => x.id !== id) }));
+  }, []);
+
+  const addUser = useCallback<Store["addUser"]>((u) => {
+    setState((s) => ({
+      ...s,
+      users: [...s.users, { ...u, id: `USR-${Math.floor(100 + Math.random() * 899)}` }],
+    }));
+  }, []);
+
+  const updateUser = useCallback<Store["updateUser"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      users: s.users.map((u) => (u.id === id ? { ...u, ...patch } : u)),
+    }));
+  }, []);
+
+  const removeUser = useCallback<Store["removeUser"]>((id) => {
+    setState((s) => ({ ...s, users: s.users.filter((u) => u.id !== id) }));
+  }, []);
+
+  const setCurrentUser = useCallback<Store["setCurrentUser"]>((id) => {
+    setState((s) => ({ ...s, currentUserId: id }));
+  }, []);
+
+  /** Simula a sincronização com o Active Directory (carimba data em todos). */
+  const syncDirectory = useCallback<Store["syncDirectory"]>(() => {
+    const agora = new Date().toISOString();
+    setState((s) => ({
+      ...s,
+      users: s.users.map((u) => (u.origem === "ad" ? { ...u, sincronizadoEm: agora } : u)),
+    }));
+    return stateRef.current.users.filter((u) => u.origem === "ad").length;
+  }, []);
+
+  const addSystem = useCallback<Store["addSystem"]>((sys) => {
+    setState((s) => ({
+      ...s,
+      systems: [...s.systems, { ...sys, id: `SYS-${Math.floor(100 + Math.random() * 899)}` }],
+    }));
+  }, []);
+
+  const updateSystem = useCallback<Store["updateSystem"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      systems: s.systems.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+    }));
+  }, []);
+
+  const removeSystem = useCallback<Store["removeSystem"]>((id) => {
+    setState((s) => ({ ...s, systems: s.systems.filter((x) => x.id !== id) }));
   }, []);
 
   const patchProject = useCallback((id: string, fn: (p: Project) => Project) => {
