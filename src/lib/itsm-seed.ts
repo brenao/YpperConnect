@@ -504,3 +504,22 @@ export const SEED_RESOURCES: Resource[] = [
   { id: "RES-04", nome: "Patrícia Nunes", papel: "Analista de Processos", equipe: "Governança de TI", horasDia: 8, disponibilidadeProjetos: 70 },
   { id: "RES-05", nome: "Tiago Mendes", papel: "Especialista em Dados", equipe: "Dados e BI", horasDia: 8, disponibilidadeProjetos: 60 },
 ];
+
+export const SEED_USERS: DirectoryUser[] = [
+  { id: "USR-01", nome: "Marina Costa", email: "marina.costa@empresa.com.br", login: "EMPRESA\\marina.costa", departamento: "Tecnologia da Informação", equipe: "Governança de TI", origem: "ad", admin: true, ativo: true },
+  { id: "USR-02", nome: "Rafael Lima", email: "rafael.lima@empresa.com.br", login: "EMPRESA\\rafael.lima", departamento: "Tecnologia da Informação", equipe: "Sustentação de Sistemas", origem: "ad", admin: true, ativo: true },
+  { id: "USR-03", nome: "Bruna Sato", email: "bruna.sato@empresa.com.br", login: "EMPRESA\\bruna.sato", departamento: "Tecnologia da Informação", equipe: "Infraestrutura", origem: "ad", admin: false, ativo: true },
+  { id: "USR-04", nome: "João Vitor", email: "joao.vitor@empresa.com.br", login: "EMPRESA\\joao.vitor", departamento: "Tecnologia da Informação", equipe: "Service Desk", origem: "ad", admin: false, ativo: true },
+  { id: "USR-05", nome: "Patrícia Nunes", email: "patricia.nunes@empresa.com.br", login: "EMPRESA\\patricia.nunes", departamento: "Tecnologia da Informação", equipe: "Governança de TI", origem: "ad", admin: false, ativo: true },
+  { id: "USR-06", nome: "Tiago Mendes", email: "tiago.mendes@empresa.com.br", login: "EMPRESA\\tiago.mendes", departamento: "Tecnologia da Informação", equipe: "Dados e BI", origem: "ad", admin: false, ativo: true },
+  { id: "USR-07", nome: "Camila Duarte", email: "camila.duarte@empresa.com.br", login: "EMPRESA\\camila.duarte", departamento: "Financeiro", equipe: "Financeiro", origem: "ad", admin: false, ativo: true },
+  { id: "USR-08", nome: "Eduardo Prado", email: "eduardo.prado@empresa.com.br", login: "EMPRESA\\eduardo.prado", departamento: "Operações", equipe: "Logística", origem: "ad", admin: false, ativo: true },
+];
+
+export const SEED_SYSTEMS: SystemRegistry[] = [
+  { id: "SYS-01", nome: "ERP Protheus", descricao: "Gestão financeira, fiscal e suprimentos.", categoria: "Aplicações", responsavelId: "USR-02", atribuicaoId: "USR-02", equipe: "Sustentação de Sistemas", criticidade: "alta", ativo: true },
+  { id: "SYS-02", nome: "Portal do Colaborador", descricao: "Autoatendimento de RH e holerites.", categoria: "Aplicações", responsavelId: "USR-05", atribuicaoId: "USR-04", equipe: "Service Desk", criticidade: "media", ativo: true },
+  { id: "SYS-03", nome: "Active Directory", descricao: "Diretório corporativo de identidade e acessos.", categoria: "Infraestrutura", responsavelId: "USR-03", atribuicaoId: "USR-03", equipe: "Infraestrutura", criticidade: "alta", ativo: true },
+  { id: "SYS-04", nome: "Data Warehouse", descricao: "Base analítica e painéis executivos.", categoria: "Dados", responsavelId: "USR-06", atribuicaoId: "USR-06", equipe: "Dados e BI", criticidade: "media", ativo: true },
+  { id: "SYS-05", nome: "Rede e Wi-Fi das unidades", descricao: "Conectividade das lojas e escritórios.", categoria: "Redes", responsavelId: "USR-03", atribuicaoId: "USR-03", equipe: "Infraestrutura", criticidade: "alta", ativo: true },
+];
