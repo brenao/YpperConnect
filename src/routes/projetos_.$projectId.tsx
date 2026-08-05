@@ -315,8 +315,8 @@ function Metric({
 }: {
   label: string;
   value: string;
-  hint?: string;
-  alerta?: boolean;
+  hint?: string | undefined;
+  alerta?: boolean | undefined;
 }) {
   return (
     <div className="rounded-xl border border-border/50 bg-surface/60 p-3">
