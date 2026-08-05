@@ -1,4 +1,12 @@
-import type { Article, Project, Resource, ServiceItem, Ticket } from "./itsm-types";
+import type {
+  Article,
+  DirectoryUser,
+  Project,
+  Resource,
+  ServiceItem,
+  SystemRegistry,
+  Ticket,
+} from "./itsm-types";
 import { resolvePriority, slaFor } from "./itsm-types";
 
 const now = Date.now();
