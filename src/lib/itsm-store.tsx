@@ -1,8 +1,19 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { SEED_ARTICLES, SEED_PROJECTS, SEED_RESOURCES, SEED_SERVICES, SEED_TICKETS } from "./itsm-seed";
+import {
+  SEED_ARTICLES,
+  SEED_PROJECTS,
+  SEED_RESOURCES,
+  SEED_SERVICES,
+  SEED_SYSTEMS,
+  SEED_TICKETS,
+  SEED_USERS,
+} from "./itsm-seed";
+import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "./notifications";
 import type {
   Article,
+  DirectoryUser,
+  EmailNotification,
   Project,
   ProjectAttention,
   ProjectRisk,
@@ -10,12 +21,13 @@ import type {
   ProjectUpdate,
   Resource,
   ServiceItem,
+  SystemRegistry,
   Ticket,
   UserRole,
 } from "./itsm-types";
 import { resolvePriority, slaFor } from "./itsm-types";
 
-const KEY = "govti.state.v2";
+const KEY = "govti.state.v3";
 
 interface State {
   tickets: Ticket[];
@@ -23,6 +35,11 @@ interface State {
   articles: Article[];
   projects: Project[];
   resources: Resource[];
+  users: DirectoryUser[];
+  systems: SystemRegistry[];
+  notifications: EmailNotification[];
+  /** Usuário logado (simulação da sessão vinda do AD). */
+  currentUserId: string;
   role: UserRole;
 }
 
@@ -32,6 +49,10 @@ const initial: State = {
   articles: SEED_ARTICLES,
   projects: SEED_PROJECTS,
   resources: SEED_RESOURCES,
+  users: SEED_USERS,
+  systems: SEED_SYSTEMS,
+  notifications: [],
+  currentUserId: "USR-01",
   role: "ti",
 };
 
@@ -49,10 +70,23 @@ type NewTicket = Pick<
 > & { sistema?: string | undefined };
 
 interface Store extends State {
+  /** Usuário da sessão atual. */
+  currentUser: DirectoryUser | undefined;
+  isAdmin: boolean;
   createTicket: (t: NewTicket) => Ticket;
   updateTicket: (id: string, patch: Partial<Ticket>) => void;
   addArticle: (a: Omit<Article, "id" | "visualizacoes">) => void;
   addService: (s: Omit<ServiceItem, "id">) => void;
+  updateService: (id: string, patch: Partial<ServiceItem>) => void;
+  removeService: (id: string) => void;
+  addUser: (u: Omit<DirectoryUser, "id">) => void;
+  updateUser: (id: string, patch: Partial<DirectoryUser>) => void;
+  removeUser: (id: string) => void;
+  setCurrentUser: (id: string) => void;
+  syncDirectory: () => number;
+  addSystem: (s: Omit<SystemRegistry, "id">) => void;
+  updateSystem: (id: string, patch: Partial<SystemRegistry>) => void;
+  removeSystem: (id: string) => void;
   setRole: (r: UserRole) => void;
   createProject: (p: Omit<Project, "id" | "tarefas" | "atualizacoes" | "riscos" | "atencoes">) => Project;
   updateProject: (id: string, patch: Partial<Project>) => void;
