@@ -10,6 +10,7 @@ import {
   PieChart,
   Users,
   Settings,
+  KeyRound,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import logo from "@/assets/ypperconnect-logo.png";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
 import { RoleSwitch } from "./role-switch";
+import { useItsm } from "@/controllers/itsm-store";
 
 const nav = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
@@ -29,6 +31,7 @@ const nav = [
   { to: "/governanca", label: "Governança ITIL", icon: ShieldCheck },
   { to: "/assistente", label: "Assistente IA", icon: Sparkles },
   { to: "/administracao", label: "Administração", icon: Settings },
+  { to: "/permissoes", label: "Perfis de acesso", icon: KeyRound },
 ] as const;
 
 export function AppShell({
@@ -43,6 +46,8 @@ export function AppShell({
   children: ReactNode;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { canAccess } = useItsm();
+  const visibleNav = nav.filter((item) => canAccess(item.to));
 
   return (
     <div className="flex min-h-screen">
@@ -66,7 +71,7 @@ export function AppShell({
         </Link>
 
         <nav className="flex flex-1 flex-col gap-1">
-          {nav.map((item) => {
+          {visibleNav.map((item) => {
             const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
             return (
               <Link
