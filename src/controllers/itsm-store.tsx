@@ -447,11 +447,60 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
 
   const reset = useCallback(() => setState(initial), []);
 
+  const addProfile = useCallback<Store["addProfile"]>((p) => {
+    setState((s) => ({
+      ...s,
+      profiles: [...s.profiles, { ...p, id: `PRF-${Date.now().toString(36).toUpperCase()}` }],
+    }));
+  }, []);
+
+  const updateProfile = useCallback<Store["updateProfile"]>((id, patch) => {
+    setState((s) => ({
+      ...s,
+      profiles: s.profiles.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    }));
+  }, []);
+
+  const removeProfile = useCallback<Store["removeProfile"]>((id) => {
+    setState((s) => ({
+      ...s,
+      profiles: s.profiles.filter((p) => p.id === id ? Boolean(p.sistema) : true),
+      users: s.users.map((u) => (u.perfilId === id ? { ...u, perfilId: undefined } : u)),
+    }));
+  }, []);
+
+  const assignProfile = useCallback<Store["assignProfile"]>((userId, profileId) => {
+    setState((s) => ({
+      ...s,
+      users: s.users.map((u) => (u.id === userId ? { ...u, perfilId: profileId } : u)),
+    }));
+  }, []);
+
   const value = useMemo<Store>(
-    () => ({
+    () => {
+      const currentUser = state.users.find((u) => u.id === state.currentUserId);
+      const isAdmin = Boolean(currentUser?.admin);
+      const currentProfile = state.profiles.find(
+        (p) => p.id === currentUser?.perfilId && p.ativo,
+      );
+      const allowedModules = isAdmin
+        ? APP_MODULES.map((m) => m.key)
+        : Array.from(new Set(["/", ...(currentProfile?.modulos ?? [])]));
+      const allowedFeatures = isAdmin
+        ? APP_FEATURES.map((f) => f.key)
+        : (currentProfile?.funcionalidades ?? []);
+      return {
       ...state,
-      currentUser: state.users.find((u) => u.id === state.currentUserId),
-      isAdmin: Boolean(state.users.find((u) => u.id === state.currentUserId)?.admin),
+      currentUser,
+      isAdmin,
+      currentProfile,
+      allowedModules,
+      can: (feature: string) => allowedFeatures.includes(feature),
+      canAccess: (moduleKey: string) => allowedModules.includes(moduleKey),
+      addProfile,
+      updateProfile,
+      removeProfile,
+      assignProfile,
       createTicket,
       updateTicket,
       addArticle,
@@ -480,10 +529,15 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       updateResource,
       removeResource,
       reset,
-    }),
+      };
+    },
     // deps
     [
       state,
+      addProfile,
+      updateProfile,
+      removeProfile,
+      assignProfile,
       createTicket,
       updateTicket,
       addArticle,
