@@ -154,6 +154,23 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
   const notify = useCallback((mensagens: EmailNotification[]) => {
     if (!mensagens.length) return;
     setState((s) => ({ ...s, notifications: [...mensagens, ...s.notifications].slice(0, 200) }));
+    void (async () => {
+      const { enviarNotificacaoEmail } = await import("@/services/email.functions");
+      for (const m of mensagens) {
+        try {
+          await enviarNotificacaoEmail({
+            data: {
+              id: m.id,
+              assunto: m.assunto,
+              corpo: m.corpo,
+              destinatarios: m.destinatarios,
+            },
+          });
+        } catch (error) {
+          console.error("Não foi possível enviar o e-mail da notificação", error);
+        }
+      }
+    })();
   }, []);
 
   // Lembretes de atualização de projeto (6 dias; diário após 7).
