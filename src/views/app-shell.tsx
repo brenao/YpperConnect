@@ -116,7 +116,7 @@ export function AppShell({
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-border px-4 py-2 lg:hidden">
-          {nav.map((item) => (
+          {visibleNav.map((item) => (
             <Link
               key={item.to}
               to={item.to}
