@@ -648,20 +648,7 @@ function ProjetoDetalheInner() {
                 <tr className="border-b border-border/60 bg-surface/60">
                   <td className="px-2 py-3 font-mono text-[11px] text-muted-foreground">0</td>
                   <td className="px-2 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold">{project.nome}</span>
-                      <Badge variant="outline" className="text-[10px]">
-                        {project.id}
-                      </Badge>
-                      <Badge variant="outline" className="text-[10px]">
-                        {PROJECT_STATUS_LABEL[project.status]}
-                      </Badge>
-                    </div>
-                    <span className="text-[11px] text-muted-foreground">
-                      GP {project.gerente} · {project.tarefas.length} tarefa(s) ·{" "}
-                      {baseline ? `baseline v${baseline.versao}` : "sem baseline"} · esperado{" "}
-                      {hydrated ? esperado : "—"}%
-                    </span>
+                    <span className="font-semibold">{project.nome}</span>
                   </td>
                   <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
                     {Math.round(
