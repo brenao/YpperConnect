@@ -32,6 +32,7 @@ import {
   type TicketStatus,
 } from "@/models/itsm-types";
 import { useHydrated } from "@/hooks/use-hydrated";
+import { cn } from "@/lib/utils";
 
 const PRIORITY_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
 
