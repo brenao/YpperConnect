@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Search, Sparkles } from "lucide-react";
+import { Search, Sparkles, Server } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
@@ -32,6 +32,32 @@ import {
   type TicketStatus,
 } from "@/models/itsm-types";
 import { useHydrated } from "@/hooks/use-hydrated";
+import { cn } from "@/lib/utils";
+
+const PRIORITY_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
+
+const TABS = [
+  { value: "todos", label: "Todos" },
+  { value: "incidente", label: "Incidentes" },
+  { value: "requisicao", label: "Requisições" },
+  { value: "melhoria", label: "Melhorias" },
+  { value: "problema", label: "Problemas" },
+  { value: "tarefa", label: "Tarefas" },
+] as const;
+
+const TAB_ACCENT: Record<string, string> = {
+  todos: "bg-primary/15 text-primary border-primary/40",
+  incidente: "bg-destructive/15 text-destructive border-destructive/40",
+  requisicao: "bg-info/15 text-info border-info/40",
+  melhoria: "bg-success/15 text-success border-success/40",
+  problema: "bg-warning/15 text-warning border-warning/40",
+  tarefa: "bg-secondary text-foreground border-border",
+};
+
+function fmtDataHora(iso: string) {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+}
 
 export const Route = createFileRoute("/chamados")({
   head: () => ({
@@ -75,6 +101,35 @@ function Chamados() {
       ),
     [tickets, tipo, status, q],
   );
+
+  const contagemPorTipo = useMemo(() => {
+    const base: Record<string, number> = { todos: tickets.length };
+    tickets.forEach((t) => {
+      base[t.tipo] = (base[t.tipo] ?? 0) + 1;
+    });
+    return base;
+  }, [tickets]);
+
+  /** Agrupa por sistema e ordena por criticidade e, em seguida, data de abertura. */
+  const grupos = useMemo(() => {
+    const mapa = new Map<string, Ticket[]>();
+    filtered.forEach((t) => {
+      const chave = t.sistema?.trim() || t.servico || "Sem sistema";
+      mapa.set(chave, [...(mapa.get(chave) ?? []), t]);
+    });
+    const ordenar = (a: Ticket, b: Ticket) =>
+      (PRIORITY_ORDER[a.prioridade] ?? 9) - (PRIORITY_ORDER[b.prioridade] ?? 9) ||
+      new Date(a.criadoEm).getTime() - new Date(b.criadoEm).getTime();
+
+    return [...mapa.entries()]
+      .map(([sistema, lista]) => ({ sistema, lista: [...lista].sort(ordenar) }))
+      .sort(
+        (a, b) =>
+          (PRIORITY_ORDER[a.lista[0]!.prioridade] ?? 9) -
+            (PRIORITY_ORDER[b.lista[0]!.prioridade] ?? 9) ||
+          a.sistema.localeCompare(b.sistema),
+      );
+  }, [filtered]);
 
   const atual: Ticket | null = tickets.find((t) => t.id === selectedId) ?? null;
 
@@ -142,31 +197,47 @@ function Chamados() {
           </div>
         ) : null}
 
-        <div className="panel flex flex-wrap items-center gap-3 p-4">
-          <div className="relative min-w-56 flex-1">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={q}
-              maxLength={80}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por ID, título, solicitante ou serviço"
-              className="pl-9"
-            />
+        <div className="panel space-y-4 p-4">
+          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-surface p-1.5">
+            {TABS.map((tab) => {
+              const ativo = tipo === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  onClick={() => setTipo(tab.value)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm transition-all",
+                    ativo
+                      ? `${TAB_ACCENT[tab.value]} font-medium shadow-sm`
+                      : "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                  )}
+                >
+                  {tab.label}
+                  <span
+                    className={cn(
+                      "rounded-md px-1.5 py-0.5 font-mono text-[11px]",
+                      ativo ? "bg-current/15" : "bg-secondary text-muted-foreground",
+                    )}
+                  >
+                    {contagemPorTipo[tab.value] ?? 0}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <Select value={tipo} onValueChange={setTipo}>
-            <SelectTrigger className="w-52">
-              <SelectValue placeholder="Classificação" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todas as classificações</SelectItem>
-              {(Object.keys(TYPE_LABEL) as RecordType[]).map((t) => (
-                <SelectItem key={t} value={t}>
-                  {TYPE_LABEL[t]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={status} onValueChange={setStatus}>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-56 flex-1">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={q}
+                maxLength={80}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Buscar por ID, título, solicitante ou serviço"
+                className="pl-9"
+              />
+            </div>
+            <Select value={status} onValueChange={setStatus}>
             <SelectTrigger className="w-48">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
@@ -178,51 +249,76 @@ function Chamados() {
                 </SelectItem>
               ))}
             </SelectContent>
-          </Select>
+            </Select>
+          </div>
         </div>
 
         <div className="panel overflow-hidden">
-          <div className="hidden grid-cols-[7rem_1fr_10rem_7rem_9rem_9rem] gap-3 border-b border-border px-5 py-3 text-xs uppercase tracking-wide text-muted-foreground lg:grid">
+          <div className="hidden grid-cols-[6rem_1fr_9rem_5rem_8.5rem_7rem_7rem_8rem] gap-3 border-b border-border px-5 py-3 text-xs uppercase tracking-wide text-muted-foreground lg:grid">
             <span>ID</span>
             <span>Registro</span>
-            <span>Classificação</span>
-            <span>Prioridade</span>
+            <span>Sistema</span>
+            <span>Prior.</span>
             <span>Status</span>
-            <span>SLA</span>
+            <span>Abertura</span>
+            <span>Limite SLA</span>
+            <span>Situação</span>
           </div>
-          <ul className="divide-y divide-border">
-            {filtered.map((t) => (
-              <li key={t.id}>
-                <button
-                  onClick={() => setSelectedId(t.id)}
-                  className="grid w-full grid-cols-1 gap-2 px-5 py-3 text-left transition-colors hover:bg-secondary/50 lg:grid-cols-[7rem_1fr_10rem_7rem_9rem_9rem] lg:items-center lg:gap-3"
-                >
-                  <span className="font-mono text-xs text-muted-foreground">{t.id}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm">{t.titulo}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {t.servico} · {t.solicitante}
-                    </span>
-                  </span>
-                  <span className="flex flex-wrap gap-2">
-                    <TypeBadge value={t.tipo} />
-                  </span>
-                  <span>
-                    <PriorityBadge value={t.prioridade} />
-                  </span>
-                  <span>
-                    <StatusBadge value={t.status} />
-                  </span>
-                  <SlaPill ticket={t} />
-                </button>
-              </li>
-            ))}
-            {filtered.length === 0 ? (
-              <li className="px-5 py-10 text-center text-sm text-muted-foreground">
-                Nenhum chamado encontrado com os filtros atuais.
-              </li>
-            ) : null}
-          </ul>
+
+          {grupos.map(({ sistema, lista }) => (
+            <section key={sistema}>
+              <header className="flex items-center justify-between gap-3 border-b border-border bg-secondary/40 px-5 py-2">
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <Server className="size-3.5 text-muted-foreground" />
+                  {sistema}
+                </span>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {lista.length} {lista.length === 1 ? "chamado" : "chamados"}
+                </span>
+              </header>
+              <ul className="divide-y divide-border">
+                {lista.map((t) => (
+                  <li key={t.id}>
+                    <button
+                      onClick={() => setSelectedId(t.id)}
+                      className="grid w-full grid-cols-1 gap-2 px-5 py-3 text-left transition-colors hover:bg-secondary/50 lg:grid-cols-[6rem_1fr_9rem_5rem_8.5rem_7rem_7rem_8rem] lg:items-center lg:gap-3"
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">{t.id}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm">{t.titulo}</span>
+                        <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                          <TypeBadge value={t.tipo} />
+                          <span className="truncate">{t.solicitante}</span>
+                        </span>
+                      </span>
+                      <span className="truncate text-sm text-muted-foreground">
+                        {t.sistema?.trim() || t.servico}
+                      </span>
+                      <span>
+                        <PriorityBadge value={t.prioridade} />
+                      </span>
+                      <span>
+                        <StatusBadge value={t.status} />
+                      </span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {hydrated ? fmtDataHora(t.criadoEm) : "—"}
+                      </span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {hydrated ? fmtDataHora(t.prazoSla) : "—"}
+                      </span>
+                      <SlaPill ticket={t} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+
+          {grupos.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+              Nenhum chamado encontrado com os filtros atuais.
+            </p>
+          ) : null}
         </div>
       </div>
 
