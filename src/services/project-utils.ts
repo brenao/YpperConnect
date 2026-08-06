@@ -1,4 +1,4 @@
-import type { Project, ProjectTask } from "@/models/itsm-types";
+import type { BaselineTask, Project, ProjectBaseline, ProjectTask } from "@/models/itsm-types";
 
 export const DAY = 86_400_000;
 
@@ -19,6 +19,14 @@ export function fmtDate(d: string): string {
 
 export function fmtDateFull(d: string): string {
   return new Date(`${d}T12:00:00`).toLocaleDateString("pt-BR");
+}
+
+/** Data curta dd/mm. */
+export function fmtDateShort(d: string): string {
+  return new Date(`${d}T12:00:00`).toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+  });
 }
 
 /** Duração em dias corridos (horas convertidas em jornada de 8h). */
