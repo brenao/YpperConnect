@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Search, Sparkles } from "lucide-react";
+import { Search, Sparkles, Server, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
@@ -25,13 +25,62 @@ import {
 } from "@/components/ui/sheet";
 import { useItsm } from "@/controllers/itsm-store";
 import {
+  PRIORITY_LABEL,
   STATUS_LABEL,
   TYPE_LABEL,
+  type Priority,
   type RecordType,
   type Ticket,
   type TicketStatus,
 } from "@/models/itsm-types";
 import { useHydrated } from "@/hooks/use-hydrated";
+import { cn } from "@/lib/utils";
+
+const PRIORITY_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
+
+const TABS = [
+  { value: "todos", label: "Todos" },
+  { value: "incidente", label: "Incidentes" },
+  { value: "requisicao", label: "Requisições" },
+  { value: "melhoria", label: "Melhorias" },
+  { value: "problema", label: "Problemas" },
+  { value: "tarefa", label: "Tarefas" },
+] as const;
+
+const TAB_ACCENT: Record<string, string> = {
+  todos: "bg-primary/15 text-primary border-primary/40",
+  incidente: "bg-destructive/15 text-destructive border-destructive/40",
+  requisicao: "bg-info/15 text-info border-info/40",
+  melhoria: "bg-success/15 text-success border-success/40",
+  problema: "bg-warning/15 text-warning border-warning/40",
+  tarefa: "bg-secondary text-foreground border-border",
+};
+
+function fmtDataHora(iso: string) {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function ticketSearchable(t: Ticket) {
+  return [
+    t.id,
+    t.titulo,
+    t.descricao,
+    t.solicitante,
+    t.servico,
+    t.sistema,
+    t.categoria,
+    t.responsavel,
+    t.equipe,
+    t.origem,
+    TYPE_LABEL[t.tipo],
+    PRIORITY_LABEL[t.prioridade],
+    STATUS_LABEL[t.status],
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
 
 export const Route = createFileRoute("/chamados")({
   head: () => ({
@@ -53,14 +102,33 @@ export const Route = createFileRoute("/chamados")({
 });
 
 function Chamados() {
-  const { tickets, updateTicket, createTicket, role } = useItsm();
+  const { tickets, updateTicket, createTicket, role, users, systems } = useItsm();
   const hydrated = useHydrated();
   const isTi = hydrated ? role === "ti" : true;
   const [q, setQ] = useState("");
   const [encerramento, setEncerramento] = useState("");
   const [tipo, setTipo] = useState<string>("todos");
   const [status, setStatus] = useState<string>("todos");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [filtroSistema, setFiltroSistema] = useState<string>("todos");
+  const [filtroResponsavel, setFiltroResponsavel] = useState<string>("todos");
+  const [filtroCategoria, setFiltroCategoria] = useState<string>("todos");
+  const [filtroPrioridade, setFiltroPrioridade] = useState<string>("todos");
+  const [filtroOrigem, setFiltroOrigem] = useState<string>("todos");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const sistemasAtivos = useMemo(
+    () => [...new Set(tickets.map((t) => t.sistema?.trim()).filter(Boolean))].sort() as string[],
+    [tickets],
+  );
+  const responsaveisAtivos = useMemo(
+    () => [...new Set(tickets.map((t) => t.responsavel).filter(Boolean))].sort() as string[],
+    [tickets],
+  );
+  const categoriasAtivas = useMemo(
+    () => [...new Set(tickets.map((t) => t.categoria).filter(Boolean))].sort() as string[],
+    [tickets],
+  );
 
   const filtered = useMemo(
     () =>
@@ -68,13 +136,71 @@ function Chamados() {
         (t) =>
           (tipo === "todos" || t.tipo === tipo) &&
           (status === "todos" || t.status === status) &&
-          (q.trim() === "" ||
-            `${t.id} ${t.titulo} ${t.solicitante} ${t.servico}`
-              .toLowerCase()
-              .includes(q.toLowerCase())),
+          (filtroSistema === "todos" || t.sistema?.trim() === filtroSistema) &&
+          (filtroResponsavel === "todos" || t.responsavel === filtroResponsavel) &&
+          (filtroCategoria === "todos" || t.categoria === filtroCategoria) &&
+          (filtroPrioridade === "todos" || t.prioridade === filtroPrioridade) &&
+          (filtroOrigem === "todos" || t.origem === filtroOrigem) &&
+          (q.trim() === "" || ticketSearchable(t).includes(q.toLowerCase())),
       ),
-    [tickets, tipo, status, q],
+    [
+      tickets,
+      tipo,
+      status,
+      filtroSistema,
+      filtroResponsavel,
+      filtroCategoria,
+      filtroPrioridade,
+      filtroOrigem,
+      q,
+    ],
   );
+
+  const activeFiltersCount = [
+    filtroSistema,
+    filtroResponsavel,
+    filtroCategoria,
+    filtroPrioridade,
+    filtroOrigem,
+  ].filter((v) => v !== "todos").length;
+
+  function clearFilters() {
+    setQ("");
+    setStatus("todos");
+    setFiltroSistema("todos");
+    setFiltroResponsavel("todos");
+    setFiltroCategoria("todos");
+    setFiltroPrioridade("todos");
+    setFiltroOrigem("todos");
+  }
+
+  const contagemPorTipo = useMemo(() => {
+    const base: Record<string, number> = { todos: tickets.length };
+    tickets.forEach((t) => {
+      base[t.tipo] = (base[t.tipo] ?? 0) + 1;
+    });
+    return base;
+  }, [tickets]);
+
+  /** Agrupa por sistema e ordena por criticidade e, em seguida, data de abertura. */
+  const grupos = useMemo(() => {
+    const mapa = new Map<string, Ticket[]>();
+    filtered.forEach((t) => {
+      const chave = t.sistema?.trim() || t.servico || "Sem sistema";
+      mapa.set(chave, [...(mapa.get(chave) ?? []), t]);
+    });
+    const ordenar = (a: Ticket, b: Ticket) =>
+      (PRIORITY_ORDER[a.prioridade] ?? 9) - (PRIORITY_ORDER[b.prioridade] ?? 9) ||
+      new Date(a.criadoEm).getTime() - new Date(b.criadoEm).getTime();
+
+    return [...mapa.entries()]
+      .map(([sistema, lista]) => ({ sistema, lista: [...lista].sort(ordenar) }))
+      .sort(
+        (a, b) =>
+          (PRIORITY_ORDER[a.lista[0]!.prioridade] ?? 9) -
+            (PRIORITY_ORDER[b.lista[0]!.prioridade] ?? 9) || a.sistema.localeCompare(b.sistema),
+      );
+  }, [filtered]);
 
   const atual: Ticket | null = tickets.find((t) => t.id === selectedId) ?? null;
 
@@ -148,87 +274,305 @@ function Chamados() {
           </div>
         ) : null}
 
-        <div className="panel flex flex-wrap items-center gap-3 p-4">
-          <div className="relative min-w-56 flex-1">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={q}
-              maxLength={80}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por ID, título, solicitante ou serviço"
-              className="pl-9"
-            />
+        <div className="panel space-y-4 p-4">
+          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-surface p-1.5">
+            {TABS.map((tab) => {
+              const ativo = tipo === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  onClick={() => setTipo(tab.value)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm transition-all",
+                    ativo
+                      ? `${TAB_ACCENT[tab.value]} font-medium shadow-sm`
+                      : "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                  )}
+                >
+                  {tab.label}
+                  <span
+                    className={cn(
+                      "rounded-md px-1.5 py-0.5 font-mono text-[11px]",
+                      ativo ? "bg-current/15" : "bg-secondary text-muted-foreground",
+                    )}
+                  >
+                    {contagemPorTipo[tab.value] ?? 0}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <Select value={tipo} onValueChange={setTipo}>
-            <SelectTrigger className="w-52">
-              <SelectValue placeholder="Classificação" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todas as classificações</SelectItem>
-              {(Object.keys(TYPE_LABEL) as RecordType[]).map((t) => (
-                <SelectItem key={t} value={t}>
-                  {TYPE_LABEL[t]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os status</SelectItem>
-              {(Object.keys(STATUS_LABEL) as TicketStatus[]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative min-w-56 flex-1">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={q}
+                  maxLength={120}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Buscar por ID, descrição, sistema, responsável, categoria..."
+                  className="pl-9"
+                />
+              </div>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os status</SelectItem>
+                  {(Object.keys(STATUS_LABEL) as TicketStatus[]).map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {STATUS_LABEL[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant={advancedOpen ? "secondary" : "outline"}
+                size="icon"
+                onClick={() => setAdvancedOpen((v) => !v)}
+                className="shrink-0"
+                aria-label="Filtros avançados"
+              >
+                <Filter className="size-4" />
+              </Button>
+              {q || activeFiltersCount > 0 || status !== "todos" ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearFilters}
+                  className="shrink-0 gap-1 text-muted-foreground"
+                >
+                  <X className="size-3.5" /> Limpar
+                </Button>
+              ) : null}
+            </div>
+
+            {advancedOpen ? (
+              <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Sistema</label>
+                  <Select value={filtroSistema} onValueChange={setFiltroSistema}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos os sistemas</SelectItem>
+                      {sistemasAtivos.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Responsável</label>
+                  <Select value={filtroResponsavel} onValueChange={setFiltroResponsavel}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos os responsáveis</SelectItem>
+                      {responsaveisAtivos.map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {r}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Categoria</label>
+                  <Select value={filtroCategoria} onValueChange={setFiltroCategoria}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todas as categorias</SelectItem>
+                      {categoriasAtivas.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Prioridade</label>
+                  <Select value={filtroPrioridade} onValueChange={setFiltroPrioridade}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todas as prioridades</SelectItem>
+                      {(["P1", "P2", "P3", "P4"] as const).map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {PRIORITY_LABEL[p]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
+                  <label className="text-xs font-medium text-muted-foreground">Origem</label>
+                  <div className="flex flex-wrap gap-2">
+                    {(["todos", "portal", "ia", "email", "telefone"] as const).map((o) => (
+                      <button
+                        key={o}
+                        onClick={() => setFiltroOrigem(o)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs transition-all",
+                          filtroOrigem === o
+                            ? "border-primary bg-primary/15 text-primary"
+                            : "border-border bg-secondary text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {o === "todos"
+                          ? "Qualquer origem"
+                          : o === "ia"
+                            ? "Assistente IA"
+                            : o.charAt(0).toUpperCase() + o.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeFiltersCount > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Filtros ativos:</span>
+                {filtroSistema !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Sistema: {filtroSistema}
+                    <button
+                      onClick={() => setFiltroSistema("todos")}
+                      aria-label="Remover filtro de sistema"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroResponsavel !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Responsável: {filtroResponsavel}
+                    <button
+                      onClick={() => setFiltroResponsavel("todos")}
+                      aria-label="Remover filtro de responsável"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroCategoria !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Categoria: {filtroCategoria}
+                    <button
+                      onClick={() => setFiltroCategoria("todos")}
+                      aria-label="Remover filtro de categoria"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroPrioridade !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Prioridade: {PRIORITY_LABEL[filtroPrioridade as Priority]}
+                    <button
+                      onClick={() => setFiltroPrioridade("todos")}
+                      aria-label="Remover filtro de prioridade"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroOrigem !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Origem:{" "}
+                    {filtroOrigem === "ia"
+                      ? "Assistente IA"
+                      : filtroOrigem.charAt(0).toUpperCase() + filtroOrigem.slice(1)}
+                    <button
+                      onClick={() => setFiltroOrigem("todos")}
+                      aria-label="Remover filtro de origem"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="panel overflow-hidden">
-          <div className="hidden grid-cols-[7rem_1fr_10rem_7rem_9rem_9rem] gap-3 border-b border-border px-5 py-3 text-xs uppercase tracking-wide text-muted-foreground lg:grid">
+          <div className="hidden grid-cols-[6rem_1fr_9rem_5rem_8.5rem_7rem_7rem_8rem] gap-3 border-b border-border px-5 py-3 text-xs uppercase tracking-wide text-muted-foreground lg:grid">
             <span>ID</span>
             <span>Registro</span>
-            <span>Classificação</span>
-            <span>Prioridade</span>
+            <span>Sistema</span>
+            <span>Prior.</span>
             <span>Status</span>
-            <span>SLA</span>
+            <span>Abertura</span>
+            <span>Limite SLA</span>
+            <span>Situação</span>
           </div>
-          <ul className="divide-y divide-border">
-            {filtered.map((t) => (
-              <li key={t.id}>
-                <button
-                  onClick={() => setSelectedId(t.id)}
-                  className="grid w-full grid-cols-1 gap-2 px-5 py-3 text-left transition-colors hover:bg-secondary/50 lg:grid-cols-[7rem_1fr_10rem_7rem_9rem_9rem] lg:items-center lg:gap-3"
-                >
-                  <span className="font-mono text-xs text-muted-foreground">{t.id}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm">{t.titulo}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {t.servico} · {t.solicitante}
-                    </span>
-                  </span>
-                  <span className="flex flex-wrap gap-2">
-                    <TypeBadge value={t.tipo} />
-                  </span>
-                  <span>
-                    <PriorityBadge value={t.prioridade} />
-                  </span>
-                  <span>
-                    <StatusBadge value={t.status} />
-                  </span>
-                  <SlaPill ticket={t} />
-                </button>
-              </li>
-            ))}
-            {filtered.length === 0 ? (
-              <li className="px-5 py-10 text-center text-sm text-muted-foreground">
-                Nenhum chamado encontrado com os filtros atuais.
-              </li>
-            ) : null}
-          </ul>
+
+          {grupos.map(({ sistema, lista }) => (
+            <section key={sistema}>
+              <header className="flex items-center justify-between gap-3 border-b border-border bg-secondary/40 px-5 py-2">
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <Server className="size-3.5 text-muted-foreground" />
+                  {sistema}
+                </span>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {lista.length} {lista.length === 1 ? "chamado" : "chamados"}
+                </span>
+              </header>
+              <ul className="divide-y divide-border">
+                {lista.map((t) => (
+                  <li key={t.id}>
+                    <button
+                      onClick={() => setSelectedId(t.id)}
+                      className="grid w-full grid-cols-1 gap-2 px-5 py-3 text-left transition-colors hover:bg-secondary/50 lg:grid-cols-[6rem_1fr_9rem_5rem_8.5rem_7rem_7rem_8rem] lg:items-center lg:gap-3"
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">{t.id}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm">{t.titulo}</span>
+                        <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                          <TypeBadge value={t.tipo} />
+                          <span className="truncate">{t.solicitante}</span>
+                        </span>
+                      </span>
+                      <span className="truncate text-sm text-muted-foreground">
+                        {t.sistema?.trim() || t.servico}
+                      </span>
+                      <span>
+                        <PriorityBadge value={t.prioridade} />
+                      </span>
+                      <span>
+                        <StatusBadge value={t.status} />
+                      </span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {hydrated ? fmtDataHora(t.criadoEm) : "—"}
+                      </span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {hydrated ? fmtDataHora(t.prazoSla) : "—"}
+                      </span>
+                      <SlaPill ticket={t} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+
+          {grupos.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+              Nenhum chamado encontrado com os filtros atuais.
+            </p>
+          ) : null}
         </div>
       </div>
 

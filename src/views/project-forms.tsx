@@ -189,8 +189,8 @@ export function TaskDialog({
   const [nome, setNome] = useState(task?.nome ?? "");
   const [atividade, setAtividade] = useState(task?.atividade ?? "Execução");
   const [inicio, setInicio] = useState(task?.inicio ?? project.inicio);
-  const [duracao, setDuracao] = useState(String(task?.duracao ?? 5));
-  const [unidade, setUnidade] = useState<"dias" | "horas">(task?.duracaoUnidade ?? "dias");
+  const [duracao, setDuracao] = useState(String(task?.duracao ?? 8));
+  const [unidade, setUnidade] = useState<"dias" | "horas">(task?.duracaoUnidade ?? "horas");
   const [progresso, setProgresso] = useState(String(task?.progresso ?? 0));
   const [responsaveis, setResponsaveis] = useState(
     (task?.responsaveis ?? [task?.responsavel ?? ""]).join(", "),
@@ -348,7 +348,7 @@ export function TaskDialog({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="t-dur">Duração</Label>
+              <Label htmlFor="t-dur">Duração (horas por padrão)</Label>
               <Input
                 id="t-dur"
                 type="number"
@@ -364,8 +364,8 @@ export function TaskDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="dias">Dias</SelectItem>
                   <SelectItem value="horas">Horas</SelectItem>
+                  <SelectItem value="dias">Dias</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -773,6 +773,101 @@ export function AttentionDialog({ project }: { project: Project }) {
             Cancelar
           </Button>
           <Button onClick={submit}>Registrar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Registro de linha de base do cronograma (com justificativa a partir da 2ª versão). */
+export function BaselineDialog({ project }: { project: Project }) {
+  const { saveBaseline } = useItsm();
+  const [open, setOpen] = useState(false);
+  const [autor, setAutor] = useState(project.gerente || "");
+  const [justificativa, setJustificativa] = useState("");
+  const anteriores = project.baselines ?? [];
+  const primeira = anteriores.length === 0;
+
+  function submit() {
+    if (!project.tarefas.length) {
+      toast.error("Cadastre tarefas antes de salvar a baseline.");
+      return;
+    }
+    if (autor.trim().length < 3) {
+      toast.error("Informe o responsável pelo registro.");
+      return;
+    }
+    if (!primeira && justificativa.trim().length < 10) {
+      toast.error("Justifique a nova baseline (mínimo 10 caracteres).");
+      return;
+    }
+    saveBaseline(project.id, {
+      autor: autor.trim().slice(0, 80),
+      ...(primeira ? {} : { justificativa: justificativa.trim().slice(0, 600) }),
+    });
+    toast.success(
+      primeira ? "Baseline registrada" : `Baseline v${anteriores.length + 1} registrada`,
+      {
+        description: "O cronograma atual foi congelado como linha de base.",
+      },
+    );
+    setJustificativa("");
+    setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant={primeira ? "default" : "outline"}>
+          {primeira ? "Salvar baseline" : "Nova baseline"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {primeira
+              ? "Registrar baseline do cronograma"
+              : `Nova baseline (v${anteriores.length + 1})`}
+          </DialogTitle>
+          <DialogDescription>
+            {primeira
+              ? "Congela o cronograma atual como linha de base para comparar o progresso esperado x real."
+              : "Rebaselinar exige justificativa. A versão anterior fica no log de baselines para consulta."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="bl-autor">Responsável pelo registro</Label>
+            <Input
+              id="bl-autor"
+              maxLength={80}
+              value={autor}
+              onChange={(e) => setAutor(e.target.value)}
+            />
+          </div>
+          {!primeira ? (
+            <div className="grid gap-2">
+              <Label htmlFor="bl-just">Justificativa da nova baseline</Label>
+              <Textarea
+                id="bl-just"
+                rows={4}
+                maxLength={600}
+                value={justificativa}
+                onChange={(e) => setJustificativa(e.target.value)}
+                placeholder="Ex.: replanejamento aprovado pelo comitê após indisponibilidade do fornecedor."
+              />
+            </div>
+          ) : null}
+          <p className="rounded-lg border border-border/60 p-3 text-xs text-muted-foreground">
+            Serão congeladas {project.tarefas.length} tarefa(s) e o período {project.inicio} a{" "}
+            {project.fim}.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={submit}>Registrar baseline</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

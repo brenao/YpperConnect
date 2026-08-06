@@ -136,6 +136,27 @@ export interface ProjectAttention {
   status: "aberto" | "resolvido";
 }
 
+/** Foto do cronograma congelada como linha de base. */
+export interface BaselineTask {
+  id: string;
+  nome: string;
+  inicio: string;
+  fim: string;
+  duracaoDias: number;
+}
+
+export interface ProjectBaseline {
+  id: string;
+  versao: number;
+  criadaEm: string;
+  autor: string;
+  /** Obrigatória a partir da 2ª versão. */
+  justificativa?: string | undefined;
+  inicio: string;
+  fim: string;
+  tarefas: BaselineTask[];
+}
+
 export interface Project {
   id: string;
   nome: string;
@@ -149,6 +170,8 @@ export interface Project {
   atualizacoes?: ProjectUpdate[] | undefined;
   riscos?: ProjectRisk[] | undefined;
   atencoes?: ProjectAttention[] | undefined;
+  /** Histórico de linhas de base do cronograma (ordem crescente de versão). */
+  baselines?: ProjectBaseline[] | undefined;
 }
 
 export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
