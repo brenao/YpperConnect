@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Search, Sparkles } from "lucide-react";
+import { Search, Sparkles, Server } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
@@ -32,6 +32,31 @@ import {
   type TicketStatus,
 } from "@/models/itsm-types";
 import { useHydrated } from "@/hooks/use-hydrated";
+
+const PRIORITY_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
+
+const TABS = [
+  { value: "todos", label: "Todos" },
+  { value: "incidente", label: "Incidentes" },
+  { value: "requisicao", label: "Requisições" },
+  { value: "melhoria", label: "Melhorias" },
+  { value: "problema", label: "Problemas" },
+  { value: "tarefa", label: "Tarefas" },
+] as const;
+
+const TAB_ACCENT: Record<string, string> = {
+  todos: "bg-primary/15 text-primary border-primary/40",
+  incidente: "bg-destructive/15 text-destructive border-destructive/40",
+  requisicao: "bg-info/15 text-info border-info/40",
+  melhoria: "bg-success/15 text-success border-success/40",
+  problema: "bg-warning/15 text-warning border-warning/40",
+  tarefa: "bg-secondary text-foreground border-border",
+};
+
+function fmtDataHora(iso: string) {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+}
 
 export const Route = createFileRoute("/chamados")({
   head: () => ({
