@@ -393,6 +393,25 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     [patchProject],
   );
 
+  const saveBaseline = useCallback<Store["saveBaseline"]>(
+    (projectId, input) =>
+      patchProject(projectId, (p) => {
+        const anteriores = p.baselines ?? [];
+        const nova = {
+          id: `BL-${Date.now().toString(36).toUpperCase()}`,
+          versao: anteriores.length + 1,
+          criadaEm: new Date().toISOString(),
+          autor: input.autor || "Sistema",
+          justificativa: input.justificativa?.trim() || undefined,
+          inicio: p.inicio,
+          fim: p.fim,
+          tarefas: snapshotTasks(p),
+        };
+        return { ...p, baselines: [...anteriores, nova] };
+      }),
+    [patchProject],
+  );
+
   const addProjectUpdate = useCallback<Store["addProjectUpdate"]>(
     (projectId, u) =>
       patchProject(projectId, (p) => ({
