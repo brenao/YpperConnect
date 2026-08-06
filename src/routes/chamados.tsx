@@ -118,15 +118,15 @@ function Chamados() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const sistemasAtivos = useMemo(
-    () => [...new Set(tickets.map((t) => t.sistema?.trim()).filter(Boolean))].sort(),
+    () => [...new Set(tickets.map((t) => t.sistema?.trim()).filter(Boolean))].sort() as string[],
     [tickets],
   );
   const responsaveisAtivos = useMemo(
-    () => [...new Set(tickets.map((t) => t.responsavel).filter(Boolean))].sort(),
+    () => [...new Set(tickets.map((t) => t.responsavel).filter(Boolean))].sort() as string[],
     [tickets],
   );
   const categoriasAtivas = useMemo(
-    () => [...new Set(tickets.map((t) => t.categoria).filter(Boolean))].sort(),
+    () => [...new Set(tickets.map((t) => t.categoria).filter(Boolean))].sort() as string[],
     [tickets],
   );
 
