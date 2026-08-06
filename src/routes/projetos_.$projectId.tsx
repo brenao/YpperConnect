@@ -546,16 +546,52 @@ function ProjetoDetalhe() {
                 <tr className="border-b border-border/60">
                   <th className="w-10 py-2 text-left">#</th>
                   <th className="whitespace-nowrap px-2 py-2 text-left">Tarefa</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Responsáveis</th>
                   <th className="whitespace-nowrap px-2 py-2 text-left">Duração</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Período</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Início</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Fim</th>
                   <th className="whitespace-nowrap px-2 py-2 text-left">%</th>
                   <th className="px-2 py-2 text-right">Ações</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Responsável</th>
                 </tr>
               </thead>
               <tbody>
+                <tr className="border-b border-border/60 bg-surface/60">
+                  <td className="px-2 py-3 font-mono text-[11px] text-muted-foreground">0</td>
+                  <td className="px-2 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold">{project.nome}</span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {project.id}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px]">
+                        {PROJECT_STATUS_LABEL[project.status]}
+                      </Badge>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">
+                      GP {project.gerente} · {project.tarefas.length} tarefa(s) ·{" "}
+                      {baseline ? `baseline v${baseline.versao}` : "sem baseline"} · esperado{" "}
+                      {hydrated ? esperado : "—"}%
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
+                    {Math.round(
+                      (parseDate(project.fim) - parseDate(project.inicio)) / 86_400_000 + 1,
+                    )}{" "}
+                    d
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
+                    {fmtDateShort(project.inicio)}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
+                    {fmtDateShort(project.fim)}
+                  </td>
+                  <td className="px-2 py-3 font-semibold">{progresso}%</td>
+                  <td className="px-2 py-3" />
+                  <td className="px-2 py-3 text-muted-foreground">—</td>
+                </tr>
                 {project.tarefas.map((t, idx) => {
                   const s = cpm.get(t.id);
+                  const ehPai = project.tarefas.some((x) => x.paiId === t.id);
                   return (
                     <tr key={t.id} className="border-b border-border/40">
                       <td className="px-2 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
@@ -606,12 +642,12 @@ function ProjetoDetalhe() {
                             : ""}
                         </span>
                       </td>
-                      <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
-                        {(t.responsaveis ?? [t.responsavel]).join(", ")}
-                      </td>
                       <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{taskDurationLabel(t)}</td>
                       <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
-                        {fmtDate(t.inicio)} — {fmtDate(t.fim)}
+                        {fmtDateShort(t.inicio)}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
+                        {fmtDateShort(t.fim)}
                       </td>
                       <td className="px-2 py-2">
                         <input
@@ -648,6 +684,9 @@ function ProjetoDetalhe() {
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
+                      </td>
+                      <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
+                        {ehPai ? "—" : (t.responsaveis ?? [t.responsavel]).join(", ")}
                       </td>
                     </tr>
                   );
