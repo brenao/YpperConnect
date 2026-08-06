@@ -847,6 +847,8 @@ function ProjetoDetalhe() {
             ) : null}
           </div>
 
+          <BaselinePanel project={project} />
+
           <SidePanel
             titulo="Riscos"
             contagem={(project.riscos ?? []).length}
