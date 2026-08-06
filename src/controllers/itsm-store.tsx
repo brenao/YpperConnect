@@ -11,6 +11,7 @@ import {
   SEED_USERS,
 } from "@/models/itsm-seed";
 import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "@/services/notifications";
+import { snapshotTasks } from "@/services/project-utils";
 import type {
   AccessProfile,
   Article,
