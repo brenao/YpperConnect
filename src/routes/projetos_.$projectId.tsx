@@ -828,6 +828,12 @@ function ProjetoDetalhe() {
                   }
                 />
                 <Semaforo tone={health.risco} label={`Riscos (${(project.riscos ?? []).length})`} />
+                <Semaforo
+                  tone={health.baseline}
+                  label={
+                    baseline ? `Baseline v${baseline.versao}` : "Baseline não registrada"
+                  }
+                />
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">Calculando...</p>
