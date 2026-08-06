@@ -364,6 +364,94 @@ function SidePanel({
 }
 
 function ProjetoDetalhe() {
+  return <ProjetoDetalheInner />;
+}
+
+/** Log de baselines: seleção de versão e comparação com o cronograma atual. */
+function BaselinePanel({ project }: { project: Project }) {
+  const baselines = project.baselines ?? [];
+  const [versao, setVersao] = useState<string>("");
+  const selecionada =
+    baselines.find((b) => String(b.versao) === versao) ?? baselines[baselines.length - 1];
+
+  return (
+    <SidePanel
+      titulo="Baselines"
+      contagem={baselines.length}
+      acao={<BaselineDialog project={project} />}
+    >
+      {!baselines.length ? (
+        <p className="text-xs text-destructive">
+          Nenhuma baseline registrada — salve a primeira versão do cronograma para habilitar a
+          comparação entre planejado e realizado.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <Select value={String(selecionada?.versao ?? "")} onValueChange={setVersao}>
+            <SelectTrigger className="h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[...baselines].reverse().map((b) => (
+                <SelectItem key={b.id} value={String(b.versao)}>
+                  v{b.versao} · {new Date(b.criadaEm).toLocaleDateString("pt-BR")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selecionada ? (
+            <div className="rounded-lg border border-border/60 p-3 text-xs">
+              <p className="text-muted-foreground">
+                Registrada por {selecionada.autor} em{" "}
+                {new Date(selecionada.criadaEm).toLocaleString("pt-BR")}
+              </p>
+              <p className="mt-1">
+                Período: {fmtDateShort(selecionada.inicio)} — {fmtDateShort(selecionada.fim)} ·{" "}
+                {selecionada.tarefas.length} tarefa(s)
+              </p>
+              {selecionada.justificativa ? (
+                <p className="mt-1 text-muted-foreground">
+                  Justificativa: {selecionada.justificativa}
+                </p>
+              ) : (
+                <p className="mt-1 text-muted-foreground">Baseline original do cronograma.</p>
+              )}
+              <ul className="mt-2 space-y-1">
+                {selecionada.tarefas.slice(0, 8).map((t) => {
+                  const atual = project.tarefas.find((x) => x.id === t.id);
+                  const desvio = atual
+                    ? Math.round((parseDate(atual.fim) - parseDate(t.fim)) / 86_400_000)
+                    : null;
+                  return (
+                    <li key={t.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate text-muted-foreground">{t.nome}</span>
+                      <span
+                        className={cn(
+                          "shrink-0 tabular-nums",
+                          desvio && desvio > 0 ? "text-destructive" : "text-muted-foreground",
+                        )}
+                      >
+                        {fmtDateShort(t.fim)}
+                        {desvio === null ? " · removida" : desvio > 0 ? ` · +${desvio}d` : ""}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              {selecionada.tarefas.length > 8 ? (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  +{selecionada.tarefas.length - 8} tarefa(s) na baseline
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </SidePanel>
+  );
+}
+
+function ProjetoDetalheInner() {
   const { projectId } = Route.useParams();
   const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
   const hydrated = useHydrated();
