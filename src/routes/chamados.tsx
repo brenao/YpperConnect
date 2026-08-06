@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Search, Sparkles, Server } from "lucide-react";
+import { Search, Sparkles, Server, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/sheet";
 import { useItsm } from "@/controllers/itsm-store";
 import {
+  PRIORITY_LABEL,
   STATUS_LABEL,
   TYPE_LABEL,
   type RecordType,
@@ -59,6 +60,27 @@ function fmtDataHora(iso: string) {
   return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+function ticketSearchable(t: Ticket) {
+  return [
+    t.id,
+    t.titulo,
+    t.descricao,
+    t.solicitante,
+    t.servico,
+    t.sistema,
+    t.categoria,
+    t.responsavel,
+    t.equipe,
+    t.origem,
+    TYPE_LABEL[t.tipo],
+    PRIORITY_LABEL[t.prioridade],
+    STATUS_LABEL[t.status],
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 export const Route = createFileRoute("/chamados")({
   head: () => ({
     meta: [
@@ -79,14 +101,33 @@ export const Route = createFileRoute("/chamados")({
 });
 
 function Chamados() {
-  const { tickets, updateTicket, createTicket, role } = useItsm();
+  const { tickets, updateTicket, createTicket, role, users, systems } = useItsm();
   const hydrated = useHydrated();
   const isTi = hydrated ? role === "ti" : true;
   const [q, setQ] = useState("");
   const [encerramento, setEncerramento] = useState("");
   const [tipo, setTipo] = useState<string>("todos");
   const [status, setStatus] = useState<string>("todos");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [filtroSistema, setFiltroSistema] = useState<string>("todos");
+  const [filtroResponsavel, setFiltroResponsavel] = useState<string>("todos");
+  const [filtroCategoria, setFiltroCategoria] = useState<string>("todos");
+  const [filtroPrioridade, setFiltroPrioridade] = useState<string>("todos");
+  const [filtroOrigem, setFiltroOrigem] = useState<string>("todos");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const sistemasAtivos = useMemo(
+    () => [...new Set(tickets.map((t) => t.sistema?.trim()).filter(Boolean))].sort(),
+    [tickets],
+  );
+  const responsaveisAtivos = useMemo(
+    () => [...new Set(tickets.map((t) => t.responsavel).filter(Boolean))].sort(),
+    [tickets],
+  );
+  const categoriasAtivas = useMemo(
+    () => [...new Set(tickets.map((t) => t.categoria).filter(Boolean))].sort(),
+    [tickets],
+  );
 
   const filtered = useMemo(
     () =>
@@ -94,13 +135,43 @@ function Chamados() {
         (t) =>
           (tipo === "todos" || t.tipo === tipo) &&
           (status === "todos" || t.status === status) &&
-          (q.trim() === "" ||
-            `${t.id} ${t.titulo} ${t.solicitante} ${t.servico}`
-              .toLowerCase()
-              .includes(q.toLowerCase())),
+          (filtroSistema === "todos" || t.sistema?.trim() === filtroSistema) &&
+          (filtroResponsavel === "todos" || t.responsavel === filtroResponsavel) &&
+          (filtroCategoria === "todos" || t.categoria === filtroCategoria) &&
+          (filtroPrioridade === "todos" || t.prioridade === filtroPrioridade) &&
+          (filtroOrigem === "todos" || t.origem === filtroOrigem) &&
+          (q.trim() === "" || ticketSearchable(t).includes(q.toLowerCase())),
       ),
-    [tickets, tipo, status, q],
+    [
+      tickets,
+      tipo,
+      status,
+      filtroSistema,
+      filtroResponsavel,
+      filtroCategoria,
+      filtroPrioridade,
+      filtroOrigem,
+      q,
+    ],
   );
+
+  const activeFiltersCount = [
+    filtroSistema,
+    filtroResponsavel,
+    filtroCategoria,
+    filtroPrioridade,
+    filtroOrigem,
+  ].filter((v) => v !== "todos").length;
+
+  function clearFilters() {
+    setQ("");
+    setStatus("todos");
+    setFiltroSistema("todos");
+    setFiltroResponsavel("todos");
+    setFiltroCategoria("todos");
+    setFiltroPrioridade("todos");
+    setFiltroOrigem("todos");
+  }
 
   const contagemPorTipo = useMemo(() => {
     const base: Record<string, number> = { todos: tickets.length };
@@ -109,6 +180,7 @@ function Chamados() {
     });
     return base;
   }, [tickets]);
+
 
   /** Agrupa por sistema e ordena por criticidade e, em seguida, data de abertura. */
   const grupos = useMemo(() => {
