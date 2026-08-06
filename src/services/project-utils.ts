@@ -147,6 +147,45 @@ export function expectedProgress(project: Project, now = Date.now()): number {
   return Math.round(((now - ini) / (fim - ini)) * 100);
 }
 
+/** Baseline vigente (última versão registrada). */
+export function currentBaseline(project: Project): ProjectBaseline | undefined {
+  const list = project.baselines ?? [];
+  return list.length ? list[list.length - 1] : undefined;
+}
+
+export function hasBaseline(project: Project): boolean {
+  return Boolean(currentBaseline(project));
+}
+
+/** Converte o cronograma atual em tarefas de baseline. */
+export function snapshotTasks(project: Project): BaselineTask[] {
+  return project.tarefas.map((t) => ({
+    id: t.id,
+    nome: t.nome,
+    inicio: t.inicio,
+    fim: t.fim,
+    duracaoDias: taskDurationDays(t),
+  }));
+}
+
+/**
+ * Progresso esperado hoje segundo a baseline vigente (ponderado pela duração
+ * de cada tarefa da linha de base). Sem baseline, usa a linha do tempo do projeto.
+ */
+export function baselineExpectedProgress(project: Project, now = Date.now()): number {
+  const base = currentBaseline(project);
+  if (!base || !base.tarefas.length) return expectedProgress(project, now);
+  const total = base.tarefas.reduce((a, t) => a + Math.max(t.duracaoDias, 0.1), 0);
+  if (!total) return expectedProgress(project, now);
+  const feito = base.tarefas.reduce((a, t) => {
+    const ini = parseDate(t.inicio);
+    const fim = parseDate(t.fim) + DAY;
+    const frac = now <= ini ? 0 : now >= fim ? 1 : (now - ini) / (fim - ini);
+    return a + Math.max(t.duracaoDias, 0.1) * frac;
+  }, 0);
+  return Math.round((feito / total) * 100);
+}
+
 export type Health = "verde" | "amarelo" | "vermelho";
 
 export interface ProjectHealth {
@@ -155,6 +194,7 @@ export interface ProjectHealth {
   atualizacao: Health;
   diasSemAtualizacao: number | null;
   risco: Health;
+  baseline: Health;
   geral: Health;
   alertas: string[];
 }
@@ -169,7 +209,7 @@ export function projectHealth(project: Project, now = Date.now()): ProjectHealth
 
   // Prazo: desvio entre progresso real e esperado.
   const real = projectProgress(project);
-  const esperado = expectedProgress(project, now);
+  const esperado = baselineExpectedProgress(project, now);
   const atrasoPct = Math.max(esperado - real, 0);
   let prazo: Health = "verde";
   if (project.status === "concluido") {
@@ -204,15 +244,21 @@ export function projectHealth(project: Project, now = Date.now()): ProjectHealth
   const risco: Health = riscos.length === 0 ? "amarelo" : "verde";
   if (!riscos.length) alertas.push("Nenhum risco cadastrado");
 
+  // Linha de base do cronograma é obrigatória.
+  const baseline: Health = hasBaseline(project) ? "verde" : "vermelho";
+  if (baseline === "vermelho") {
+    alertas.push("Baseline do cronograma não registrada");
+  }
+
   const atencoesAbertas = (project.atencoes ?? []).filter((a) => a.status === "aberto");
   if (atencoesAbertas.length) {
     alertas.push(`${atencoesAbertas.length} ponto(s) de atenção aguardando decisão`);
   }
 
-  let geral = pior(pior(prazo, atualizacao), risco);
+  let geral = pior(pior(pior(prazo, atualizacao), risco), baseline);
   if (project.status === "paralisado" || project.status === "cancelado") geral = "vermelho";
 
-  return { prazo, atrasoPct, atualizacao, diasSemAtualizacao, risco, geral, alertas };
+  return { prazo, atrasoPct, atualizacao, diasSemAtualizacao, risco, baseline, geral, alertas };
 }
 
 export function isLate(project: Project, now = Date.now()): boolean {

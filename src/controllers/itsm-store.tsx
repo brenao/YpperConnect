@@ -109,6 +109,7 @@ interface Store extends State {
   addTask: (projectId: string, t: Omit<ProjectTask, "id">, afterTaskId?: string) => void;
   updateTask: (projectId: string, taskId: string, patch: Partial<ProjectTask>) => void;
   removeTask: (projectId: string, taskId: string) => void;
+  saveBaseline: (projectId: string, input: { autor: string; justificativa?: string }) => void;
   addProjectUpdate: (projectId: string, u: Omit<ProjectUpdate, "id">) => void;
   addRisk: (projectId: string, r: Omit<ProjectRisk, "id">) => void;
   addAttention: (projectId: string, a: Omit<ProjectAttention, "id" | "criadoEm" | "status">) => void;
