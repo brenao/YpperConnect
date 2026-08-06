@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import {
   AttentionDialog,
+  BaselineDialog,
   RiskDialog,
   TaskDialog,
   WeeklyUpdateDialog,
@@ -30,10 +31,14 @@ import {
   HEALTH_CLASS,
   HEALTH_DOT,
   HEALTH_LABEL,
+  baselineExpectedProgress,
   criticalPath,
+  currentBaseline,
   expectedProgress,
   fmtDate,
   fmtDateFull,
+  fmtDateShort,
+  hasBaseline,
   parseDate,
   projectHealth,
   projectProgress,
@@ -117,6 +122,7 @@ function Gantt({ project }: { project: Project }) {
       ) : null}
       {project.tarefas.map((t, idx) => {
         const sched = cpm.get(t.id);
+        const ehPai = project.tarefas.some((x) => x.paiId === t.id);
         const ini = sched?.es ?? parseDate(t.inicio);
         const fim = sched?.ef ?? parseDate(t.fim);
         const left = ((ini - start) / span) * 100;
@@ -150,8 +156,9 @@ function Gantt({ project }: { project: Project }) {
                 <span className="truncate">{t.nome}</span>
               </div>
               <span className="text-[11px] text-muted-foreground">
-                {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
-                {taskAllocation(t)}% alocado
+                {ehPai
+                  ? `${taskDurationLabel(t)} · resumo`
+                  : `${(t.responsaveis ?? [t.responsavel]).join(", ")} · ${taskDurationLabel(t)} · ${taskAllocation(t)}% alocado`}
                 {(t.predecessoras ?? []).length
                   ? ` · após ${(t.predecessoras ?? [])
                       .map((p) => project.tarefas.findIndex((x) => x.id === p) + 1)
@@ -359,6 +366,94 @@ function SidePanel({
 }
 
 function ProjetoDetalhe() {
+  return <ProjetoDetalheInner />;
+}
+
+/** Log de baselines: seleção de versão e comparação com o cronograma atual. */
+function BaselinePanel({ project }: { project: Project }) {
+  const baselines = project.baselines ?? [];
+  const [versao, setVersao] = useState<string>("");
+  const selecionada =
+    baselines.find((b) => String(b.versao) === versao) ?? baselines[baselines.length - 1];
+
+  return (
+    <SidePanel
+      titulo="Baselines"
+      contagem={baselines.length}
+      acao={<BaselineDialog project={project} />}
+    >
+      {!baselines.length ? (
+        <p className="text-xs text-destructive">
+          Nenhuma baseline registrada — salve a primeira versão do cronograma para habilitar a
+          comparação entre planejado e realizado.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <Select value={String(selecionada?.versao ?? "")} onValueChange={setVersao}>
+            <SelectTrigger className="h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[...baselines].reverse().map((b) => (
+                <SelectItem key={b.id} value={String(b.versao)}>
+                  v{b.versao} · {new Date(b.criadaEm).toLocaleDateString("pt-BR")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selecionada ? (
+            <div className="rounded-lg border border-border/60 p-3 text-xs">
+              <p className="text-muted-foreground">
+                Registrada por {selecionada.autor} em{" "}
+                {new Date(selecionada.criadaEm).toLocaleString("pt-BR")}
+              </p>
+              <p className="mt-1">
+                Período: {fmtDateShort(selecionada.inicio)} — {fmtDateShort(selecionada.fim)} ·{" "}
+                {selecionada.tarefas.length} tarefa(s)
+              </p>
+              {selecionada.justificativa ? (
+                <p className="mt-1 text-muted-foreground">
+                  Justificativa: {selecionada.justificativa}
+                </p>
+              ) : (
+                <p className="mt-1 text-muted-foreground">Baseline original do cronograma.</p>
+              )}
+              <ul className="mt-2 space-y-1">
+                {selecionada.tarefas.slice(0, 8).map((t) => {
+                  const atual = project.tarefas.find((x) => x.id === t.id);
+                  const desvio = atual
+                    ? Math.round((parseDate(atual.fim) - parseDate(t.fim)) / 86_400_000)
+                    : null;
+                  return (
+                    <li key={t.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate text-muted-foreground">{t.nome}</span>
+                      <span
+                        className={cn(
+                          "shrink-0 tabular-nums",
+                          desvio && desvio > 0 ? "text-destructive" : "text-muted-foreground",
+                        )}
+                      >
+                        {fmtDateShort(t.fim)}
+                        {desvio === null ? " · removida" : desvio > 0 ? ` · +${desvio}d` : ""}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              {selecionada.tarefas.length > 8 ? (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  +{selecionada.tarefas.length - 8} tarefa(s) na baseline
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </SidePanel>
+  );
+}
+
+function ProjetoDetalheInner() {
   const { projectId } = Route.useParams();
   const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } = useItsm();
   const hydrated = useHydrated();
@@ -376,7 +471,9 @@ function ProjetoDetalhe() {
 
   const health = hydrated ? projectHealth(project) : null;
   const progresso = projectProgress(project);
-  const esperado = hydrated ? expectedProgress(project) : 0;
+  const esperado = hydrated ? baselineExpectedProgress(project) : 0;
+  const baseline = currentBaseline(project);
+  const semBaseline = !hasBaseline(project);
   const cpm = criticalPath(project);
   const criticas = project.tarefas.filter((t) => cpm.get(t.id)?.critica);
   const cpmReal = criticalPath(project, durationWithResources(resources, projects));
@@ -422,9 +519,29 @@ function ProjetoDetalhe() {
               </Select>
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-4">
-              <Metric label="Período" value={`${fmtDate(project.inicio)} — ${fmtDate(project.fim)}`} />
-              <Metric label="Tarefas" value={`${project.tarefas.length}`} hint={`${criticas.length} crítica(s)`} />
-              <Metric label="Progresso" value={`${progresso}%`} hint={`esperado ${esperado}%`} />
+              <Metric
+                label="Início — Fim"
+                value={`${fmtDateShort(project.inicio)} — ${fmtDateShort(project.fim)}`}
+                hint={`${project.tarefas.length} tarefa(s) · ${criticas.length} crítica(s)`}
+              />
+              <Metric
+                label="Progresso esperado"
+                value={hydrated ? `${esperado}%` : "—"}
+                hint={baseline ? `baseline v${baseline.versao}` : "sem baseline registrada"}
+                alerta={semBaseline}
+              />
+              <Metric
+                label="Progresso real"
+                value={`${progresso}%`}
+                hint={
+                  hydrated
+                    ? progresso >= esperado
+                      ? `${progresso - esperado} p.p. acima do esperado`
+                      : `${esperado - progresso} p.p. abaixo do esperado`
+                    : undefined
+                }
+                alerta={hydrated && progresso < esperado}
+              />
               <Metric
                 label="Previsão real"
                 value={hydrated ? fmtDate(toISODate(previsaoFim)) : "—"}
@@ -439,6 +556,19 @@ function ProjetoDetalhe() {
               />
             </div>
             <Progress value={progresso} className="mt-4 h-2" />
+            <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Real {progresso}%</span>
+              <span>Esperado {hydrated ? esperado : "—"}%</span>
+            </div>
+            {semBaseline ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
+                <p className="text-xs text-destructive">
+                  Baseline não registrada — o cronograma ainda não tem linha de base para comparar o
+                  planejado com o realizado.
+                </p>
+                <BaselineDialog project={project} />
+              </div>
+            ) : null}
           </div>
 
       <Tabs defaultValue="tarefas">
@@ -506,16 +636,52 @@ function ProjetoDetalhe() {
                 <tr className="border-b border-border/60">
                   <th className="w-10 py-2 text-left">#</th>
                   <th className="whitespace-nowrap px-2 py-2 text-left">Tarefa</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Responsáveis</th>
                   <th className="whitespace-nowrap px-2 py-2 text-left">Duração</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left">Período</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Início</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Fim</th>
                   <th className="whitespace-nowrap px-2 py-2 text-left">%</th>
                   <th className="px-2 py-2 text-right">Ações</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left">Responsável</th>
                 </tr>
               </thead>
               <tbody>
+                <tr className="border-b border-border/60 bg-surface/60">
+                  <td className="px-2 py-3 font-mono text-[11px] text-muted-foreground">0</td>
+                  <td className="px-2 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold">{project.nome}</span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {project.id}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px]">
+                        {PROJECT_STATUS_LABEL[project.status]}
+                      </Badge>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">
+                      GP {project.gerente} · {project.tarefas.length} tarefa(s) ·{" "}
+                      {baseline ? `baseline v${baseline.versao}` : "sem baseline"} · esperado{" "}
+                      {hydrated ? esperado : "—"}%
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
+                    {Math.round(
+                      (parseDate(project.fim) - parseDate(project.inicio)) / 86_400_000 + 1,
+                    )}{" "}
+                    d
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
+                    {fmtDateShort(project.inicio)}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
+                    {fmtDateShort(project.fim)}
+                  </td>
+                  <td className="px-2 py-3 font-semibold">{progresso}%</td>
+                  <td className="px-2 py-3" />
+                  <td className="px-2 py-3 text-muted-foreground">—</td>
+                </tr>
                 {project.tarefas.map((t, idx) => {
                   const s = cpm.get(t.id);
+                  const ehPai = project.tarefas.some((x) => x.paiId === t.id);
                   return (
                     <tr key={t.id} className="border-b border-border/40">
                       <td className="px-2 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
@@ -566,12 +732,12 @@ function ProjetoDetalhe() {
                             : ""}
                         </span>
                       </td>
-                      <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
-                        {(t.responsaveis ?? [t.responsavel]).join(", ")}
-                      </td>
                       <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{taskDurationLabel(t)}</td>
                       <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
-                        {fmtDate(t.inicio)} — {fmtDate(t.fim)}
+                        {fmtDateShort(t.inicio)}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
+                        {fmtDateShort(t.fim)}
                       </td>
                       <td className="px-2 py-2">
                         <input
@@ -608,6 +774,9 @@ function ProjetoDetalhe() {
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
+                      </td>
+                      <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
+                        {ehPai ? "—" : (t.responsaveis ?? [t.responsavel]).join(", ")}
                       </td>
                     </tr>
                   );
@@ -749,6 +918,12 @@ function ProjetoDetalhe() {
                   }
                 />
                 <Semaforo tone={health.risco} label={`Riscos (${(project.riscos ?? []).length})`} />
+                <Semaforo
+                  tone={health.baseline}
+                  label={
+                    baseline ? `Baseline v${baseline.versao}` : "Baseline não registrada"
+                  }
+                />
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">Calculando...</p>
@@ -761,6 +936,8 @@ function ProjetoDetalhe() {
               </ul>
             ) : null}
           </div>
+
+          <BaselinePanel project={project} />
 
           <SidePanel
             titulo="Riscos"

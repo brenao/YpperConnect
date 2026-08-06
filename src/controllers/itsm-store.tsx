@@ -11,6 +11,7 @@ import {
   SEED_USERS,
 } from "@/models/itsm-seed";
 import { buildCreatedEmail, buildProjectReminders, buildStatusEmail } from "@/services/notifications";
+import { snapshotTasks } from "@/services/project-utils";
 import type {
   AccessProfile,
   Article,
@@ -109,6 +110,7 @@ interface Store extends State {
   addTask: (projectId: string, t: Omit<ProjectTask, "id">, afterTaskId?: string) => void;
   updateTask: (projectId: string, taskId: string, patch: Partial<ProjectTask>) => void;
   removeTask: (projectId: string, taskId: string) => void;
+  saveBaseline: (projectId: string, input: { autor: string; justificativa?: string }) => void;
   addProjectUpdate: (projectId: string, u: Omit<ProjectUpdate, "id">) => void;
   addRisk: (projectId: string, r: Omit<ProjectRisk, "id">) => void;
   addAttention: (projectId: string, a: Omit<ProjectAttention, "id" | "criadoEm" | "status">) => void;
@@ -392,6 +394,25 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
     [patchProject],
   );
 
+  const saveBaseline = useCallback<Store["saveBaseline"]>(
+    (projectId, input) =>
+      patchProject(projectId, (p) => {
+        const anteriores = p.baselines ?? [];
+        const nova = {
+          id: `BL-${Date.now().toString(36).toUpperCase()}`,
+          versao: anteriores.length + 1,
+          criadaEm: new Date().toISOString(),
+          autor: input.autor || "Sistema",
+          justificativa: input.justificativa?.trim() || undefined,
+          inicio: p.inicio,
+          fim: p.fim,
+          tarefas: snapshotTasks(p),
+        };
+        return { ...p, baselines: [...anteriores, nova] };
+      }),
+    [patchProject],
+  );
+
   const addProjectUpdate = useCallback<Store["addProjectUpdate"]>(
     (projectId, u) =>
       patchProject(projectId, (p) => ({
@@ -537,6 +558,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       addTask,
       updateTask,
       addService,
+      saveBaseline,
       removeTask,
       addProjectUpdate,
       addRisk,
@@ -574,6 +596,7 @@ export function ItsmProvider({ children }: { children: ReactNode }) {
       updateProject,
       addTask,
       updateTask,
+      saveBaseline,
       removeTask,
       addProjectUpdate,
       addRisk,
