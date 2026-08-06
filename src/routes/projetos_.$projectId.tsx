@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import {
   AttentionDialog,
+  BaselineDialog,
   RiskDialog,
   TaskDialog,
   WeeklyUpdateDialog,
@@ -30,10 +31,14 @@ import {
   HEALTH_CLASS,
   HEALTH_DOT,
   HEALTH_LABEL,
+  baselineExpectedProgress,
   criticalPath,
+  currentBaseline,
   expectedProgress,
   fmtDate,
   fmtDateFull,
+  fmtDateShort,
+  hasBaseline,
   parseDate,
   projectHealth,
   projectProgress,
