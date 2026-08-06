@@ -101,6 +101,35 @@ function Chamados() {
     [tickets, tipo, status, q],
   );
 
+  const contagemPorTipo = useMemo(() => {
+    const base: Record<string, number> = { todos: tickets.length };
+    tickets.forEach((t) => {
+      base[t.tipo] = (base[t.tipo] ?? 0) + 1;
+    });
+    return base;
+  }, [tickets]);
+
+  /** Agrupa por sistema e ordena por criticidade e, em seguida, data de abertura. */
+  const grupos = useMemo(() => {
+    const mapa = new Map<string, Ticket[]>();
+    filtered.forEach((t) => {
+      const chave = t.sistema?.trim() || t.servico || "Sem sistema";
+      mapa.set(chave, [...(mapa.get(chave) ?? []), t]);
+    });
+    const ordenar = (a: Ticket, b: Ticket) =>
+      (PRIORITY_ORDER[a.prioridade] ?? 9) - (PRIORITY_ORDER[b.prioridade] ?? 9) ||
+      new Date(a.criadoEm).getTime() - new Date(b.criadoEm).getTime();
+
+    return [...mapa.entries()]
+      .map(([sistema, lista]) => ({ sistema, lista: [...lista].sort(ordenar) }))
+      .sort(
+        (a, b) =>
+          (PRIORITY_ORDER[a.lista[0]!.prioridade] ?? 9) -
+            (PRIORITY_ORDER[b.lista[0]!.prioridade] ?? 9) ||
+          a.sistema.localeCompare(b.sistema),
+      );
+  }, [filtered]);
+
   const atual: Ticket | null = tickets.find((t) => t.id === selectedId) ?? null;
 
   // Recorrência: 3+ incidentes no mesmo sistema/serviço sugerem abertura de Problema.
