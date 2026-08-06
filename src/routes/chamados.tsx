@@ -28,6 +28,7 @@ import {
   PRIORITY_LABEL,
   STATUS_LABEL,
   TYPE_LABEL,
+  type Priority,
   type RecordType,
   type Ticket,
   type TicketStatus,
