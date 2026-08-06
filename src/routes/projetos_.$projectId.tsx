@@ -122,6 +122,7 @@ function Gantt({ project }: { project: Project }) {
       ) : null}
       {project.tarefas.map((t, idx) => {
         const sched = cpm.get(t.id);
+        const ehPai = project.tarefas.some((x) => x.paiId === t.id);
         const ini = sched?.es ?? parseDate(t.inicio);
         const fim = sched?.ef ?? parseDate(t.fim);
         const left = ((ini - start) / span) * 100;
@@ -155,8 +156,9 @@ function Gantt({ project }: { project: Project }) {
                 <span className="truncate">{t.nome}</span>
               </div>
               <span className="text-[11px] text-muted-foreground">
-                {(t.responsaveis ?? [t.responsavel]).join(", ")} · {taskDurationLabel(t)} ·{" "}
-                {taskAllocation(t)}% alocado
+                {ehPai
+                  ? `${taskDurationLabel(t)} · resumo`
+                  : `${(t.responsaveis ?? [t.responsavel]).join(", ")} · ${taskDurationLabel(t)} · ${taskAllocation(t)}% alocado`}
                 {(t.predecessoras ?? []).length
                   ? ` · após ${(t.predecessoras ?? [])
                       .map((p) => project.tarefas.findIndex((x) => x.id === p) + 1)
