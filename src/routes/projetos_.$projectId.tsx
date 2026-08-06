@@ -381,7 +381,9 @@ function ProjetoDetalhe() {
 
   const health = hydrated ? projectHealth(project) : null;
   const progresso = projectProgress(project);
-  const esperado = hydrated ? expectedProgress(project) : 0;
+  const esperado = hydrated ? baselineExpectedProgress(project) : 0;
+  const baseline = currentBaseline(project);
+  const semBaseline = !hasBaseline(project);
   const cpm = criticalPath(project);
   const criticas = project.tarefas.filter((t) => cpm.get(t.id)?.critica);
   const cpmReal = criticalPath(project, durationWithResources(resources, projects));
@@ -427,9 +429,29 @@ function ProjetoDetalhe() {
               </Select>
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-4">
-              <Metric label="Período" value={`${fmtDate(project.inicio)} — ${fmtDate(project.fim)}`} />
-              <Metric label="Tarefas" value={`${project.tarefas.length}`} hint={`${criticas.length} crítica(s)`} />
-              <Metric label="Progresso" value={`${progresso}%`} hint={`esperado ${esperado}%`} />
+              <Metric
+                label="Início — Fim"
+                value={`${fmtDateShort(project.inicio)} — ${fmtDateShort(project.fim)}`}
+                hint={`${project.tarefas.length} tarefa(s) · ${criticas.length} crítica(s)`}
+              />
+              <Metric
+                label="Progresso esperado"
+                value={hydrated ? `${esperado}%` : "—"}
+                hint={baseline ? `baseline v${baseline.versao}` : "sem baseline registrada"}
+                alerta={semBaseline}
+              />
+              <Metric
+                label="Progresso real"
+                value={`${progresso}%`}
+                hint={
+                  hydrated
+                    ? progresso >= esperado
+                      ? `${progresso - esperado} p.p. acima do esperado`
+                      : `${esperado - progresso} p.p. abaixo do esperado`
+                    : undefined
+                }
+                alerta={hydrated && progresso < esperado}
+              />
               <Metric
                 label="Previsão real"
                 value={hydrated ? fmtDate(toISODate(previsaoFim)) : "—"}
@@ -444,6 +466,19 @@ function ProjetoDetalhe() {
               />
             </div>
             <Progress value={progresso} className="mt-4 h-2" />
+            <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Real {progresso}%</span>
+              <span>Esperado {hydrated ? esperado : "—"}%</span>
+            </div>
+            {semBaseline ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
+                <p className="text-xs text-destructive">
+                  Baseline não registrada — o cronograma ainda não tem linha de base para comparar o
+                  planejado com o realizado.
+                </p>
+                <BaselineDialog project={project} />
+              </div>
+            ) : null}
           </div>
 
       <Tabs defaultValue="tarefas">
