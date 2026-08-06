@@ -298,31 +298,187 @@ function Chamados() {
             })}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative min-w-56 flex-1">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={q}
-                maxLength={80}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Buscar por ID, título, solicitante ou serviço"
-                className="pl-9"
-              />
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative min-w-56 flex-1">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={q}
+                  maxLength={120}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Buscar por ID, descrição, sistema, responsável, categoria..."
+                  className="pl-9"
+                />
+              </div>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os status</SelectItem>
+                  {(Object.keys(STATUS_LABEL) as TicketStatus[]).map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {STATUS_LABEL[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant={advancedOpen ? "secondary" : "outline"}
+                size="icon"
+                onClick={() => setAdvancedOpen((v) => !v)}
+                className="shrink-0"
+                aria-label="Filtros avançados"
+              >
+                <Filter className="size-4" />
+              </Button>
+              {(q || activeFiltersCount > 0 || status !== "todos") ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearFilters}
+                  className="shrink-0 gap-1 text-muted-foreground"
+                >
+                  <X className="size-3.5" /> Limpar
+                </Button>
+              ) : null}
             </div>
-            <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os status</SelectItem>
-              {(Object.keys(STATUS_LABEL) as TicketStatus[]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-            </Select>
+
+            {advancedOpen ? (
+              <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Sistema</label>
+                  <Select value={filtroSistema} onValueChange={setFiltroSistema}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos os sistemas</SelectItem>
+                      {sistemasAtivos.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Responsável</label>
+                  <Select value={filtroResponsavel} onValueChange={setFiltroResponsavel}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos os responsáveis</SelectItem>
+                      {responsaveisAtivos.map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {r}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Categoria</label>
+                  <Select value={filtroCategoria} onValueChange={setFiltroCategoria}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todas as categorias</SelectItem>
+                      {categoriasAtivas.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Prioridade</label>
+                  <Select value={filtroPrioridade} onValueChange={setFiltroPrioridade}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todas as prioridades</SelectItem>
+                      {(["P1", "P2", "P3", "P4"] as const).map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {PRIORITY_LABEL[p]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
+                  <label className="text-xs font-medium text-muted-foreground">Origem</label>
+                  <div className="flex flex-wrap gap-2">
+                    {(["todos", "portal", "ia", "email", "telefone"] as const).map((o) => (
+                      <button
+                        key={o}
+                        onClick={() => setFiltroOrigem(o)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs transition-all",
+                          filtroOrigem === o
+                            ? "border-primary bg-primary/15 text-primary"
+                            : "border-border bg-secondary text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {o === "todos" ? "Qualquer origem" : o === "ia" ? "Assistente IA" : o.charAt(0).toUpperCase() + o.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeFiltersCount > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Filtros ativos:</span>
+                {filtroSistema !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Sistema: {filtroSistema}
+                    <button onClick={() => setFiltroSistema("todos")} aria-label="Remover filtro de sistema">
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroResponsavel !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Responsável: {filtroResponsavel}
+                    <button onClick={() => setFiltroResponsavel("todos")} aria-label="Remover filtro de responsável">
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroCategoria !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Categoria: {filtroCategoria}
+                    <button onClick={() => setFiltroCategoria("todos")} aria-label="Remover filtro de categoria">
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroPrioridade !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Prioridade: {PRIORITY_LABEL[filtroPrioridade as Priority]}
+                    <button onClick={() => setFiltroPrioridade("todos")} aria-label="Remover filtro de prioridade">
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+                {filtroOrigem !== "todos" && (
+                  <Badge variant="secondary" className="gap-1">
+                    Origem: {filtroOrigem === "ia" ? "Assistente IA" : filtroOrigem.charAt(0).toUpperCase() + filtroOrigem.slice(1)}
+                    <button onClick={() => setFiltroOrigem("todos")} aria-label="Remover filtro de origem">
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                )}
+              </div>
+            ) : null}
           </div>
+
         </div>
 
         <div className="panel overflow-hidden">
