@@ -158,8 +158,8 @@ export function TaskDialog({
   const [nome, setNome] = useState(task?.nome ?? "");
   const [atividade, setAtividade] = useState(task?.atividade ?? "Execução");
   const [inicio, setInicio] = useState(task?.inicio ?? project.inicio);
-  const [duracao, setDuracao] = useState(String(task?.duracao ?? 5));
-  const [unidade, setUnidade] = useState<"dias" | "horas">(task?.duracaoUnidade ?? "dias");
+  const [duracao, setDuracao] = useState(String(task?.duracao ?? 8));
+  const [unidade, setUnidade] = useState<"dias" | "horas">(task?.duracaoUnidade ?? "horas");
   const [progresso, setProgresso] = useState(String(task?.progresso ?? 0));
   const [responsaveis, setResponsaveis] = useState((task?.responsaveis ?? [task?.responsavel ?? ""]).join(", "));
   const [paiId, setPaiId] = useState(task?.paiId ?? afterTask?.paiId ?? "");
@@ -291,7 +291,7 @@ export function TaskDialog({
               <Input id="t-ini" type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="t-dur">Duração</Label>
+              <Label htmlFor="t-dur">Duração (horas por padrão)</Label>
               <Input
                 id="t-dur"
                 type="number"
@@ -307,8 +307,8 @@ export function TaskDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="dias">Dias</SelectItem>
                   <SelectItem value="horas">Horas</SelectItem>
+                  <SelectItem value="dias">Dias</SelectItem>
                 </SelectContent>
               </Select>
             </div>
