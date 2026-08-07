@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { KeyRound, Lock, Plus, Search, ShieldCheck, Trash2, Users } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { KeyRound, Loader2, Lock, Plus, Save, Search, ShieldCheck, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -17,8 +18,21 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { useItsm } from "@/controllers/itsm-store";
-import { APP_FEATURES, APP_MODULES, type AccessProfile } from "@/models/itsm-types";
+import { APP_FEATURES, APP_MODULES } from "@/models/itsm-types";
+import {
+  listarPerfisFn,
+  listarUsuariosFn,
+  criarPerfilFn,
+  atualizarPerfilFn,
+  desativarPerfilFn,
+  salvarPermissoesFn,
+  atualizarUsuarioFn,
+  usuarioAtualFn,
+  type PerfilInput,
+  type PerfilUpdateInput,
+  type PermissoesInput,
+  type UsuarioUpdateInput,
+} from "@/services/cadastros.functions";
 
 export const Route = createFileRoute("/permissoes")({
   head: () => ({
@@ -43,43 +57,160 @@ export const Route = createFileRoute("/permissoes")({
 
 const GRUPOS = ["Operação", "Projetos", "Gestão", "Administração"] as const;
 
+/** Sentinela: Radix não aceita SelectItem com value vazio. */
+const SEM_PERFIL = "__nenhum__";
+
 function Permissoes() {
-  const { profiles, users, addProfile, updateProfile, removeProfile, assignProfile } = useItsm();
-  const [selectedId, setSelectedId] = useState(profiles[0]?.id ?? "");
+  const qc = useQueryClient();
+  const [selectedId, setSelectedId] = useState<string>("");
   const [busca, setBusca] = useState("");
 
-  const selected = profiles.find((p) => p.id === selectedId) ?? profiles[0];
+  // Rascunho local: as permissões só vão ao banco quando o admin salva.
+  // Gravar a cada clique geraria dezenas de transações e deixaria o
+  // perfil num estado intermediário se a rede caísse no meio.
+  const [modulos, setModulos] = useState<string[]>([]);
+  const [funcionalidades, setFuncionalidades] = useState<string[]>([]);
+  const [nome, setNome] = useState("");
+  const [descricao, setDescricao] = useState("");
+
+  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
+  const perfisQuery = useQuery({ queryKey: ["perfis"], queryFn: () => listarPerfisFn() });
+  const usuariosQuery = useQuery({ queryKey: ["usuarios"], queryFn: () => listarUsuariosFn() });
+
+  const isAdmin = usuario.data?.admin ?? false;
+  const perfis = useMemo(() => perfisQuery.data ?? [], [perfisQuery.data]);
+  const usuarios = useMemo(() => usuariosQuery.data ?? [], [usuariosQuery.data]);
+
+  const selected = perfis.find((p) => p.id === selectedId) ?? perfis[0];
+
+  // Sincroniza o rascunho quando muda o perfil selecionado ou os dados
+  // chegam do servidor.
+  useEffect(() => {
+    if (!selected) return;
+    setSelectedId(selected.id);
+    setModulos(selected.modulos);
+    setFuncionalidades(selected.funcionalidades);
+    setNome(selected.nome);
+    setDescricao(selected.descricao ?? "");
+  }, [selected?.id, perfisQuery.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sujo =
+    !!selected &&
+    (nome !== selected.nome ||
+      descricao !== (selected.descricao ?? "") ||
+      modulos.slice().sort().join() !== selected.modulos.slice().sort().join() ||
+      funcionalidades.slice().sort().join() !== selected.funcionalidades.slice().sort().join());
+
+  function invalidar() {
+    qc.invalidateQueries({ queryKey: ["perfis"] });
+    qc.invalidateQueries({ queryKey: ["usuarios"] });
+  }
+
+  const erro = (e: Error) => toast.error("Não foi possível salvar", { description: e.message });
+
+  const criarPerfil = useMutation({
+    mutationFn: (v: PerfilInput) => criarPerfilFn({ data: v }),
+    onSuccess: (r) => {
+      invalidar();
+      setSelectedId(r.id);
+      toast.success("Perfil criado. Ajuste os menus e salve.");
+    },
+    onError: erro,
+  });
+
+  const salvarIdentificacao = useMutation({
+    mutationFn: (v: PerfilUpdateInput) => atualizarPerfilFn({ data: v }),
+    onError: erro,
+  });
+
+  const salvarPerms = useMutation({
+    mutationFn: (v: PermissoesInput) => salvarPermissoesFn({ data: v }),
+    onError: erro,
+  });
+
+  const desativar = useMutation({
+    mutationFn: (id: string) => desativarPerfilFn({ data: { id } }),
+    onSuccess: () => {
+      invalidar();
+      setSelectedId(perfis[0]?.id ?? "");
+      toast.success("Perfil desativado");
+    },
+    onError: erro,
+  });
+
+  const atribuirPerfil = useMutation({
+    mutationFn: (v: UsuarioUpdateInput) => atualizarUsuarioFn({ data: v }),
+    onSuccess: () => {
+      invalidar();
+      toast.success("Perfil atribuído");
+    },
+    onError: erro,
+  });
+
+  const alternarAtivo = useMutation({
+    mutationFn: (v: PerfilUpdateInput) => atualizarPerfilFn({ data: v }),
+    onSuccess: () => {
+      invalidar();
+      toast.success("Situação do perfil atualizada");
+    },
+    onError: erro,
+  });
+
+  const salvando = salvarIdentificacao.isPending || salvarPerms.isPending;
+
+  async function salvarTudo() {
+    if (!selected) return;
+    if (nome.trim().length < 3) {
+      toast.error("Informe o nome do perfil.");
+      return;
+    }
+    try {
+      await salvarIdentificacao.mutateAsync({
+        id: selected.id,
+        nome: nome.trim(),
+        descricao: descricao.trim() || null,
+      });
+      await salvarPerms.mutateAsync({
+        perfilId: selected.id,
+        modulos,
+        funcionalidades,
+      });
+      invalidar();
+      toast.success("Perfil salvo", {
+        description: "As mudanças valem no próximo carregamento de quem usa este perfil.",
+      });
+    } catch {
+      /* onError já notificou */
+    }
+  }
+
+  function toggle(lista: string[], key: string) {
+    return lista.includes(key) ? lista.filter((k) => k !== key) : [...lista, key];
+  }
 
   const usuariosFiltrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return users.filter(
+    return usuarios.filter(
       (u) => !q || u.nome.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
     );
-  }, [users, busca]);
+  }, [usuarios, busca]);
 
   const contagem = useMemo(() => {
     const map = new Map<string, number>();
-    for (const u of users) if (u.perfilId) map.set(u.perfilId, (map.get(u.perfilId) ?? 0) + 1);
+    for (const u of usuarios) {
+      if (u.perfilId) map.set(u.perfilId, (map.get(u.perfilId) ?? 0) + 1);
+    }
     return map;
-  }, [users]);
+  }, [usuarios]);
 
-  function novoPerfil() {
-    addProfile({
-      nome: "Novo perfil",
-      descricao: "Descreva o objetivo deste perfil.",
-      modulos: ["/"],
-      funcionalidades: [],
-      ativo: true,
-    });
-    toast.success("Perfil criado. Ajuste os menus e funcionalidades.");
-  }
-
-  function toggle(list: string[], key: string) {
-    return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
-  }
-
-  function patch(p: AccessProfile, changes: Partial<AccessProfile>) {
-    updateProfile(p.id, changes);
+  if (perfisQuery.isPending) {
+    return (
+      <AppShell title="Perfis de acesso" subtitle="Carregando...">
+        <p className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> Carregando perfis...
+        </p>
+      </AppShell>
+    );
   }
 
   return (
@@ -87,19 +218,35 @@ function Permissoes() {
       title="Perfis de acesso"
       subtitle="Defina quais menus e funcionalidades cada usuário poderá acessar"
       actions={
-        <Button size="sm" onClick={novoPerfil}>
-          <Plus className="mr-1 size-4" /> Novo perfil
-        </Button>
+        isAdmin ? (
+          <Button
+            size="sm"
+            disabled={criarPerfil.isPending}
+            onClick={() =>
+              criarPerfil.mutate({
+                nome: "Novo perfil",
+                descricao: "Descreva o objetivo deste perfil.",
+              })
+            }
+          >
+            <Plus className="mr-1 size-4" /> Novo perfil
+          </Button>
+        ) : undefined
       }
     >
+      {!isAdmin ? (
+        <div className="panel mb-4 border-warning/40 p-4 text-sm text-muted-foreground">
+          Você pode consultar os perfis, mas somente administradores podem alterá-los.
+        </div>
+      ) : null}
+
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-        {/* Lista de perfis */}
         <aside className="panel h-fit p-3">
           <p className="px-2 pb-2 text-xs uppercase tracking-wide text-muted-foreground">
             Perfis cadastrados
           </p>
           <div className="flex flex-col gap-1">
-            {profiles.map((p) => {
+            {perfis.map((p) => {
               const active = p.id === selected?.id;
               return (
                 <button
@@ -128,7 +275,21 @@ function Permissoes() {
 
         {selected ? (
           <div className="flex min-w-0 flex-col gap-4">
-            {/* Identificação */}
+            {/* Barra de salvamento: aparece só quando há alteração pendente. */}
+            {sujo ? (
+              <div className="panel sticky top-2 z-10 flex items-center justify-between gap-3 border-primary/40 p-3 text-sm">
+                <span className="text-muted-foreground">Há alterações não salvas neste perfil.</span>
+                <Button size="sm" className="gap-2" disabled={salvando} onClick={() => void salvarTudo()}>
+                  {salvando ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Salvar alterações
+                </Button>
+              </div>
+            ) : null}
+
             <section className="panel p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
@@ -149,23 +310,23 @@ function Permissoes() {
                     <Switch
                       id="perfil-ativo"
                       checked={selected.ativo}
-                      onCheckedChange={(v) => patch(selected, { ativo: v })}
+                      disabled={!isAdmin || alternarAtivo.isPending}
+                      onCheckedChange={(v) =>
+                        alternarAtivo.mutate({ id: selected.id, ativo: v })
+                      }
                     />
                     <Label htmlFor="perfil-ativo" className="text-xs">
                       Ativo
                     </Label>
                   </div>
-                  {!selected.sistema ? (
+                  {isAdmin && !selected.sistema ? (
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => {
-                        removeProfile(selected.id);
-                        setSelectedId(profiles[0]?.id ?? "");
-                        toast.success("Perfil removido.");
-                      }}
+                      disabled={desativar.isPending}
+                      onClick={() => desativar.mutate(selected.id)}
                     >
-                      <Trash2 className="mr-1 size-4" /> Excluir
+                      <Trash2 className="mr-1 size-4" /> Desativar
                     </Button>
                   ) : null}
                 </div>
@@ -176,8 +337,10 @@ function Permissoes() {
                   <Label htmlFor="perfil-nome">Nome do perfil</Label>
                   <Input
                     id="perfil-nome"
-                    value={selected.nome}
-                    onChange={(e) => patch(selected, { nome: e.target.value })}
+                    maxLength={120}
+                    disabled={!isAdmin}
+                    value={nome}
+                    onChange={(e) => setNome(e.target.value)}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -185,14 +348,15 @@ function Permissoes() {
                   <Textarea
                     id="perfil-desc"
                     rows={2}
-                    value={selected.descricao}
-                    onChange={(e) => patch(selected, { descricao: e.target.value })}
+                    maxLength={500}
+                    disabled={!isAdmin}
+                    value={descricao}
+                    onChange={(e) => setDescricao(e.target.value)}
                   />
                 </div>
               </div>
             </section>
 
-            {/* Menus */}
             <section className="panel p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -201,22 +365,20 @@ function Permissoes() {
                     Menus não marcados ficam ocultos na navegação deste perfil.
                   </p>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => patch(selected, { modulos: APP_MODULES.map((m) => m.key) })}
-                  >
-                    Marcar todos
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => patch(selected, { modulos: ["/"] })}
-                  >
-                    Limpar
-                  </Button>
-                </div>
+                {isAdmin ? (
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setModulos(APP_MODULES.map((m) => m.key))}
+                    >
+                      Marcar todos
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setModulos(["/"])}>
+                      Limpar
+                    </Button>
+                  </div>
+                ) : null}
               </div>
 
               <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -226,44 +388,38 @@ function Permissoes() {
                       {grupo}
                     </p>
                     <div className="flex flex-col gap-2">
-                      {APP_MODULES.filter((m) => m.grupo === grupo).map((m) => {
-                        const checked = selected.modulos.includes(m.key);
-                        return (
-                          <label
-                            key={m.key}
-                            className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-sidebar-accent/40"
-                          >
-                            <Checkbox
-                              className="mt-0.5"
-                              checked={checked}
-                              disabled={m.fixo}
-                              onCheckedChange={() =>
-                                patch(selected, { modulos: toggle(selected.modulos, m.key) })
-                              }
-                            />
-                            <span className="min-w-0">
-                              <span className="block text-sm">
-                                {m.label}
-                                {m.fixo ? (
-                                  <Badge variant="outline" className="ml-2 text-[10px]">
-                                    obrigatório
-                                  </Badge>
-                                ) : null}
-                              </span>
-                              <span className="block text-[11px] text-muted-foreground">
-                                {m.descricao}
-                              </span>
+                      {APP_MODULES.filter((m) => m.grupo === grupo).map((m) => (
+                        <label
+                          key={m.key}
+                          className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-sidebar-accent/40"
+                        >
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={modulos.includes(m.key)}
+                            disabled={m.fixo || !isAdmin}
+                            onCheckedChange={() => setModulos((l) => toggle(l, m.key))}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm">
+                              {m.label}
+                              {m.fixo ? (
+                                <Badge variant="outline" className="ml-2 text-[10px]">
+                                  obrigatório
+                                </Badge>
+                              ) : null}
                             </span>
-                          </label>
-                        );
-                      })}
+                            <span className="block text-[11px] text-muted-foreground">
+                              {m.descricao}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
                     </div>
                   </div>
                 ))}
               </div>
             </section>
 
-            {/* Funcionalidades */}
             <section className="panel p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -274,7 +430,7 @@ function Permissoes() {
                 </div>
                 <Badge variant="outline" className="gap-1">
                   <KeyRound className="size-3" />
-                  {selected.funcionalidades.length} de {APP_FEATURES.length}
+                  {funcionalidades.length} de {APP_FEATURES.length}
                 </Badge>
               </div>
 
@@ -292,12 +448,9 @@ function Permissoes() {
                         >
                           <Checkbox
                             className="mt-0.5"
-                            checked={selected.funcionalidades.includes(f.key)}
-                            onCheckedChange={() =>
-                              patch(selected, {
-                                funcionalidades: toggle(selected.funcionalidades, f.key),
-                              })
-                            }
+                            checked={funcionalidades.includes(f.key)}
+                            disabled={!isAdmin}
+                            onCheckedChange={() => setFuncionalidades((l) => toggle(l, f.key))}
                           />
                           <span className="min-w-0">
                             <span className="block text-sm">{f.label}</span>
@@ -313,7 +466,6 @@ function Permissoes() {
               </div>
             </section>
 
-            {/* Usuários */}
             <section className="panel p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -347,26 +499,44 @@ function Permissoes() {
                           <span className="block">{u.nome}</span>
                           <span className="block text-[11px] text-muted-foreground">{u.email}</span>
                         </td>
-                        <td className="py-2 pr-3 text-muted-foreground">{u.departamento}</td>
+                        <td className="py-2 pr-3 text-muted-foreground">
+                          {u.departamento ?? "—"}
+                        </td>
                         <td className="py-2 pr-3">
                           <Select
-                            value={u.perfilId ?? ""}
-                            onValueChange={(v) => assignProfile(u.id, v)}
+                            value={u.perfilId ?? SEM_PERFIL}
+                            disabled={!isAdmin || atribuirPerfil.isPending}
+                            onValueChange={(v) =>
+                              atribuirPerfil.mutate({
+                                id: u.id,
+                                perfilId: v === SEM_PERFIL ? null : v,
+                              })
+                            }
                           >
                             <SelectTrigger className="w-60">
                               <SelectValue placeholder="Sem perfil" />
                             </SelectTrigger>
                             <SelectContent>
-                              {profiles.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.nome}
-                                </SelectItem>
-                              ))}
+                              <SelectItem value={SEM_PERFIL}>Sem perfil</SelectItem>
+                              {perfis
+                                .filter((p) => p.ativo)
+                                .map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.nome}
+                                  </SelectItem>
+                                ))}
                             </SelectContent>
                           </Select>
                         </td>
                       </tr>
                     ))}
+                    {usuariosFiltrados.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="py-6 text-center text-muted-foreground">
+                          Nenhum usuário encontrado.
+                        </td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>

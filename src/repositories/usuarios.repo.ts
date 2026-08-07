@@ -81,10 +81,27 @@ export interface DadosUsuario {
   nome: string;
   email: string;
   login: string;
-  departamento?: string | null;
-  equipeId?: string | null;
-  perfilId?: string | null;
-  admin?: boolean;
+  departamento?: string | null | undefined;
+  equipeId?: string | null | undefined;
+  perfilId?: string | null | undefined;
+  admin?: boolean | undefined;
+}
+
+/**
+ * Campos alteráveis do usuário.
+ *
+ * Declarado à mão em vez de Partial<DadosUsuario> porque Partial<> gera
+ * `prop?: T` e, sob exactOptionalPropertyTypes, isso recusa `undefined`
+ * explícito — que é exatamente o que o objeto vindo do Zod produz.
+ */
+export interface AlteracaoUsuario {
+  nome?: string | undefined;
+  email?: string | undefined;
+  login?: string | undefined;
+  departamento?: string | null | undefined;
+  equipeId?: string | null | undefined;
+  perfilId?: string | null | undefined;
+  admin?: boolean | undefined;
 }
 
 export async function criarUsuario(ctx: ContextoUsuario, d: DadosUsuario): Promise<void> {
@@ -113,7 +130,7 @@ export async function criarUsuario(ctx: ContextoUsuario, d: DadosUsuario): Promi
 export async function atualizarUsuario(
   ctx: ContextoUsuario,
   id: string,
-  d: Partial<Omit<DadosUsuario, "id">>,
+  d: AlteracaoUsuario,
 ): Promise<void> {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem alterar usuários");
 
