@@ -78,10 +78,9 @@ export async function criarPerfil(
        VALUES (:id, :nome, :descricao, 0, 1)`,
       { id, nome: dados.nome.trim(), descricao: dados.descricao?.trim() ?? null },
     );
-    await tx.executar(
-      `INSERT INTO perfil_modulos (perfil_id, modulo_key) VALUES (:id, '/')`,
-      { id },
-    );
+    await tx.executar(`INSERT INTO perfil_modulos (perfil_id, modulo_key) VALUES (:id, '/')`, {
+      id,
+    });
   });
   return id;
 }
@@ -169,10 +168,10 @@ export async function salvarPermissoes(
     // "/" é sempre incluído: sem painel inicial o usuário não tem para
     // onde ir depois de entrar.
     for (const m of new Set(["/", ...modulos])) {
-      await tx.executar(
-        `INSERT INTO perfil_modulos (perfil_id, modulo_key) VALUES (:id, :chave)`,
-        { id: perfilId, chave: m },
-      );
+      await tx.executar(`INSERT INTO perfil_modulos (perfil_id, modulo_key) VALUES (:id, :chave)`, {
+        id: perfilId,
+        chave: m,
+      });
     }
     for (const f of new Set(funcionalidades)) {
       await tx.executar(

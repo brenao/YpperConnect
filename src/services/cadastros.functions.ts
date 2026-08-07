@@ -246,7 +246,7 @@ export const salvarPermissoesFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-  // --------------------------------------------------------- perfis (escrita)
+// --------------------------------------------------------- perfis (escrita)
 
 const PerfilSchema = z.object({
   nome: z.string().min(3).max(120),
@@ -287,3 +287,11 @@ export const desativarPerfilFn = createServerFn({ method: "POST" })
     await desativarPerfil(await ctx(), data.id);
     return { ok: true };
   });
+
+// ------------------------------------------------------------ notificações
+
+export const listarNotificacoesFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { listarNotificacoes, contarPorStatus } = await import("@/repositories/notificacoes.repo");
+  const [lista, contagem] = await Promise.all([listarNotificacoes(100), contarPorStatus()]);
+  return { lista, contagem };
+});

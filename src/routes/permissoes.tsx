@@ -1,7 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Loader2, Lock, Plus, Save, Search, ShieldCheck, Trash2, Users } from "lucide-react";
+import {
+  KeyRound,
+  Loader2,
+  Lock,
+  Plus,
+  Save,
+  Search,
+  ShieldCheck,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -278,8 +288,15 @@ function Permissoes() {
             {/* Barra de salvamento: aparece só quando há alteração pendente. */}
             {sujo ? (
               <div className="panel sticky top-2 z-10 flex items-center justify-between gap-3 border-primary/40 p-3 text-sm">
-                <span className="text-muted-foreground">Há alterações não salvas neste perfil.</span>
-                <Button size="sm" className="gap-2" disabled={salvando} onClick={() => void salvarTudo()}>
+                <span className="text-muted-foreground">
+                  Há alterações não salvas neste perfil.
+                </span>
+                <Button
+                  size="sm"
+                  className="gap-2"
+                  disabled={salvando}
+                  onClick={() => void salvarTudo()}
+                >
                   {salvando ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
@@ -311,9 +328,7 @@ function Permissoes() {
                       id="perfil-ativo"
                       checked={selected.ativo}
                       disabled={!isAdmin || alternarAtivo.isPending}
-                      onCheckedChange={(v) =>
-                        alternarAtivo.mutate({ id: selected.id, ativo: v })
-                      }
+                      onCheckedChange={(v) => alternarAtivo.mutate({ id: selected.id, ativo: v })}
                     />
                     <Label htmlFor="perfil-ativo" className="text-xs">
                       Ativo
@@ -499,9 +514,7 @@ function Permissoes() {
                           <span className="block">{u.nome}</span>
                           <span className="block text-[11px] text-muted-foreground">{u.email}</span>
                         </td>
-                        <td className="py-2 pr-3 text-muted-foreground">
-                          {u.departamento ?? "—"}
-                        </td>
+                        <td className="py-2 pr-3 text-muted-foreground">{u.departamento ?? "—"}</td>
                         <td className="py-2 pr-3">
                           <Select
                             value={u.perfilId ?? SEM_PERFIL}

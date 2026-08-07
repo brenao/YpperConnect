@@ -214,7 +214,11 @@ function Catalogo() {
           {isTi ? (
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
-                <Button variant="secondary" size="sm" className={isAdmin ? "gap-2" : "ml-auto gap-2"}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={isAdmin ? "gap-2" : "ml-auto gap-2"}
+                >
                   <Sparkles className="size-4" /> Sugerir com IA
                 </Button>
               </DialogTrigger>

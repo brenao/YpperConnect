@@ -63,7 +63,12 @@ function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
 // ------------------------------------------------------------- categorias
 
 export async function listarCategorias(escopo?: EscopoCategoria): Promise<Categoria[]> {
-  const linhas = await consultar<{ id: string; nome: string; escopo: EscopoCategoria; ativo: number }>(
+  const linhas = await consultar<{
+    id: string;
+    nome: string;
+    escopo: EscopoCategoria;
+    ativo: number;
+  }>(
     `SELECT id, nome, escopo, ativo FROM categorias
       ${escopo ? "WHERE escopo = :escopo" : ""}
       ORDER BY escopo, nome`,
