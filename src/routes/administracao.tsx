@@ -56,6 +56,8 @@ import {
   criarSistemaFn,
   atualizarSistemaFn,
   definirSistemaAtivoFn,
+  processarFilaEmailFn,
+  testarSmtpFn,
   type UsuarioInput,
   type UsuarioUpdateInput,
   type SistemaInput,
@@ -204,8 +206,8 @@ function UserDialog({ user, trigger }: { user?: Usuario; trigger: ReactNode }) {
       admin: form.admin,
     };
 
-    // Capturado antes do desvio: o narrowing de `user` dentro do else
-    // não sobrevive ao spread do payload.
+    // Capturado antes do desvio: o narrowing de `user` não sobrevive
+    // ao spread do payload.
     const idExistente = user?.id;
     if (idExistente) {
       atualizar.mutate({ id: idExistente, ...payload });
@@ -606,6 +608,23 @@ function Administracao() {
     onError: erro,
   });
 
+  const processarFila = useMutation({
+    mutationFn: () => processarFilaEmailFn(),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["notificacoes"] });
+      toast.success(`${r.enviadas} enviada(s), ${r.falhas} falha(s)`, {
+        description: r.erros[0] ?? undefined,
+      });
+    },
+    onError: erro,
+  });
+
+  const testarSmtp = useMutation({
+    mutationFn: () => testarSmtpFn(),
+    onSuccess: () => toast.success("Conexão SMTP funcionando"),
+    onError: (e: Error) => toast.error("SMTP inacessível", { description: e.message }),
+  });
+
   const usuariosFiltrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return usuarios
@@ -912,13 +931,35 @@ function Administracao() {
               <Kpi label="Com erro" value={String(notificacoes.data?.contagem["erro"] ?? 0)} />
             </div>
 
+            {isAdmin ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={testarSmtp.isPending}
+                  onClick={() => testarSmtp.mutate()}
+                >
+                  {testarSmtp.isPending ? "Testando..." : "Testar conexão SMTP"}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={processarFila.isPending}
+                  onClick={() => processarFila.mutate()}
+                >
+                  {processarFila.isPending ? "Enviando..." : "Processar fila agora"}
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  O envio ainda é manual — falta o agendador.
+                </span>
+              </div>
+            ) : null}
+
             {(notificacoes.data?.lista.length ?? 0) === 0 ? (
               <div className="panel p-5 text-sm text-muted-foreground">
                 <p className="font-medium text-foreground">Nenhuma notificação registrada.</p>
                 <p className="mt-1">
-                  A fila de e-mails ainda não está ligada às transições de chamado. Quando estiver,
-                  cada mudança de status enfileira um aviso ao solicitante e o resultado do envio
-                  aparece aqui.
+                  A fila é alimentada quando um chamado é aberto ou muda de status. Abra um chamado
+                  e volte aqui.
                 </p>
                 <p className="mt-2">
                   O envio depende das variáveis <code className="font-mono">SMTP_*</code> no
@@ -960,6 +1001,11 @@ function Administracao() {
                           >
                             {n.status}
                           </Badge>
+                          {n.tentativas > 0 ? (
+                            <span className="ml-1 text-[11px] text-muted-foreground">
+                              {n.tentativas}x
+                            </span>
+                          ) : null}
                           {n.erro ? (
                             <span className="mt-1 block text-[11px] text-destructive">
                               {n.erro}

@@ -54,8 +54,16 @@ export function TypeBadge({ value }: { value: RecordType }) {
   );
 }
 
+/**
+ * Cor por status. Regra: verde é exclusivo de "resolvido".
+ *
+ * "novo" usava `primary`, que no tema é o mesmo verde da marca e se
+ * confundia com o resolvido — os dois extremos do fluxo pareciam iguais.
+ * Agora a progressão é legível: roxo (entrou) → azul (triado) →
+ * âmbar (sendo tratado) → cinza (parado) → verde (resolvido).
+ */
 const statusStyle: Record<TicketStatus, string> = {
-  novo: "bg-primary/12 text-primary border-primary/30",
+  novo: "bg-p1/12 text-p1 border-p1/30",
   triagem: "bg-info/12 text-info border-info/30",
   em_andamento: "bg-warning/12 text-warning border-warning/30",
   aguardando: "bg-muted text-muted-foreground border-border",

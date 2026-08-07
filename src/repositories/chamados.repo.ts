@@ -231,9 +231,12 @@ export async function criarChamado(
   const meta = slaFor(dados.tipo, prioridade);
   const criadoEm = new Date();
 
+  // P1 é 24×7: crítico não espera abertura do expediente.
+  const regime = { vinteQuatroSete: prioridade === "P1" };
+
   const [prazoResposta, prazoSla] = await Promise.all([
-    calcularPrazo(criadoEm, meta.resposta),
-    calcularPrazo(criadoEm, meta.solucao),
+    calcularPrazo(criadoEm, meta.resposta, regime),
+    calcularPrazo(criadoEm, meta.solucao, regime),
   ]);
 
   const id = novoId();
@@ -279,7 +282,7 @@ export async function criarChamado(
         id: novoId(),
         chamadoId: id,
         autorId: ctx.id,
-        valorNovo: `${dados.tipo} · ${prioridade}`,
+        valorNovo: `${dados.tipo} · ${prioridade}${regime.vinteQuatroSete ? " · 24x7" : ""}`,
         criadoEm,
       },
     );
@@ -310,15 +313,11 @@ export interface AlteracaoChamado {
 }
 
 /**
- * Altera o chamado gravando uma linha de histórico por campo mudado.
- * Tudo em transação: chamado e auditoria não podem divergir.
- *
  * Alterar impacto ou urgência recalcula a prioridade, mas NÃO recalcula
- * prazo_sla — o prazo é um compromisso firmado na abertura. Mudá-lo
- * retroativamente inviabilizaria qualquer indicador.
- *
- * O prefixo também não é recalculado se o tipo mudar: o código é
- * imutável por design.
+ * prazo_sla — o prazo é um compromisso firmado na abertura. Isso inclui
+ * a subida para P1: um chamado que vira crítico depois mantém o prazo
+ * calculado em horário comercial. Recalcular retroativamente
+ * inviabilizaria qualquer indicador de SLA.
  */
 export async function atualizarChamado(
   ctx: ContextoUsuario,

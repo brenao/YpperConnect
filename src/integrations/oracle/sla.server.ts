@@ -1,11 +1,12 @@
 import { consultar } from "./client.server";
 
 /**
- * Cálculo de prazo de SLA em horário comercial.
+ * Cálculo de prazo de SLA.
  *
  * Regras acordadas:
- *   - Jornada seg-sex, 8h úteis/dia (tabela `expediente`).
- *   - Feriados não contam (tabela `feriados`).
+ *   - Incidentes P1: regime 24×7, horas corridas.
+ *   - Demais prioridades: jornada seg-sex, 8h úteis/dia (`expediente`).
+ *   - Feriados não contam (`feriados`), exceto em 24×7.
  *   - O status "aguardando" NÃO congela o relógio.
  *
  * O prazo é um retrato do momento da abertura: fica gravado em
@@ -15,6 +16,17 @@ import { consultar } from "./client.server";
  * Não trata horário de verão. O Brasil não adota desde 2019; se voltar,
  * este cálculo precisa ser revisto.
  */
+
+export interface OpcoesPrazo {
+  /**
+   * Regime 24×7: ignora expediente, fim de semana e feriado.
+   *
+   * Usado por incidentes P1, que têm plantão e ponte de crise. Contar
+   * horário comercial num crítico aberto sexta às 20h daria prazo só na
+   * segunda — incompatível com a política de atendimento.
+   */
+  vinteQuatroSete?: boolean | undefined;
+}
 
 interface Faixa {
   ini: number; // minutos desde a meia-noite
@@ -118,9 +130,19 @@ function proximaMeiaNoite(base: Date): Date {
  * Soma `horasUteis` de expediente a partir de `inicio`.
  * Se `inicio` cair fora do expediente, o relógio começa a contar na
  * próxima abertura.
+ *
+ * Com `vinteQuatroSete`, vira soma direta de horas corridas.
  */
-export async function calcularPrazo(inicio: Date, horasUteis: number): Promise<Date> {
+export async function calcularPrazo(
+  inicio: Date,
+  horasUteis: number,
+  opcoes: OpcoesPrazo = {},
+): Promise<Date> {
   if (horasUteis <= 0) throw new Error("horasUteis deve ser maior que zero");
+
+  if (opcoes.vinteQuatroSete) {
+    return new Date(inicio.getTime() + horasUteis * 3_600_000);
+  }
 
   const cal = await carregarCalendario();
   if (cal.faixasPorDia.size === 0) {
@@ -154,11 +176,20 @@ export async function calcularPrazo(inicio: Date, horasUteis: number): Promise<D
 }
 
 /**
- * Minutos úteis decorridos entre duas datas. Use para medir consumo
- * real de SLA nos relatórios, em vez de subtrair timestamps.
+ * Minutos decorridos entre duas datas. Use para medir consumo real de
+ * SLA nos relatórios, em vez de subtrair timestamps.
  */
-export async function minutosUteisEntre(de: Date, ate: Date): Promise<number> {
+export async function minutosUteisEntre(
+  de: Date,
+  ate: Date,
+  opcoes: OpcoesPrazo = {},
+): Promise<number> {
   if (ate <= de) return 0;
+
+  // Em 24×7 o tempo decorrido é o tempo de relógio.
+  if (opcoes.vinteQuatroSete) {
+    return Math.round((ate.getTime() - de.getTime()) / 60000);
+  }
 
   const cal = await carregarCalendario();
   let total = 0;

@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertOctagon, ShieldCheck, Timer } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertOctagon, CalendarDays, ShieldCheck, Timer } from "lucide-react";
 import { AppShell } from "@/views/app-shell";
 import { PriorityBadge, TypeBadge } from "@/views/badges";
 import {
@@ -13,6 +14,7 @@ import {
   type RecordType,
   type Urgency,
 } from "@/models/itsm-types";
+import { calendarioFn } from "@/services/indicadores.functions";
 
 export const Route = createFileRoute("/governanca")({
   head: () => ({
@@ -21,7 +23,7 @@ export const Route = createFileRoute("/governanca")({
       {
         name: "description",
         content:
-          "Matriz de prioridade por impacto e urgência, definições de classificação, SLAs e fluxo de incidentes críticos.",
+          "Matriz de prioridade por impacto e urgência, definições de classificação, SLAs em horário comercial e fluxo de incidentes críticos.",
       },
       { property: "og:title", content: "Governança ITIL · YpperConnect" },
       {
@@ -59,7 +61,7 @@ const definicoes: Record<RecordType, string> = {
 };
 
 const prioridadeDescricao: Record<Priority, string> = {
-  P1: "Indisponibilidade total ou impacto severo em operação essencial, sem alternativa de continuidade.",
+  P1: "Indisponibilidade total ou impacto severo em operação essencial, sem alternativa de continuidade. Atendimento em regime 24×7.",
   P2: "Impacto relevante em área, unidade, sistema ou processo, com operação parcial ou alternativa limitada.",
   P3: "Impacto restrito a poucos usuários ou atividade não crítica, sem comprometimento relevante da operação.",
   P4: "Solicitação planejável, dúvida, ajuste ou atividade sem impacto imediato na operação.",
@@ -74,7 +76,7 @@ const praticas = [
   {
     nome: "Requisições de Serviço",
     descricao: "Executar solicitações padronizadas com fluxo previsível e aprovações claras.",
-    itens: ["Catálogo de serviços", "Aprovação do gestor", "SLA por tipo de serviço"],
+    itens: ["Catálogo de serviços", "Roteamento por serviço", "SLA por tipo de serviço"],
   },
   {
     nome: "Gestão de Problemas",
@@ -91,13 +93,22 @@ const praticas = [
 const slaPrioridades: Priority[] = ["P1", "P2", "P3", "P4"];
 const slaTipos: RecordType[] = ["incidente", "requisicao", "tarefa", "problema", "melhoria"];
 
+/**
+ * Regras alinhadas ao que o sistema realmente faz.
+ *
+ * O texto anterior descrevia "horas corridas" para tudo e recálculo de
+ * prazo na reclassificação — nada disso é como o cálculo funciona.
+ * Página de governança que descreve regra inexistente é pior que página
+ * sem regra: cria expectativa que o sistema não honra.
+ */
 const regrasSla = [
-  "O relógio inicia no registro do chamado e segue contando até a resolução, inclusive em Aguardando terceiros.",
-  "Incidentes P1 seguem regime 24×7; demais classificações contam horas corridas.",
-  "Chamado sem primeiro retorno dentro do prazo de resposta entra automaticamente em risco (amarelo).",
-  "Ao ultrapassar 75% do prazo de solução o chamado é sinalizado em risco; após o vencimento, vermelho.",
-  "Problemas têm prazo de solução ampliado por exigirem RCA; o prazo de resposta cobre o aceite da investigação.",
-  "Reclassificação de prioridade recalcula os prazos a partir da data original do registro.",
+  "Incidentes P1 contam em regime 24×7: horas corridas, sem parar em fim de semana ou feriado. Crítico não espera abertura do expediente.",
+  "Demais prioridades contam em HORAS ÚTEIS, respeitando o expediente cadastrado, fins de semana e feriados. Um SLA de 8 horas equivale a um dia inteiro de trabalho.",
+  "O relógio inicia no registro do chamado. Fora de P1, chamado aberto fora do expediente começa a contar na próxima abertura.",
+  "O status Aguardando NÃO congela o relógio: o prazo segue correndo mesmo com o chamado parado por terceiros.",
+  "O prazo é firmado na abertura e não é recalculado depois. Reclassificar altera a prioridade, mas preserva o prazo original — inclusive quando a prioridade sobe para P1.",
+  "Feriado cadastrado após a abertura não altera chamados já registrados; vale apenas para os abertos dali em diante.",
+  "Problemas têm prazo de solução ampliado por exigirem análise de causa raiz; o prazo de resposta cobre o aceite da investigação.",
 ];
 
 const fluxoP1 = [
@@ -109,7 +120,32 @@ const fluxoP1 = [
   "Abertura obrigatória de Problema e RCA em até 5 dias úteis",
 ];
 
+const DIAS_ISO = ["", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
+
+/** Minutos desde a meia-noite para HH:MM. */
+function hhmm(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+
 function Governanca() {
+  const calendario = useQuery({ queryKey: ["calendario"], queryFn: () => calendarioFn() });
+
+  // Agrupa as faixas por dia: manhã e tarde viram uma linha só.
+  const porDia = new Map<number, string[]>();
+  for (const e of calendario.data?.expediente ?? []) {
+    const l = porDia.get(e.diaSemana) ?? [];
+    l.push(`${hhmm(e.minutoIni)}–${hhmm(e.minutoFim)}`);
+    porDia.set(e.diaSemana, l);
+  }
+
+  const horasUteisDia = (() => {
+    const faixas = calendario.data?.expediente ?? [];
+    if (faixas.length === 0) return 0;
+    const dias = new Set(faixas.map((f) => f.diaSemana)).size;
+    const totalMin = faixas.reduce((s, f) => s + (f.minutoFim - f.minutoIni), 0);
+    return Math.round(totalMin / dias / 60);
+  })();
+
   return (
     <AppShell
       title="Governança ITIL"
@@ -152,6 +188,12 @@ function Governanca() {
             </table>
           </div>
 
+          <p className="mt-4 text-xs text-muted-foreground">
+            A prioridade é derivada automaticamente desta matriz no momento da abertura. Não é
+            escolhida pelo solicitante nem pelo atendente — isso impede que a política de SLA seja
+            contornada caso a caso.
+          </p>
+
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             {(Object.keys(prioridadeDescricao) as Priority[]).map((p) => (
               <div key={p} className="rounded-lg border border-border bg-surface p-3">
@@ -168,6 +210,78 @@ function Governanca() {
           </div>
         </section>
 
+        {/* Calendário real, lido do banco. Antes esta informação não
+            existia na tela e a regra de SLA era descrita errado. */}
+        <section className="panel p-5">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <CalendarDays className="size-4 text-primary" /> Calendário de atendimento
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Prazos de P2 a P4 contam apenas dentro deste expediente. P1 ignora o calendário e conta
+            em horas corridas.
+          </p>
+
+          {calendario.isPending ? (
+            <p className="mt-4 text-sm text-muted-foreground">Carregando calendário...</p>
+          ) : (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
+                  Expediente · {horasUteisDia}h úteis por dia
+                </p>
+                <ul className="space-y-1.5">
+                  {[1, 2, 3, 4, 5, 6, 7].map((d) => {
+                    const faixas = porDia.get(d);
+                    return (
+                      <li
+                        key={d}
+                        className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                      >
+                        <span>{DIAS_ISO[d]}</span>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {faixas?.length ? faixas.join("  ·  ") : "não útil"}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
+                  Feriados considerados ({calendario.data?.feriados.length ?? 0})
+                </p>
+                <ul className="grid max-h-72 gap-1.5 overflow-y-auto sm:grid-cols-2">
+                  {(calendario.data?.feriados ?? []).map((f, i) => {
+                    const d = new Date(f.dataFeriado);
+                    const dia = String(d.getDate()).padStart(2, "0");
+                    const mes = String(d.getMonth() + 1).padStart(2, "0");
+                    return (
+                      <li
+                        key={`${f.descricao}-${i}`}
+                        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                      >
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {dia}/{mes}
+                          {f.recorrente === 1 ? "" : `/${d.getFullYear()}`}
+                        </span>
+                        <span className="ml-2">{f.descricao}</span>
+                      </li>
+                    );
+                  })}
+                  {(calendario.data?.feriados ?? []).length === 0 ? (
+                    <li className="text-sm text-muted-foreground">Nenhum feriado cadastrado.</li>
+                  ) : null}
+                </ul>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Datas sem ano se repetem todo ano. Feriados móveis, como Carnaval e Corpus
+                  Christi, precisam ser cadastrados a cada ano.
+                </p>
+              </div>
+            </div>
+          )}
+        </section>
+
         <section className="panel p-5">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <Timer className="size-4 text-primary" /> Acordo de nível de serviço (SLA) por
@@ -175,8 +289,9 @@ function Governanca() {
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Tempo de <strong>resposta</strong> = primeiro retorno da TI ao solicitante. Tempo de{" "}
-            <strong>solução</strong> = restabelecimento ou entrega. Horas corridas contadas a partir
-            do registro do chamado; P1 é atendido em regime 24×7.
+            <strong>solução</strong> = restabelecimento ou entrega. Contados em{" "}
+            <strong>horas corridas</strong> para P1 e em <strong>horas úteis</strong> — dentro do
+            expediente acima — para as demais prioridades.
           </p>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[44rem] text-sm">
@@ -186,6 +301,9 @@ function Governanca() {
                   {slaPrioridades.map((p) => (
                     <th key={p} className="py-2 pr-4 font-normal">
                       {PRIORITY_LABEL[p]}
+                      {p === "P1" ? (
+                        <span className="ml-1 font-mono text-[10px] text-destructive">24×7</span>
+                      ) : null}
                     </th>
                   ))}
                 </tr>
@@ -257,6 +375,11 @@ function Governanca() {
                   </li>
                 ))}
               </ol>
+              <p className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs">
+                P1 opera em <strong>regime 24×7</strong>: o prazo conta em horas corridas, incluindo
+                madrugada, fim de semana e feriado. Um P1 aberto sexta às 20h com SLA de 4 horas
+                vence às 00h de sábado.
+              </p>
             </div>
 
             <div className="panel p-5">

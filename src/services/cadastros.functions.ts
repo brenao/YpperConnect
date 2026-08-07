@@ -295,3 +295,20 @@ export const listarNotificacoesFn = createServerFn({ method: "GET" }).handler(as
   const [lista, contagem] = await Promise.all([listarNotificacoes(100), contarPorStatus()]);
   return { lista, contagem };
 });
+
+// ------------------------------------------------------- fila de e-mail
+
+export const processarFilaEmailFn = createServerFn({ method: "POST" }).handler(async () => {
+  const c = await ctx();
+  if (!c.admin) throw new Error("Somente administradores podem processar a fila");
+  const { processarFila } = await import("@/services/notificacoes.server");
+  return processarFila();
+});
+
+export const testarSmtpFn = createServerFn({ method: "POST" }).handler(async () => {
+  const c = await ctx();
+  if (!c.admin) throw new Error("Somente administradores podem testar o SMTP");
+  const { testarConexao } = await import("@/services/notificacoes.server");
+  await testarConexao();
+  return { ok: true };
+});

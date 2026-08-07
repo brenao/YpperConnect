@@ -77,7 +77,26 @@ export const criarChamadoFn = createServerFn({ method: "POST" })
     const { criarChamado } = await import("@/repositories/chamados.repo");
     const { getUsuarioAtual } = await import("@/services/current-user.server");
     const ctx = await getUsuarioAtual();
-    return criarChamado(ctx, data);
+    const r = await criarChamado(ctx, data);
+
+    // Fora da transação do chamado: um relay indisponível não pode
+    // impedir a abertura. Falha aqui só deixa o chamado sem aviso.
+    try {
+      const { enfileirar } = await import("@/repositories/notificacoes.repo");
+      await enfileirar({
+        tipo: "chamado_criado",
+        destinatarioId: ctx.id,
+        destinatarioEmail: ctx.email,
+        assunto: `[${r.codigo}] ${data.titulo}`,
+        corpo: `Seu chamado ${r.codigo} foi registrado.\n\n${data.descricao}`,
+        referenciaTipo: "chamado",
+        referenciaId: r.id,
+      });
+    } catch (e) {
+      console.error("Falha ao enfileirar notificação de abertura", e);
+    }
+
+    return r;
   });
 
 const Alteracao = z.object({
@@ -99,11 +118,46 @@ export type AlteracaoChamadoInput = z.infer<typeof Alteracao>;
 export const atualizarChamadoFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => Alteracao.parse(d))
   .handler(async ({ data }) => {
-    const { atualizarChamado } = await import("@/repositories/chamados.repo");
+    const { atualizarChamado, buscarChamado } = await import("@/repositories/chamados.repo");
     const { getUsuarioAtual } = await import("@/services/current-user.server");
     const { id, ...mudancas } = data;
     const ctx = await getUsuarioAtual();
     await atualizarChamado(ctx, id, mudancas);
+
+    // Só mudança de status vira e-mail. Reatribuição interna não
+    // interessa ao solicitante e geraria ruído.
+    if (mudancas.status) {
+      try {
+        const { enfileirar } = await import("@/repositories/notificacoes.repo");
+        const { consultarUm } = await import("@/integrations/oracle/client.server");
+        const chamado = await buscarChamado(id);
+
+        if (chamado) {
+          const dest = await consultarUm<{ email: string }>(
+            `SELECT email FROM usuarios WHERE id = :id`,
+            { id: chamado.solicitanteId },
+          );
+          if (dest) {
+            await enfileirar({
+              tipo: "chamado_status",
+              destinatarioId: chamado.solicitanteId,
+              destinatarioEmail: dest.email,
+              assunto: `[${chamado.codigo}] Status atualizado: ${mudancas.status}`,
+              corpo:
+                `O chamado ${chamado.codigo} — ${chamado.titulo} — passou para "${mudancas.status}".` +
+                (chamado.descricaoEncerramento
+                  ? `\n\nEncerramento: ${chamado.descricaoEncerramento}`
+                  : ""),
+              referenciaTipo: "chamado",
+              referenciaId: id,
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Falha ao enfileirar notificação de status", e);
+      }
+    }
+
     return { ok: true };
   });
 

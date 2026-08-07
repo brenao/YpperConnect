@@ -1,5 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowUpRight, Clock, Sparkles, TrendingUp, Users } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  BookOpen,
+  Clock,
+  Loader2,
+  Sparkles,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -12,11 +22,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useHydrated } from "@/hooks/use-hydrated";
 import { AppShell } from "@/views/app-shell";
-import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
-import { useItsm } from "@/controllers/itsm-store";
-import { TYPE_LABEL, type Priority, type RecordType } from "@/models/itsm-types";
+import { PriorityBadge, StatusBadge, TypeBadge } from "@/views/badges";
+import { TYPE_LABEL, type Priority, type RecordType, type TicketStatus } from "@/models/itsm-types";
+import { painelFn } from "@/services/indicadores.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -37,16 +46,6 @@ export const Route = createFileRoute("/")({
   }),
   component: Dashboard,
 });
-
-const volumeSerie = [
-  { dia: "Seg", incidentes: 12, requisicoes: 18 },
-  { dia: "Ter", incidentes: 9, requisicoes: 22 },
-  { dia: "Qua", incidentes: 16, requisicoes: 15 },
-  { dia: "Qui", incidentes: 7, requisicoes: 25 },
-  { dia: "Sex", incidentes: 11, requisicoes: 20 },
-  { dia: "Sáb", incidentes: 3, requisicoes: 4 },
-  { dia: "Dom", incidentes: 2, requisicoes: 2 },
-];
 
 function Kpi({
   label,
@@ -81,27 +80,64 @@ function Kpi({
   );
 }
 
+/** Situação do prazo sem depender do tipo Ticket legado. */
+function PrazoPill({ prazo }: { prazo: Date | string }) {
+  const ms = new Date(prazo).getTime() - Date.now();
+  const horas = Math.round(ms / 3_600_000);
+  const vencido = ms < 0;
+  const critico = !vencido && horas <= 4;
+
+  const texto = vencido
+    ? `${Math.abs(horas)}h vencido`
+    : horas >= 24
+      ? `${Math.round(horas / 24)}d restantes`
+      : `${horas}h restantes`;
+
+  return (
+    <span
+      className={
+        vencido
+          ? "font-mono text-xs text-destructive"
+          : critico
+            ? "font-mono text-xs text-warning"
+            : "font-mono text-xs text-muted-foreground"
+      }
+    >
+      {texto}
+    </span>
+  );
+}
+
 function Dashboard() {
-  const { tickets, articles, projects } = useItsm();
-  const hydrated = useHydrated();
+  const painel = useQuery({ queryKey: ["painel"], queryFn: () => painelFn() });
 
-  const abertos = tickets.filter((t) => t.status !== "resolvido" && t.status !== "fechado");
-  const criticos = abertos.filter((t) => t.prioridade === "P1");
-  const agora = hydrated ? Date.now() : 0;
-  const vencidos = agora ? abertos.filter((t) => new Date(t.prazoSla).getTime() < agora) : [];
-  const aderencia = Math.round(((abertos.length - vencidos.length) / (abertos.length || 1)) * 100);
+  const d = painel.data;
+  const resumo = d?.resumo;
 
-  const porPrioridade = (["P1", "P2", "P3", "P4"] as Priority[]).map((p) => ({
-    p,
-    total: abertos.filter((t) => t.prioridade === p).length,
+  if (painel.isPending) {
+    return (
+      <AppShell title="Visão geral da operação de TI" subtitle="Carregando indicadores...">
+        <p className="flex items-center gap-2 py-16 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> Consultando o banco...
+        </p>
+      </AppShell>
+    );
+  }
+
+  if (painel.error || !resumo) {
+    return (
+      <AppShell title="Visão geral da operação de TI" subtitle="Falha ao carregar">
+        <div className="panel border-destructive/40 p-5 text-sm text-destructive">
+          Não foi possível carregar os indicadores: {String(painel.error)}
+        </div>
+      </AppShell>
+    );
+  }
+
+  const tipos = (d?.tipos ?? []).map((t) => ({
+    tipo: TYPE_LABEL[t.tipo as RecordType] ?? t.tipo,
+    total: t.total,
   }));
-
-  const porTipo = (Object.keys(TYPE_LABEL) as RecordType[]).map((t) => ({
-    tipo: TYPE_LABEL[t],
-    total: tickets.filter((x) => x.tipo === t).length,
-  }));
-
-  const recorrencia = tickets.filter((t) => t.problemaVinculado);
 
   return (
     <AppShell
@@ -124,9 +160,12 @@ function Dashboard() {
               </p>
             </div>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {porPrioridade.map((row) => (
-                <div key={row.p} className="rounded-lg border border-border/60 bg-card/60 p-3">
-                  <PriorityBadge value={row.p} />
+              {(d?.prioridades ?? []).map((row) => (
+                <div
+                  key={row.prioridade}
+                  className="rounded-lg border border-border/60 bg-card/60 p-3"
+                >
+                  <PriorityBadge value={row.prioridade as Priority} />
                   <p className="mt-2 font-mono text-2xl">{row.total}</p>
                 </div>
               ))}
@@ -137,41 +176,41 @@ function Dashboard() {
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Kpi
             label="Backlog aberto"
-            value={String(abertos.length)}
-            hint={`${tickets.length} registros no total`}
+            value={String(resumo.abertos)}
+            hint={`${resumo.totalChamados} registros no total`}
             icon={Users}
           />
           <Kpi
             label="Incidentes críticos"
-            value={String(criticos.length)}
+            value={String(resumo.criticos)}
             hint="Fluxo P1 com ponte de crise"
             icon={AlertTriangle}
             tone="danger"
           />
           <Kpi
             label="Aderência ao SLA"
-            value={`${aderencia}%`}
-            hint={`${vencidos.length} chamados fora do prazo`}
+            value={`${resumo.aderenciaSla}%`}
+            hint={`${resumo.vencidos} chamado(s) fora do prazo`}
             icon={TrendingUp}
             tone="success"
           />
           <Kpi
             label="Base de conhecimento"
-            value={String(articles.length)}
-            hint={`${articles.filter((a) => a.status === "revisar").length} artigos a revisar`}
-            icon={Clock}
+            value={String(resumo.artigos)}
+            hint={`${resumo.artigosPendentes} artigo(s) a revisar`}
+            icon={BookOpen}
           />
         </section>
 
         <section className="grid gap-4 lg:grid-cols-3">
           <div className="panel p-5 lg:col-span-2">
-            <h3 className="text-sm font-semibold">Volume de atendimento na semana</h3>
+            <h3 className="text-sm font-semibold">Volume de abertura nos últimos 7 dias</h3>
             <div className="mt-4 h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={volumeSerie}>
+                <LineChart data={d?.volume ?? []}>
                   <CartesianGrid stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="dia" stroke="var(--muted-foreground)" fontSize={12} />
-                  <YAxis stroke="var(--muted-foreground)" fontSize={12} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={12} allowDecimals={false} />
                   <Tooltip
                     contentStyle={{
                       background: "var(--card)",
@@ -182,6 +221,7 @@ function Dashboard() {
                   <Line
                     type="monotone"
                     dataKey="incidentes"
+                    name="Incidentes"
                     stroke="var(--chart-4)"
                     strokeWidth={2}
                     dot={false}
@@ -189,7 +229,16 @@ function Dashboard() {
                   <Line
                     type="monotone"
                     dataKey="requisicoes"
+                    name="Requisições"
                     stroke="var(--chart-1)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="outros"
+                    name="Outros"
+                    stroke="var(--chart-3)"
                     strokeWidth={2}
                     dot={false}
                   />
@@ -200,33 +249,37 @@ function Dashboard() {
 
           <div className="panel p-5">
             <h3 className="text-sm font-semibold">Registros por classificação</h3>
-            <div className="mt-4 h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={porTipo} layout="vertical" margin={{ left: 24 }}>
-                  <XAxis type="number" hide />
-                  <YAxis
-                    type="category"
-                    dataKey="tipo"
-                    width={130}
-                    stroke="var(--muted-foreground)"
-                    fontSize={11}
-                  />
-                  <Tooltip
-                    cursor={{ fill: "var(--muted)" }}
-                    contentStyle={{
-                      background: "var(--card)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                    }}
-                  />
-                  <Bar dataKey="total" radius={6}>
-                    {porTipo.map((_, i) => (
-                      <Cell key={i} fill={`var(--chart-${(i % 5) + 1})`} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {tipos.length === 0 ? (
+              <p className="mt-6 text-sm text-muted-foreground">Nenhum chamado registrado ainda.</p>
+            ) : (
+              <div className="mt-4 h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={tipos} layout="vertical" margin={{ left: 24 }}>
+                    <XAxis type="number" hide allowDecimals={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="tipo"
+                      width={130}
+                      stroke="var(--muted-foreground)"
+                      fontSize={11}
+                    />
+                    <Tooltip
+                      cursor={{ fill: "var(--muted)" }}
+                      contentStyle={{
+                        background: "var(--card)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                      }}
+                    />
+                    <Bar dataKey="total" radius={6}>
+                      {tipos.map((_, i) => (
+                        <Cell key={i} fill={`var(--chart-${(i % 5) + 1})`} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
         </section>
 
@@ -242,45 +295,71 @@ function Dashboard() {
               </Link>
             </div>
             <ul className="divide-y divide-border">
-              {abertos.slice(0, 5).map((t) => (
+              {(d?.fila ?? []).map((t) => (
                 <li key={t.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                  <span className="font-mono text-xs text-muted-foreground">{t.id}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{t.codigo}</span>
                   <span className="min-w-0 flex-1 truncate text-sm">{t.titulo}</span>
-                  <TypeBadge value={t.tipo} />
-                  <PriorityBadge value={t.prioridade} />
-                  <StatusBadge value={t.status} />
-                  <SlaPill ticket={t} />
+                  <TypeBadge value={t.tipo as RecordType} />
+                  <PriorityBadge value={t.prioridade as Priority} />
+                  <StatusBadge value={t.status as TicketStatus} />
+                  <PrazoPill prazo={t.prazoSla} />
                 </li>
               ))}
+              {(d?.fila ?? []).length === 0 ? (
+                <li className="px-5 py-8 text-center text-sm text-muted-foreground">
+                  Nenhum chamado aberto no momento.
+                </li>
+              ) : null}
             </ul>
           </div>
 
           <div className="panel p-5">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <Sparkles className="size-4 text-primary" /> Sinais detectados pela IA
+              <Sparkles className="size-4 text-primary" /> Sinais detectados
             </h3>
             <div className="mt-4 space-y-3">
-              <div className="rounded-lg border border-warning/30 bg-warning/10 p-3">
-                <p className="text-xs font-medium text-warning">Recorrência identificada</p>
-                <p className="mt-1 text-sm">
-                  {recorrencia.length} registros correlatos apontam para o mesmo comportamento de
-                  rede. Recomenda-se avaliar o registro de Problema PRB-018.
-                </p>
-              </div>
+              {(d?.recorrencias ?? []).length > 0 ? (
+                (d?.recorrencias ?? []).map((r) => (
+                  <div
+                    key={r.sistemaNome}
+                    className="rounded-lg border border-warning/30 bg-warning/10 p-3"
+                  >
+                    <p className="text-xs font-medium text-warning">Recorrência identificada</p>
+                    <p className="mt-1 text-sm">
+                      <strong>{r.sistemaNome}</strong> acumulou {r.total} incidentes abertos. Avalie
+                      registrar um Problema para análise de causa raiz.
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-lg border border-border bg-surface p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Recorrência</p>
+                  <p className="mt-1 text-sm">
+                    Nenhum sistema com três ou mais incidentes abertos.
+                  </p>
+                </div>
+              )}
+
               <div className="rounded-lg border border-border bg-surface p-3">
                 <p className="text-xs font-medium text-muted-foreground">Conhecimento</p>
                 <p className="mt-1 text-sm">
-                  {articles.filter((a) => a.status !== "publicado").length} artigos precisam de
-                  revisão ou complemento.
+                  {resumo.artigosPendentes} artigo(s) precisam de revisão ou complemento.
                 </p>
               </div>
+
               <div className="rounded-lg border border-border bg-surface p-3">
                 <p className="text-xs font-medium text-muted-foreground">Projetos</p>
-                <p className="mt-1 text-sm">
-                  {projects.filter((p) => p.status === "execucao").length} projeto(s) em execução na
-                  estruturação das práticas ITIL.
-                </p>
+                <p className="mt-1 text-sm">{resumo.projetosEmExecucao} projeto(s) em execução.</p>
               </div>
+
+              {resumo.comProblemaVinculado > 0 ? (
+                <div className="rounded-lg border border-border bg-surface p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Correlação</p>
+                  <p className="mt-1 text-sm">
+                    {resumo.comProblemaVinculado} chamado(s) já vinculados a um Problema.
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
