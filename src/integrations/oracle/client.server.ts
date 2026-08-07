@@ -18,15 +18,13 @@ oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
 /**
  * Fuso da sessão Oracle.
  *
- * TIMESTAMP WITH LOCAL TIME ZONE converte para o fuso da SESSÃO na
- * leitura, e o node-oracledb não herda o fuso do sistema operacional —
- * a sessão abriria com o fuso do servidor de banco. Sem isso, o prazo
- * de SLA sai deslocado pelo offset entre os dois.
+ * As colunas de data usam TIMESTAMP puro, não TIMESTAMP WITH LOCAL TIME
+ * ZONE: o modo thin do node-oracledb ignora o fuso da sessão ao ler esse
+ * segundo tipo e devolve o valor rotulado como UTC, deslocando o prazo
+ * de SLA em 3 horas. Com TIMESTAMP puro a ida e volta é exata.
  *
- * ORA_SDTZ é lido pelo driver na criação da conexão. Precisa ser
- * definido ANTES do createPool. É o caminho oficial: evita ALTER
- * SESSION por conexão e o sessionCallback, cuja assinatura por aridade
- * trava o pool com facilidade.
+ * ORA_SDTZ permanece como rede de segurança para o caso de o servidor de
+ * aplicação rodar em fuso diferente do servidor de banco.
  */
 const FUSO_APLICACAO = process.env["ORACLE_TIMEZONE"] ?? "-03:00";
 
@@ -62,12 +60,12 @@ async function getPool(): Promise<oracledb.Pool> {
       poolPingInterval: 60,
       queueTimeout: 30000,
     })
-    .then((p) => {
+    .then((p: oracledb.Pool) => {
       pool = p;
       criandoPool = undefined;
       return p;
     })
-    .catch((e) => {
+    .catch((e: unknown) => {
       criandoPool = undefined;
       throw e;
     });
@@ -85,13 +83,17 @@ export async function fecharPool(): Promise<void> {
 /**
  * ORACLE: string vazia é NULL. Um formulário web manda '' o tempo todo,
  * e '' numa coluna NOT NULL estoura com ORA-01400. Normaliza na borda.
+ *
+ * O retorno é convertido para BindParameters porque os tipos do driver
+ * descrevem um union de formatos posicionais e nomeados; o nosso uso é
+ * sempre nomeado, que é compatível em tempo de execução.
  */
-function normalizarBinds(binds: Record<string, unknown>): Record<string, unknown> {
+function normalizarBinds(binds: Record<string, unknown>): oracledb.BindParameters {
   const saida: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(binds)) {
     saida[k] = v === "" ? null : v;
   }
-  return saida;
+  return saida as oracledb.BindParameters;
 }
 
 /** ORACLE devolve nomes de coluna em MAIÚSCULA. Converte para camelCase. */
@@ -116,7 +118,7 @@ export async function consultar<T = Record<string, unknown>>(
   const conn = await p.getConnection();
   try {
     const r = await conn.execute<Record<string, unknown>>(sql, normalizarBinds(binds));
-    return (r.rows ?? []).map((l) => mapearLinha<T>(l));
+    return (r.rows ?? []).map((l: Record<string, unknown>) => mapearLinha<T>(l));
   } finally {
     await conn.close();
   }
@@ -136,7 +138,7 @@ export async function executar(sql: string, binds: Record<string, unknown> = {})
   const p = await getPool();
   const conn = await p.getConnection();
   try {
-    const r = await conn.execute(sql, normalizarBinds(binds), { autoCommit: true });
+    const r = await conn.execute<unknown>(sql, normalizarBinds(binds), { autoCommit: true });
     return r.rowsAffected ?? 0;
   } finally {
     await conn.close();
@@ -163,10 +165,10 @@ export async function emTransacao<T>(fn: (tx: Transacao) => Promise<T>): Promise
   const tx: Transacao = {
     async consultar<R>(sql: string, binds: Record<string, unknown> = {}) {
       const r = await conn.execute<Record<string, unknown>>(sql, normalizarBinds(binds));
-      return (r.rows ?? []).map((l) => mapearLinha<R>(l));
+      return (r.rows ?? []).map((l: Record<string, unknown>) => mapearLinha<R>(l));
     },
     async executar(sql: string, binds: Record<string, unknown> = {}) {
-      const r = await conn.execute(sql, normalizarBinds(binds));
+      const r = await conn.execute<unknown>(sql, normalizarBinds(binds));
       return r.rowsAffected ?? 0;
     },
   };

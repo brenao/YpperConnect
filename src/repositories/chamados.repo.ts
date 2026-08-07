@@ -2,6 +2,7 @@ import { consultar, consultarUm, emTransacao } from "@/integrations/oracle/clien
 import { calcularPrazo } from "@/integrations/oracle/sla.server";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
 import type { Impact, Priority, RecordType, TicketStatus, Urgency } from "@/models/itsm-types";
+import { PREFIXO_TIPO } from "@/models/chamado-codigo";
 import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -11,6 +12,8 @@ export type TipoInteracao = "comentario" | "nota_interna" | "email";
 export interface Chamado {
   id: string;
   numero: number;
+  /** Código legível e imutável: INC-1000, REQ-1001... Coluna virtual no banco. */
+  codigo: string;
   titulo: string;
   descricao: string;
   tipo: RecordType;
@@ -61,7 +64,7 @@ export interface EventoHistorico {
 }
 
 const SELECT_BASE = `
-  SELECT c.id, c.numero, c.titulo, c.descricao, c.tipo, c.categoria_id,
+  SELECT c.id, c.numero, c.codigo, c.titulo, c.descricao, c.tipo, c.categoria_id,
          c.servico_id, sv.nome AS servico_nome,
          c.sistema_id, si.nome AS sistema_nome,
          c.impacto, c.urgencia, c.prioridade, c.status,
@@ -88,15 +91,20 @@ function novoId(): string {
 
 // ---------------------------------------------------------------- leitura
 
+/**
+ * Campos opcionais declaram `| undefined` explícito por causa de
+ * exactOptionalPropertyTypes no tsconfig: sem isso, o objeto vindo do
+ * Zod (que produz `prop?: T | undefined`) não é atribuível aqui.
+ */
 export interface FiltroChamados {
-  status?: TicketStatus[];
-  responsavelId?: string;
-  solicitanteId?: string;
-  equipeId?: string;
-  prioridade?: Priority[];
+  status?: TicketStatus[] | undefined;
+  responsavelId?: string | undefined;
+  solicitanteId?: string | undefined;
+  equipeId?: string | undefined;
+  prioridade?: Priority[] | undefined;
   /** true = apenas os que já estouraram o prazo de solução */
-  vencidos?: boolean;
-  limite?: number;
+  vencidos?: boolean | undefined;
+  limite?: number | undefined;
 }
 
 export async function listarChamados(f: FiltroChamados = {}): Promise<Chamado[]> {
@@ -120,15 +128,15 @@ export async function listarChamados(f: FiltroChamados = {}): Promise<Chamado[]>
   }
   if (f.responsavelId) {
     cond.push(`c.responsavel_id = :responsavelId`);
-    binds.responsavelId = f.responsavelId;
+    binds["responsavelId"] = f.responsavelId;
   }
   if (f.solicitanteId) {
     cond.push(`c.solicitante_id = :solicitanteId`);
-    binds.solicitanteId = f.solicitanteId;
+    binds["solicitanteId"] = f.solicitanteId;
   }
   if (f.equipeId) {
     cond.push(`c.equipe_id = :equipeId`);
-    binds.equipeId = f.equipeId;
+    binds["equipeId"] = f.equipeId;
   }
   if (f.vencidos) {
     cond.push(`c.prazo_sla < SYSTIMESTAMP AND c.status NOT IN ('resolvido','fechado')`);
@@ -136,7 +144,7 @@ export async function listarChamados(f: FiltroChamados = {}): Promise<Chamado[]>
 
   const where = cond.length ? `WHERE ${cond.join(" AND ")}` : "";
   const limite = f.limite ? `FETCH FIRST :limite ROWS ONLY` : "";
-  if (f.limite) binds.limite = f.limite;
+  if (f.limite) binds["limite"] = f.limite;
 
   return consultar<Chamado>(`${SELECT_BASE} ${where} ORDER BY c.criado_em DESC ${limite}`, binds);
 }
@@ -145,8 +153,8 @@ export async function buscarChamado(id: string): Promise<Chamado | null> {
   return consultarUm<Chamado>(`${SELECT_BASE} WHERE c.id = :id`, { id });
 }
 
-export async function buscarChamadoPorNumero(numero: number): Promise<Chamado | null> {
-  return consultarUm<Chamado>(`${SELECT_BASE} WHERE c.numero = :numero`, { numero });
+export async function buscarChamadoPorCodigo(codigo: string): Promise<Chamado | null> {
+  return consultarUm<Chamado>(`${SELECT_BASE} WHERE c.codigo = :codigo`, { codigo });
 }
 
 /**
@@ -190,25 +198,29 @@ export interface NovoChamado {
   titulo: string;
   descricao: string;
   tipo: RecordType;
-  categoriaId?: string | null;
-  servicoId?: string | null;
-  sistemaId?: string | null;
+  categoriaId?: string | null | undefined;
+  servicoId?: string | null | undefined;
+  sistemaId?: string | null | undefined;
   impacto: Impact;
   urgencia: Urgency;
-  solicitanteId?: string;
-  equipeId?: string | null;
-  origem?: OrigemChamado;
+  solicitanteId?: string | undefined;
+  equipeId?: string | null | undefined;
+  origem?: OrigemChamado | undefined;
 }
 
 /**
  * Abre um chamado. A prioridade NÃO vem da tela: é derivada da matriz
  * impacto × urgência, e o prazo sai de slaFor + calendário comercial.
  * Deixar a tela escolher permitiria burlar a política de SLA.
+ *
+ * O prefixo é gravado aqui e nunca mais alterado: o código já circulou
+ * por e-mail e foi citado pelo solicitante. Reclassificar o tipo depois
+ * não muda INC-1000 para REQ-1000.
  */
 export async function criarChamado(
   ctx: ContextoUsuario,
   dados: NovoChamado,
-): Promise<{ id: string; numero: number }> {
+): Promise<{ id: string; numero: number; codigo: string }> {
   if (dados.tipo === "problema" && !ctx.admin && ctx.equipeId === null) {
     throw new ErroDominio("Usuários finais não podem abrir Problemas");
   }
@@ -227,18 +239,19 @@ export async function criarChamado(
   const id = novoId();
   const solicitanteId = dados.solicitanteId ?? ctx.id;
 
-  const numero = await emTransacao(async (tx) => {
+  const resultado = await emTransacao(async (tx) => {
     await tx.executar(
       `INSERT INTO chamados
-         (id, titulo, descricao, tipo, categoria_id, servico_id, sistema_id,
+         (id, prefixo, titulo, descricao, tipo, categoria_id, servico_id, sistema_id,
           impacto, urgencia, prioridade, status, solicitante_id, equipe_id,
           origem, criado_em, atualizado_em, prazo_resposta, prazo_sla)
        VALUES
-         (:id, :titulo, :descricao, :tipo, :categoriaId, :servicoId, :sistemaId,
+         (:id, :prefixo, :titulo, :descricao, :tipo, :categoriaId, :servicoId, :sistemaId,
           :impacto, :urgencia, :prioridade, 'novo', :solicitanteId, :equipeId,
           :origem, :criadoEm, :criadoEm2, :prazoResposta, :prazoSla)`,
       {
         id,
+        prefixo: PREFIXO_TIPO[dados.tipo],
         titulo: dados.titulo.trim(),
         descricao: dados.descricao.trim(),
         tipo: dados.tipo,
@@ -271,27 +284,29 @@ export async function criarChamado(
       },
     );
 
-    // numero é IDENTITY: só existe depois do INSERT.
-    const r = await tx.consultar<{ numero: number }>(`SELECT numero FROM chamados WHERE id = :id`, {
-      id,
-    });
-    return r[0]!.numero;
+    // numero é IDENTITY e codigo é coluna virtual: ambos só existem
+    // depois do INSERT.
+    const r = await tx.consultar<{ numero: number; codigo: string }>(
+      `SELECT numero, codigo FROM chamados WHERE id = :id`,
+      { id },
+    );
+    return r[0]!;
   });
 
-  return { id, numero };
+  return { id, numero: resultado.numero, codigo: resultado.codigo };
 }
 
 export interface AlteracaoChamado {
-  status?: TicketStatus;
-  responsavelId?: string | null;
-  equipeId?: string | null;
-  impacto?: Impact;
-  urgencia?: Urgency;
-  categoriaId?: string | null;
-  servicoId?: string | null;
-  sistemaId?: string | null;
-  problemaVinculadoId?: string | null;
-  descricaoEncerramento?: string | null;
+  status?: TicketStatus | undefined;
+  responsavelId?: string | null | undefined;
+  equipeId?: string | null | undefined;
+  impacto?: Impact | undefined;
+  urgencia?: Urgency | undefined;
+  categoriaId?: string | null | undefined;
+  servicoId?: string | null | undefined;
+  sistemaId?: string | null | undefined;
+  problemaVinculadoId?: string | null | undefined;
+  descricaoEncerramento?: string | null | undefined;
 }
 
 /**
@@ -301,6 +316,9 @@ export interface AlteracaoChamado {
  * Alterar impacto ou urgência recalcula a prioridade, mas NÃO recalcula
  * prazo_sla — o prazo é um compromisso firmado na abertura. Mudá-lo
  * retroativamente inviabilizaria qualquer indicador.
+ *
+ * O prefixo também não é recalculado se o tipo mudar: o código é
+ * imutável por design.
  */
 export async function atualizarChamado(
   ctx: ContextoUsuario,
@@ -368,18 +386,18 @@ export async function atualizarChamado(
   if (mudancas.status && mudancas.status !== atual.status) {
     if (!atual.respondidoEm && mudancas.status !== "novo") {
       sets.push(`respondido_em = :respondidoEm`);
-      binds.respondidoEm = agora;
+      binds["respondidoEm"] = agora;
     }
     if (mudancas.status === "resolvido" && !atual.resolvidoEm) {
       sets.push(`resolvido_em = :resolvidoEm`);
-      binds.resolvidoEm = agora;
+      binds["resolvidoEm"] = agora;
     }
     if (mudancas.status === "fechado") {
       sets.push(`fechado_em = :fechadoEm`);
-      binds.fechadoEm = agora;
+      binds["fechadoEm"] = agora;
       if (!atual.resolvidoEm) {
         sets.push(`resolvido_em = :resolvidoEm2`);
-        binds.resolvidoEm2 = agora;
+        binds["resolvidoEm2"] = agora;
       }
     }
   }

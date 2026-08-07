@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, Send, Sparkles, TicketPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
@@ -10,8 +11,14 @@ import { AiTicketDraft } from "@/views/ai-ticket-draft";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { useItsm } from "@/controllers/itsm-store";
+import { listarServicosFn } from "@/services/cadastros.functions";
 import { draftTicketFromConversation, type TicketDraft } from "@/services/ai-triage.functions";
+
+/**
+ * Marcador emitido pela IA quando já tem informação suficiente.
+ * Precisa ser idêntico ao definido em src/routes/api/chat.ts.
+ */
+const MARCADOR_PRONTO = "[[ABRIR_CHAMADO]]";
 
 export const Route = createFileRoute("/assistente")({
   head: () => ({
@@ -39,14 +46,22 @@ const SUGESTOES = [
   "Quero sugerir uma melhoria no relatório de chamados",
 ];
 
+/** Remove o marcador antes de exibir: ele é protocolo, não conteúdo. */
+function limparMarcador(texto: string): string {
+  return texto.split(MARCADOR_PRONTO).join("").trimEnd();
+}
+
 function Assistente() {
   const [input, setInput] = useState("");
   const [draft, setDraft] = useState<TicketDraft | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [criado, setCriado] = useState<string | null>(null);
+  const [descartado, setDescartado] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const { services } = useItsm();
+
+  // O catálogo alimenta o prompt: a IA só pode sugerir serviço que existe.
+  const servicos = useQuery({ queryKey: ["servicos"], queryFn: () => listarServicosFn() });
   const gerarRascunho = useServerFn(draftTicketFromConversation);
 
   const { messages, sendMessage, status } = useChat({
@@ -65,38 +80,71 @@ function Assistente() {
     if (!loading) inputRef.current?.focus();
   }, [loading]);
 
+  function textoDe(m: (typeof messages)[number]): string {
+    return m.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+  }
+
+  const conversa = messages
+    .map((m) => `${m.role === "user" ? "Usuário" : "Assistente"}: ${limparMarcador(textoDe(m))}`)
+    .join("\n\n")
+    .slice(-8000);
+
+  const estruturarChamado = useCallback(
+    async (automatico = false) => {
+      if (conversa.trim().length < 10 || drafting) return;
+      setDrafting(true);
+      setCriado(null);
+      try {
+        const result = await gerarRascunho({
+          data: {
+            conversa,
+            servicos: (servicos.data ?? []).map((s) => s.nome).slice(0, 60),
+          },
+        });
+        setDraft(result);
+      } catch (error) {
+        // Falha silenciosa no modo automático: o usuário ainda tem o
+        // botão manual, e um toast de erro que ele não pediu incomoda.
+        if (!automatico) {
+          toast.error("Não foi possível estruturar o chamado", {
+            description: error instanceof Error ? error.message : undefined,
+          });
+        }
+      } finally {
+        setDrafting(false);
+      }
+    },
+    [conversa, drafting, gerarRascunho, servicos.data],
+  );
+
+  /**
+   * Proatividade: quando a IA termina de responder emitindo o marcador,
+   * o rascunho é montado sozinho. O usuário confirma ou descarta — não
+   * precisa clicar em nada para a proposta aparecer.
+   *
+   * `descartado` impede que a proposta reapareça depois de recusada,
+   * já que o marcador continua no histórico da conversa.
+   */
+  useEffect(() => {
+    if (loading || draft || drafting || criado || descartado) return;
+
+    const ultima = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!ultima) return;
+    if (!textoDe(ultima).includes(MARCADOR_PRONTO)) return;
+
+    void estruturarChamado(true);
+    // textoDe é estável o suficiente para o escopo deste efeito.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, loading, draft, drafting, criado, descartado, estruturarChamado]);
+
   function submit(text: string) {
     const value = text.trim();
     if (!value || loading) return;
     void sendMessage({ text: value.slice(0, 2000) });
     setInput("");
     setCriado(null);
-  }
-
-  const conversa = messages
-    .map((m) => {
-      const text = m.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
-      return `${m.role === "user" ? "Usuário" : "Assistente"}: ${text}`;
-    })
-    .join("\n\n")
-    .slice(-8000);
-
-  async function estruturarChamado() {
-    if (conversa.trim().length < 10) return;
-    setDrafting(true);
-    setCriado(null);
-    try {
-      const result = await gerarRascunho({
-        data: { conversa, servicos: services.map((s) => s.nome).slice(0, 60) },
-      });
-      setDraft(result);
-    } catch (error) {
-      toast.error("Não foi possível estruturar o chamado", {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    } finally {
-      setDrafting(false);
-    }
+    // Nova mensagem reabre a possibilidade de proposta automática.
+    setDescartado(false);
   }
 
   return (
@@ -114,8 +162,9 @@ function Assistente() {
                 </span>
                 <h2 className="mt-4 text-base font-semibold">Descreva o que está acontecendo</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  A IA classifica o registro, aplica a matriz de prioridade e orienta o próximo
-                  passo. Registros do tipo Problema seguem exclusivos da equipe de TI.
+                  A IA classifica o registro, aplica a matriz de prioridade e propõe a abertura
+                  assim que entender o caso. Registros do tipo Problema seguem exclusivos da equipe
+                  de TI.
                 </p>
                 <div className="mt-5 grid gap-2 text-left">
                   {SUGESTOES.map((s) => (
@@ -132,10 +181,8 @@ function Assistente() {
             ) : null}
 
             {messages.map((m) => {
-              const text = m.parts
-                .map((p) => (p.type === "text" ? p.text : ""))
-                .join("")
-                .trim();
+              const texto = limparMarcador(textoDe(m)).trim();
+              if (!texto) return null;
               return (
                 <div
                   key={m.id}
@@ -149,7 +196,7 @@ function Assistente() {
                         : "border border-border bg-surface text-muted-foreground",
                     )}
                   >
-                    {text}
+                    {texto}
                   </div>
                 </div>
               );
@@ -171,13 +218,23 @@ function Assistente() {
               </div>
             ) : null}
 
+            {drafting && !draft ? (
+              <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-surface px-4 py-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin text-primary" />
+                Montando a proposta de chamado...
+              </div>
+            ) : null}
+
             {draft ? (
               <AiTicketDraft
                 draft={draft}
-                onDismiss={() => setDraft(null)}
-                onCreated={(id) => {
+                onDismiss={() => {
                   setDraft(null);
-                  setCriado(id);
+                  setDescartado(true);
+                }}
+                onCreated={(codigo) => {
+                  setDraft(null);
+                  setCriado(codigo);
                 }}
               />
             ) : null}
@@ -192,21 +249,19 @@ function Assistente() {
           </div>
 
           <div className="border-t border-border p-4">
-            {messages.length > 0 && !draft ? (
+            {/* Atalho manual: a proposta automática cobre o caso normal,
+                mas o usuário pode forçar a qualquer momento. */}
+            {messages.length > 0 && !draft && !drafting ? (
               <div className="mb-3">
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="gap-2"
-                  disabled={drafting || loading}
-                  onClick={() => void estruturarChamado()}
+                  variant="ghost"
+                  className="gap-2 text-muted-foreground"
+                  disabled={loading}
+                  onClick={() => void estruturarChamado(false)}
                 >
-                  {drafting ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <TicketPlus className="size-4" />
-                  )}
-                  Abrir chamado com base nesta conversa
+                  <TicketPlus className="size-4" />
+                  Abrir chamado agora
                 </Button>
               </div>
             ) : null}

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Search, Sparkles, Server, Filter, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Search, Sparkles, Server, Filter, X, Loader2, History } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { PriorityBadge, SlaPill, StatusBadge, TypeBadge } from "@/views/badges";
@@ -23,20 +24,37 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useItsm } from "@/controllers/itsm-store";
 import {
   PRIORITY_LABEL,
   STATUS_LABEL,
   TYPE_LABEL,
   type Priority,
-  type RecordType,
-  type Ticket,
   type TicketStatus,
 } from "@/models/itsm-types";
-import { useHydrated } from "@/hooks/use-hydrated";
+import type { Chamado } from "@/repositories/chamados.repo";
+import { paraTicket, fmtDataHora } from "@/lib/chamado-adapter";
+import {
+  listarChamadosFn,
+  criarChamadoFn,
+  atualizarChamadoFn,
+  buscarChamadoFn,
+  type NovoChamadoInput,
+  type AlteracaoChamadoInput,
+} from "@/services/chamados.functions";
+import {
+  usuarioAtualFn,
+  listarUsuariosFn,
+  listarAtendentesFn,
+} from "@/services/cadastros.functions";
 import { cn } from "@/lib/utils";
 
 const PRIORITY_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
+
+/** Grid da lista. Constante única porque cabeçalho e linhas precisam bater. */
+const GRID = "lg:grid-cols-[7rem_1fr_8rem_8rem_4.5rem_7.5rem_6.5rem_6.5rem_8rem]";
+
+/** Valor sentinela do select: Radix não aceita SelectItem com value="". */
+const SEM_RESPONSAVEL = "__nenhum__";
 
 const TABS = [
   { value: "todos", label: "Todos" },
@@ -56,30 +74,52 @@ const TAB_ACCENT: Record<string, string> = {
   tarefa: "bg-secondary text-foreground border-border",
 };
 
-function fmtDataHora(iso: string) {
-  const d = new Date(iso);
-  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
-}
+/** Rótulos legíveis para a trilha de auditoria. */
+const CAMPO_LABEL: Record<string, string> = {
+  criacao: "Chamado aberto",
+  status: "Status",
+  responsavelId: "Responsável",
+  equipeId: "Equipe",
+  impacto: "Impacto",
+  urgencia: "Urgência",
+  prioridade: "Prioridade",
+  categoriaId: "Categoria",
+  servicoId: "Serviço",
+  sistemaId: "Sistema",
+  problemaVinculadoId: "Problema vinculado",
+  descricaoEncerramento: "Descrição de encerramento",
+};
 
-function ticketSearchable(t: Ticket) {
+function textoBusca(c: Chamado) {
   return [
-    t.id,
-    t.titulo,
-    t.descricao,
-    t.solicitante,
-    t.servico,
-    t.sistema,
-    t.categoria,
-    t.responsavel,
-    t.equipe,
-    t.origem,
-    TYPE_LABEL[t.tipo],
-    PRIORITY_LABEL[t.prioridade],
-    STATUS_LABEL[t.status],
+    c.codigo,
+    c.titulo,
+    c.descricao,
+    c.solicitanteNome,
+    c.servicoNome,
+    c.sistemaNome,
+    c.responsavelNome,
+    c.equipeNome,
+    c.origem,
+    TYPE_LABEL[c.tipo],
+    PRIORITY_LABEL[c.prioridade],
+    STATUS_LABEL[c.status],
   ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+}
+
+function fmtDataHoraLonga(v: Date | string | null | undefined): string {
+  if (!v) return "—";
+  const d = v instanceof Date ? v : new Date(v);
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export const Route = createFileRoute("/chamados")({
@@ -102,9 +142,27 @@ export const Route = createFileRoute("/chamados")({
 });
 
 function Chamados() {
-  const { tickets, updateTicket, createTicket, role, users, systems } = useItsm();
-  const hydrated = useHydrated();
-  const isTi = hydrated ? role === "ti" : true;
+  const qc = useQueryClient();
+
+  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
+  const usuarios = useQuery({ queryKey: ["usuarios"], queryFn: () => listarUsuariosFn() });
+  const atendentes = useQuery({ queryKey: ["atendentes"], queryFn: () => listarAtendentesFn() });
+  const chamadosQuery = useQuery({
+    queryKey: ["chamados"],
+    queryFn: () => listarChamadosFn({ data: { limite: 500 } }),
+  });
+
+  const chamados: Chamado[] = useMemo(() => chamadosQuery.data ?? [], [chamadosQuery.data]);
+  // Permissão de atuação: admin ou membro de alguma equipe de TI.
+  const isTi = usuario.data ? usuario.data.admin || usuario.data.equipeId !== null : false;
+
+  /** Resolve IDs gravados no histórico para nomes legíveis. */
+  const nomePorId = useMemo(() => {
+    const m = new Map<string, string>();
+    (usuarios.data ?? []).forEach((u) => m.set(u.id, u.nome));
+    return m;
+  }, [usuarios.data]);
+
   const [q, setQ] = useState("");
   const [encerramento, setEncerramento] = useState("");
   const [tipo, setTipo] = useState<string>("todos");
@@ -112,54 +170,58 @@ function Chamados() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [filtroSistema, setFiltroSistema] = useState<string>("todos");
   const [filtroResponsavel, setFiltroResponsavel] = useState<string>("todos");
-  const [filtroCategoria, setFiltroCategoria] = useState<string>("todos");
   const [filtroPrioridade, setFiltroPrioridade] = useState<string>("todos");
   const [filtroOrigem, setFiltroOrigem] = useState<string>("todos");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  /** Detalhe do chamado selecionado, com histórico. Só busca quando o painel abre. */
+  const detalhe = useQuery({
+    queryKey: ["chamado", selectedId],
+    queryFn: () => buscarChamadoFn({ data: { id: selectedId! } }),
+    enabled: !!selectedId,
+  });
+
+  const atualizar = useMutation({
+    mutationFn: (v: AlteracaoChamadoInput) => atualizarChamadoFn({ data: v }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["chamados"] });
+      qc.invalidateQueries({ queryKey: ["chamado", selectedId] });
+    },
+    onError: (e: Error) => toast.error("Não foi possível atualizar", { description: e.message }),
+  });
+
+  const criar = useMutation({
+    mutationFn: (v: NovoChamadoInput) => criarChamadoFn({ data: v }),
+    onError: (e: Error) => toast.error("Não foi possível criar", { description: e.message }),
+  });
+
   const sistemasAtivos = useMemo(
-    () => [...new Set(tickets.map((t) => t.sistema?.trim()).filter(Boolean))].sort() as string[],
-    [tickets],
+    () => [...new Set(chamados.map((c) => c.sistemaNome).filter(Boolean))].sort() as string[],
+    [chamados],
   );
   const responsaveisAtivos = useMemo(
-    () => [...new Set(tickets.map((t) => t.responsavel).filter(Boolean))].sort() as string[],
-    [tickets],
-  );
-  const categoriasAtivas = useMemo(
-    () => [...new Set(tickets.map((t) => t.categoria).filter(Boolean))].sort() as string[],
-    [tickets],
+    () => [...new Set(chamados.map((c) => c.responsavelNome).filter(Boolean))].sort() as string[],
+    [chamados],
   );
 
   const filtered = useMemo(
     () =>
-      tickets.filter(
-        (t) =>
-          (tipo === "todos" || t.tipo === tipo) &&
-          (status === "todos" || t.status === status) &&
-          (filtroSistema === "todos" || t.sistema?.trim() === filtroSistema) &&
-          (filtroResponsavel === "todos" || t.responsavel === filtroResponsavel) &&
-          (filtroCategoria === "todos" || t.categoria === filtroCategoria) &&
-          (filtroPrioridade === "todos" || t.prioridade === filtroPrioridade) &&
-          (filtroOrigem === "todos" || t.origem === filtroOrigem) &&
-          (q.trim() === "" || ticketSearchable(t).includes(q.toLowerCase())),
+      chamados.filter(
+        (c) =>
+          (tipo === "todos" || c.tipo === tipo) &&
+          (status === "todos" || c.status === status) &&
+          (filtroSistema === "todos" || c.sistemaNome === filtroSistema) &&
+          (filtroResponsavel === "todos" || c.responsavelNome === filtroResponsavel) &&
+          (filtroPrioridade === "todos" || c.prioridade === filtroPrioridade) &&
+          (filtroOrigem === "todos" || c.origem === filtroOrigem) &&
+          (q.trim() === "" || textoBusca(c).includes(q.toLowerCase())),
       ),
-    [
-      tickets,
-      tipo,
-      status,
-      filtroSistema,
-      filtroResponsavel,
-      filtroCategoria,
-      filtroPrioridade,
-      filtroOrigem,
-      q,
-    ],
+    [chamados, tipo, status, filtroSistema, filtroResponsavel, filtroPrioridade, filtroOrigem, q],
   );
 
   const activeFiltersCount = [
     filtroSistema,
     filtroResponsavel,
-    filtroCategoria,
     filtroPrioridade,
     filtroOrigem,
   ].filter((v) => v !== "todos").length;
@@ -169,27 +231,26 @@ function Chamados() {
     setStatus("todos");
     setFiltroSistema("todos");
     setFiltroResponsavel("todos");
-    setFiltroCategoria("todos");
     setFiltroPrioridade("todos");
     setFiltroOrigem("todos");
   }
 
   const contagemPorTipo = useMemo(() => {
-    const base: Record<string, number> = { todos: tickets.length };
-    tickets.forEach((t) => {
-      base[t.tipo] = (base[t.tipo] ?? 0) + 1;
+    const base: Record<string, number> = { todos: chamados.length };
+    chamados.forEach((c) => {
+      base[c.tipo] = (base[c.tipo] ?? 0) + 1;
     });
     return base;
-  }, [tickets]);
+  }, [chamados]);
 
   /** Agrupa por sistema e ordena por criticidade e, em seguida, data de abertura. */
   const grupos = useMemo(() => {
-    const mapa = new Map<string, Ticket[]>();
-    filtered.forEach((t) => {
-      const chave = t.sistema?.trim() || t.servico || "Sem sistema";
-      mapa.set(chave, [...(mapa.get(chave) ?? []), t]);
+    const mapa = new Map<string, Chamado[]>();
+    filtered.forEach((c) => {
+      const chave = c.sistemaNome || c.servicoNome || "Sem sistema";
+      mapa.set(chave, [...(mapa.get(chave) ?? []), c]);
     });
-    const ordenar = (a: Ticket, b: Ticket) =>
+    const ordenar = (a: Chamado, b: Chamado) =>
       (PRIORITY_ORDER[a.prioridade] ?? 9) - (PRIORITY_ORDER[b.prioridade] ?? 9) ||
       new Date(a.criadoEm).getTime() - new Date(b.criadoEm).getTime();
 
@@ -202,49 +263,108 @@ function Chamados() {
       );
   }, [filtered]);
 
-  const atual: Ticket | null = tickets.find((t) => t.id === selectedId) ?? null;
+  const atual: Chamado | null = chamados.find((c) => c.id === selectedId) ?? null;
 
   // Recorrência: 3+ incidentes no mesmo sistema/serviço sugerem abertura de Problema.
   const sugestoesProblema = useMemo(() => {
-    const grupos = new Map<string, Ticket[]>();
-    tickets
-      .filter((t) => t.tipo === "incidente")
-      .forEach((t) => {
-        const chave = t.sistema?.trim() || t.servico;
-        grupos.set(chave, [...(grupos.get(chave) ?? []), t]);
+    const porChave = new Map<string, Chamado[]>();
+    chamados
+      .filter((c) => c.tipo === "incidente")
+      .forEach((c) => {
+        const chave = c.sistemaNome || c.servicoNome || "Sem sistema";
+        porChave.set(chave, [...(porChave.get(chave) ?? []), c]);
       });
-    return [...grupos.entries()]
+    return [...porChave.entries()]
       .filter(([chave, lista]) => {
-        const jaExiste = tickets.some(
-          (t) =>
-            t.tipo === "problema" &&
-            `${t.titulo} ${t.sistema ?? ""}`.toLowerCase().includes(chave.toLowerCase()),
+        const jaExiste = chamados.some(
+          (c) => c.tipo === "problema" && c.titulo.toLowerCase().includes(chave.toLowerCase()),
         );
         return lista.length >= 3 && !jaExiste;
       })
       .map(([chave, lista]) => ({ chave, lista }));
-  }, [tickets]);
+  }, [chamados]);
 
-  function abrirProblema(chave: string, lista: Ticket[]) {
-    const p = createTicket({
-      titulo: `Investigação de causa raiz — ${chave}`,
-      descricao: `Criado a partir da recorrência de ${lista.length} incidentes em ${chave}. Incidentes relacionados: ${lista
-        .map((t) => t.id)
-        .join(", ")}.`,
-      tipo: "problema",
-      categoria: lista[0]?.categoria ?? "Infraestrutura",
-      servico: lista[0]?.servico ?? chave,
-      sistema: lista[0]?.sistema,
-      impacto: "alto",
-      urgencia: "media",
-      solicitante: "Equipe de TI",
-      origem: "ia",
-    });
-    lista.forEach((t) => updateTicket(t.id, { problemaVinculado: p.id }));
-    toast.success(`Problema ${p.id} criado`, {
-      description: "Incidentes recorrentes vinculados para análise de causa raiz.",
-    });
+  async function abrirProblema(chave: string, lista: Chamado[]) {
+    const base = lista[0]!;
+    try {
+      const p = await criar.mutateAsync({
+        titulo: `Investigação de causa raiz — ${chave}`.slice(0, 300),
+        descricao: `Criado a partir da recorrência de ${lista.length} incidentes em ${chave}. Incidentes relacionados: ${lista.map((c) => c.codigo).join(", ")}.`,
+        tipo: "problema",
+        categoriaId: base.categoriaId,
+        servicoId: base.servicoId,
+        sistemaId: base.sistemaId,
+        impacto: "alto",
+        urgencia: "media",
+        origem: "ia",
+      });
+
+      // Vincula em sequência: cada update grava sua própria linha de histórico.
+      for (const c of lista) {
+        await atualizar.mutateAsync({ id: c.id, problemaVinculadoId: p.id });
+      }
+
+      qc.invalidateQueries({ queryKey: ["chamados"] });
+      toast.success(`Problema ${p.codigo} criado`, {
+        description: "Incidentes recorrentes vinculados para análise de causa raiz.",
+      });
+    } catch {
+      /* o onError das mutations já notificou */
+    }
   }
+
+  function alterarStatus(c: Chamado, novo: TicketStatus) {
+    const texto = (encerramento || c.descricaoEncerramento || "").trim();
+    if ((novo === "resolvido" || novo === "fechado") && texto.length < 10) {
+      toast.error("Informe a descrição de encerramento", {
+        description: "Obrigatória para resolver ou fechar o chamado.",
+      });
+      return;
+    }
+    atualizar.mutate(
+      { id: c.id, status: novo, ...(texto ? { descricaoEncerramento: texto } : {}) },
+      {
+        onSuccess: () => {
+          setEncerramento("");
+          toast.success(`${c.codigo} atualizado para ${STATUS_LABEL[novo]}`);
+        },
+      },
+    );
+  }
+
+  function alterarResponsavel(c: Chamado, valor: string) {
+    const novoId = valor === SEM_RESPONSAVEL ? null : valor;
+    // Atribuir também move o chamado para a equipe da pessoa: responsável
+    // sem equipe correspondente quebra a fila por equipe.
+    const pessoa = atendentes.data?.find((a) => a.id === novoId);
+    atualizar.mutate(
+      {
+        id: c.id,
+        responsavelId: novoId,
+        ...(pessoa ? { equipeId: pessoa.equipeId } : {}),
+      },
+      {
+        onSuccess: () =>
+          toast.success(
+            novoId ? `Atribuído a ${pessoa?.nome ?? "responsável"}` : "Atribuição removida",
+          ),
+      },
+    );
+  }
+
+  /** Traduz o valor bruto do histórico para algo legível na tela. */
+  function valorLegivel(campo: string, valor: string | null): string {
+    if (!valor) return "vazio";
+    if (campo === "status") return STATUS_LABEL[valor as TicketStatus] ?? valor;
+    if (campo === "prioridade") return PRIORITY_LABEL[valor as Priority] ?? valor;
+    if (campo.endsWith("Id")) return nomePorId.get(valor) ?? valor;
+    if (campo === "descricaoEncerramento") {
+      return valor.length > 60 ? `${valor.slice(0, 60)}...` : valor;
+    }
+    return valor;
+  }
+
+  const carregando = chamadosQuery.isPending || usuario.isPending;
 
   return (
     <AppShell
@@ -252,6 +372,12 @@ function Chamados() {
       subtitle="Canal único de abertura e acompanhamento — incidentes, requisições, melhorias, problemas e tarefas"
     >
       <div className="space-y-4">
+        {chamadosQuery.error ? (
+          <div className="panel border-destructive/40 p-4 text-sm text-destructive">
+            Não foi possível carregar os chamados: {String(chamadosQuery.error)}
+          </div>
+        ) : null}
+
         {isTi && sugestoesProblema.length ? (
           <div className="panel space-y-3 border-warning/40 p-4">
             <p className="flex items-center gap-2 text-sm font-medium text-warning">
@@ -264,9 +390,14 @@ function Chamados() {
               >
                 <span className="text-sm">
                   <strong>{chave}</strong> acumulou {lista.length} incidentes (
-                  {lista.map((t) => t.id).join(", ")}).
+                  {lista.map((c) => c.codigo).join(", ")}).
                 </span>
-                <Button size="sm" variant="secondary" onClick={() => abrirProblema(chave, lista)}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={criar.isPending || atualizar.isPending}
+                  onClick={() => abrirProblema(chave, lista)}
+                >
                   Criar Problema
                 </Button>
               </div>
@@ -311,7 +442,7 @@ function Chamados() {
                   value={q}
                   maxLength={120}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Buscar por ID, descrição, sistema, responsável, categoria..."
+                  placeholder="Buscar por código, descrição, sistema, responsável..."
                   className="pl-9"
                 />
               </div>
@@ -350,7 +481,7 @@ function Chamados() {
             </div>
 
             {advancedOpen ? (
-              <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">Sistema</label>
                   <Select value={filtroSistema} onValueChange={setFiltroSistema}>
@@ -384,22 +515,6 @@ function Chamados() {
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">Categoria</label>
-                  <Select value={filtroCategoria} onValueChange={setFiltroCategoria}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todas" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="todos">Todas as categorias</SelectItem>
-                      {categoriasAtivas.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">Prioridade</label>
                   <Select value={filtroPrioridade} onValueChange={setFiltroPrioridade}>
                     <SelectTrigger>
@@ -415,7 +530,7 @@ function Chamados() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
                   <label className="text-xs font-medium text-muted-foreground">Origem</label>
                   <div className="flex flex-wrap gap-2">
                     {(["todos", "portal", "ia", "email", "telefone"] as const).map((o) => (
@@ -466,17 +581,6 @@ function Chamados() {
                     </button>
                   </Badge>
                 )}
-                {filtroCategoria !== "todos" && (
-                  <Badge variant="secondary" className="gap-1">
-                    Categoria: {filtroCategoria}
-                    <button
-                      onClick={() => setFiltroCategoria("todos")}
-                      aria-label="Remover filtro de categoria"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </Badge>
-                )}
                 {filtroPrioridade !== "todos" && (
                   <Badge variant="secondary" className="gap-1">
                     Prioridade: {PRIORITY_LABEL[filtroPrioridade as Priority]}
@@ -508,16 +612,28 @@ function Chamados() {
         </div>
 
         <div className="panel overflow-hidden">
-          <div className="hidden grid-cols-[6rem_1fr_9rem_5rem_8.5rem_7rem_7rem_8rem] gap-3 border-b border-border px-5 py-3 text-xs uppercase tracking-wide text-muted-foreground lg:grid">
-            <span>ID</span>
+          <div
+            className={cn(
+              "hidden gap-3 border-b border-border px-5 py-3 text-xs uppercase tracking-wide text-muted-foreground lg:grid",
+              GRID,
+            )}
+          >
+            <span>Código</span>
             <span>Registro</span>
             <span>Sistema</span>
+            <span>Responsável</span>
             <span>Prior.</span>
             <span>Status</span>
             <span>Abertura</span>
             <span>Limite SLA</span>
             <span>Situação</span>
           </div>
+
+          {carregando ? (
+            <p className="flex items-center justify-center gap-2 px-5 py-10 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Carregando chamados...
+            </p>
+          ) : null}
 
           {grupos.map(({ sistema, lista }) => (
             <section key={sistema}>
@@ -531,36 +647,47 @@ function Chamados() {
                 </span>
               </header>
               <ul className="divide-y divide-border">
-                {lista.map((t) => (
-                  <li key={t.id}>
+                {lista.map((c) => (
+                  <li key={c.id}>
                     <button
-                      onClick={() => setSelectedId(t.id)}
-                      className="grid w-full grid-cols-1 gap-2 px-5 py-3 text-left transition-colors hover:bg-secondary/50 lg:grid-cols-[6rem_1fr_9rem_5rem_8.5rem_7rem_7rem_8rem] lg:items-center lg:gap-3"
+                      onClick={() => setSelectedId(c.id)}
+                      className={cn(
+                        "grid w-full grid-cols-1 gap-2 px-5 py-3 text-left transition-colors hover:bg-secondary/50 lg:items-center lg:gap-3",
+                        GRID,
+                      )}
                     >
-                      <span className="font-mono text-xs text-muted-foreground">{t.id}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{c.codigo}</span>
                       <span className="min-w-0">
-                        <span className="block truncate text-sm">{t.titulo}</span>
+                        <span className="block truncate text-sm">{c.titulo}</span>
                         <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                          <TypeBadge value={t.tipo} />
-                          <span className="truncate">{t.solicitante}</span>
+                          <TypeBadge value={c.tipo} />
+                          <span className="truncate">{c.solicitanteNome}</span>
                         </span>
                       </span>
                       <span className="truncate text-sm text-muted-foreground">
-                        {t.sistema?.trim() || t.servico}
+                        {c.sistemaNome || c.servicoNome || "—"}
+                      </span>
+                      <span
+                        className={cn(
+                          "truncate text-sm",
+                          c.responsavelNome ? "text-foreground" : "italic text-muted-foreground",
+                        )}
+                      >
+                        {c.responsavelNome || "Não atribuído"}
                       </span>
                       <span>
-                        <PriorityBadge value={t.prioridade} />
+                        <PriorityBadge value={c.prioridade} />
                       </span>
                       <span>
-                        <StatusBadge value={t.status} />
+                        <StatusBadge value={c.status} />
                       </span>
                       <span className="font-mono text-xs text-muted-foreground">
-                        {hydrated ? fmtDataHora(t.criadoEm) : "—"}
+                        {fmtDataHora(c.criadoEm)}
                       </span>
                       <span className="font-mono text-xs text-muted-foreground">
-                        {hydrated ? fmtDataHora(t.prazoSla) : "—"}
+                        {fmtDataHora(c.prazoSla)}
                       </span>
-                      <SlaPill ticket={t} />
+                      <SlaPill ticket={paraTicket(c)} />
                     </button>
                   </li>
                 ))}
@@ -568,7 +695,7 @@ function Chamados() {
             </section>
           ))}
 
-          {grupos.length === 0 ? (
+          {!carregando && grupos.length === 0 ? (
             <p className="px-5 py-10 text-center text-sm text-muted-foreground">
               Nenhum chamado encontrado com os filtros atuais.
             </p>
@@ -582,7 +709,7 @@ function Chamados() {
             <>
               <SheetHeader>
                 <SheetTitle className="font-mono text-sm text-muted-foreground">
-                  {atual.id}
+                  {atual.codigo}
                 </SheetTitle>
                 <SheetDescription className="text-base text-foreground">
                   {atual.titulo}
@@ -600,12 +727,11 @@ function Chamados() {
 
                 <dl className="grid grid-cols-2 gap-3 text-sm">
                   {[
-                    ["Serviço", atual.servico],
-                    ...(atual.sistema ? [["Sistema", atual.sistema]] : []),
-                    ["Categoria", atual.categoria],
-                    ["Solicitante", atual.solicitante],
-                    ["Responsável", atual.responsavel],
-                    ["Equipe", atual.equipe],
+                    ["Serviço", atual.servicoNome ?? "—"],
+                    ["Sistema", atual.sistemaNome ?? "—"],
+                    ["Solicitante", atual.solicitanteNome ?? "—"],
+                    ["Responsável", atual.responsavelNome ?? "Não atribuído"],
+                    ["Equipe", atual.equipeNome ?? "—"],
                     ["Origem", atual.origem === "ia" ? "Assistente IA" : atual.origem],
                     ["Impacto", atual.impacto],
                     ["Urgência", atual.urgencia],
@@ -617,16 +743,14 @@ function Chamados() {
                   ))}
                 </dl>
 
-                <SlaPanel ticket={atual} />
+                <SlaPanel ticket={paraTicket(atual)} />
 
-                {atual.problemaVinculado ? (
+                {atual.problemaVinculadoId ? (
                   <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
                     <p className="flex items-center gap-2 text-xs font-medium text-warning">
                       <Sparkles className="size-3.5" /> Correlação identificada
                     </p>
-                    <p className="mt-1">
-                      Vinculado ao Problema {atual.problemaVinculado} para análise de causa raiz.
-                    </p>
+                    <p className="mt-1">Vinculado a um Problema para análise de causa raiz.</p>
                   </div>
                 ) : null}
 
@@ -639,6 +763,30 @@ function Chamados() {
 
                 {isTi ? (
                   <>
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Responsável
+                      </p>
+                      <Select
+                        value={atual.responsavelId ?? SEM_RESPONSAVEL}
+                        disabled={atualizar.isPending}
+                        onValueChange={(v) => alterarResponsavel(atual, v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Não atribuído" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={SEM_RESPONSAVEL}>Não atribuído</SelectItem>
+                          {(atendentes.data ?? []).map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.nome}
+                              {a.equipeNome ? ` · ${a.equipeNome}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
                     <div className="space-y-2">
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">
                         Descrição para encerramento
@@ -658,22 +806,8 @@ function Chamados() {
                       </p>
                       <Select
                         value={atual.status}
-                        onValueChange={(v) => {
-                          const novo = v as TicketStatus;
-                          const texto = (encerramento || atual.descricaoEncerramento || "").trim();
-                          if ((novo === "resolvido" || novo === "fechado") && texto.length < 10) {
-                            toast.error("Informe a descrição de encerramento", {
-                              description: "Obrigatória para resolver ou fechar o chamado.",
-                            });
-                            return;
-                          }
-                          updateTicket(atual.id, {
-                            status: novo,
-                            ...(texto ? { descricaoEncerramento: texto } : {}),
-                          });
-                          setEncerramento("");
-                          toast.success(`${atual.id} atualizado para ${STATUS_LABEL[novo]}`);
-                        }}
+                        disabled={atualizar.isPending}
+                        onValueChange={(v) => alterarStatus(atual, v as TicketStatus)}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -687,17 +821,6 @@ function Chamados() {
                         </SelectContent>
                       </Select>
                     </div>
-
-                    <Button
-                      variant="secondary"
-                      className="w-full"
-                      onClick={() => {
-                        updateTicket(atual.id, { responsavel: "Equipe de TI" });
-                        toast.success("Chamado atribuído à equipe de TI");
-                      }}
-                    >
-                      Assumir chamado
-                    </Button>
                   </>
                 ) : (
                   <div className="rounded-lg border border-border bg-surface p-3 text-sm text-muted-foreground">
@@ -710,6 +833,73 @@ function Chamados() {
                     </p>
                   </div>
                 )}
+
+                {/* Trilha de auditoria: vem de chamado_historico, uma linha por campo alterado. */}
+                <div className="space-y-3 border-t border-border pt-5">
+                  <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+                    <History className="size-3.5" /> Histórico do chamado
+                  </p>
+
+                  {detalhe.isPending ? (
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="size-3.5 animate-spin" /> Carregando histórico...
+                    </p>
+                  ) : detalhe.error ? (
+                    <p className="text-xs text-destructive">
+                      Não foi possível carregar o histórico.
+                    </p>
+                  ) : (
+                    <ol className="space-y-0">
+                      {(detalhe.data?.historico ?? []).map((ev, i, arr) => (
+                        <li key={ev.id} className="relative flex gap-3 pb-4">
+                          {/* Linha vertical conectando os eventos, exceto no último. */}
+                          {i < arr.length - 1 ? (
+                            <span
+                              className="absolute left-[5px] top-3 h-full w-px bg-border"
+                              aria-hidden
+                            />
+                          ) : null}
+                          <span className="relative mt-1.5 size-[11px] shrink-0 rounded-full border-2 border-primary bg-background" />
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <p className="text-sm">
+                              {ev.campo === "criacao" ? (
+                                <span className="font-medium">Chamado aberto</span>
+                              ) : (
+                                <>
+                                  <span className="font-medium">
+                                    {CAMPO_LABEL[ev.campo] ?? ev.campo}
+                                  </span>
+                                  {ev.valorAnterior ? (
+                                    <>
+                                      {" de "}
+                                      <span className="text-muted-foreground line-through">
+                                        {valorLegivel(ev.campo, ev.valorAnterior)}
+                                      </span>
+                                    </>
+                                  ) : null}
+                                  {" para "}
+                                  <span className="text-foreground">
+                                    {valorLegivel(ev.campo, ev.valorNovo)}
+                                  </span>
+                                </>
+                              )}
+                            </p>
+                            <p className="font-mono text-[11px] text-muted-foreground">
+                              {fmtDataHoraLonga(ev.criadoEm)}
+                              {ev.autorNome ? ` · ${ev.autorNome}` : ""}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+
+                      {(detalhe.data?.historico ?? []).length === 0 ? (
+                        <li className="text-xs text-muted-foreground">
+                          Nenhum evento registrado ainda.
+                        </li>
+                      ) : null}
+                    </ol>
+                  )}
+                </div>
               </div>
             </>
           ) : null}

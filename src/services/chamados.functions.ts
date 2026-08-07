@@ -7,12 +7,20 @@ import { z } from "zod";
  *
  * Os repositórios são importados dinamicamente dentro do handler para
  * o oracledb nunca entrar no bundle do navegador.
+ *
+ * Os tipos inferidos do Zod são exportados porque as telas precisam
+ * tipar as mutations: Parameters<typeof fn>[0]["data"] não funciona,
+ * já que o parâmetro da server function é opcional.
  */
 
+const STATUS = ["novo", "triagem", "em_andamento", "aguardando", "resolvido", "fechado"] as const;
+const TIPOS = ["incidente", "requisicao", "melhoria", "problema", "tarefa"] as const;
+const IMPACTOS = ["alto", "medio", "baixo"] as const;
+const URGENCIAS = ["alta", "media", "baixa"] as const;
+const ORIGENS = ["portal", "ia", "email", "telefone"] as const;
+
 const Filtro = z.object({
-  status: z
-    .array(z.enum(["novo", "triagem", "em_andamento", "aguardando", "resolvido", "fechado"]))
-    .optional(),
+  status: z.array(z.enum(STATUS)).optional(),
   responsavelId: z.string().optional(),
   solicitanteId: z.string().optional(),
   equipeId: z.string().optional(),
@@ -20,15 +28,17 @@ const Filtro = z.object({
   limite: z.number().int().positive().max(500).optional(),
 });
 
+export type FiltroChamadosInput = z.infer<typeof Filtro>;
+
 export const listarChamadosFn = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => Filtro.parse(d ?? {}))
+  .validator((d: unknown) => Filtro.parse(d ?? {}))
   .handler(async ({ data }) => {
     const { listarChamados } = await import("@/repositories/chamados.repo");
     return listarChamados(data);
   });
 
 export const buscarChamadoFn = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
   .handler(async ({ data }) => {
     const { buscarChamado, listarInteracoes, listarHistorico } =
       await import("@/repositories/chamados.repo");
@@ -49,18 +59,20 @@ export const buscarChamadoFn = createServerFn({ method: "GET" })
 const Novo = z.object({
   titulo: z.string().min(3).max(300),
   descricao: z.string().min(5),
-  tipo: z.enum(["incidente", "requisicao", "melhoria", "problema", "tarefa"]),
+  tipo: z.enum(TIPOS),
   categoriaId: z.string().nullable().optional(),
   servicoId: z.string().nullable().optional(),
   sistemaId: z.string().nullable().optional(),
-  impacto: z.enum(["alto", "medio", "baixo"]),
-  urgencia: z.enum(["alta", "media", "baixa"]),
+  impacto: z.enum(IMPACTOS),
+  urgencia: z.enum(URGENCIAS),
   equipeId: z.string().nullable().optional(),
-  origem: z.enum(["portal", "ia", "email", "telefone"]).optional(),
+  origem: z.enum(ORIGENS).optional(),
 });
 
+export type NovoChamadoInput = z.infer<typeof Novo>;
+
 export const criarChamadoFn = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => Novo.parse(d))
+  .validator((d: unknown) => Novo.parse(d))
   .handler(async ({ data }) => {
     const { criarChamado } = await import("@/repositories/chamados.repo");
     const { getUsuarioAtual } = await import("@/services/current-user.server");
@@ -70,18 +82,22 @@ export const criarChamadoFn = createServerFn({ method: "POST" })
 
 const Alteracao = z.object({
   id: z.string(),
-  status: z
-    .enum(["novo", "triagem", "em_andamento", "aguardando", "resolvido", "fechado"])
-    .optional(),
+  status: z.enum(STATUS).optional(),
   responsavelId: z.string().nullable().optional(),
   equipeId: z.string().nullable().optional(),
-  impacto: z.enum(["alto", "medio", "baixo"]).optional(),
-  urgencia: z.enum(["alta", "media", "baixa"]).optional(),
+  impacto: z.enum(IMPACTOS).optional(),
+  urgencia: z.enum(URGENCIAS).optional(),
+  categoriaId: z.string().nullable().optional(),
+  servicoId: z.string().nullable().optional(),
+  sistemaId: z.string().nullable().optional(),
+  problemaVinculadoId: z.string().nullable().optional(),
   descricaoEncerramento: z.string().nullable().optional(),
 });
 
+export type AlteracaoChamadoInput = z.infer<typeof Alteracao>;
+
 export const atualizarChamadoFn = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => Alteracao.parse(d))
+  .validator((d: unknown) => Alteracao.parse(d))
   .handler(async ({ data }) => {
     const { atualizarChamado } = await import("@/repositories/chamados.repo");
     const { getUsuarioAtual } = await import("@/services/current-user.server");
@@ -91,16 +107,16 @@ export const atualizarChamadoFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const Interacao = z.object({
+  chamadoId: z.string(),
+  tipo: z.enum(["comentario", "nota_interna", "email"]),
+  corpo: z.string().min(1),
+});
+
+export type InteracaoInput = z.infer<typeof Interacao>;
+
 export const adicionarInteracaoFn = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        chamadoId: z.string(),
-        tipo: z.enum(["comentario", "nota_interna", "email"]),
-        corpo: z.string().min(1),
-      })
-      .parse(d),
-  )
+  .validator((d: unknown) => Interacao.parse(d))
   .handler(async ({ data }) => {
     const { adicionarInteracao } = await import("@/repositories/chamados.repo");
     const { getUsuarioAtual } = await import("@/services/current-user.server");
