@@ -6,12 +6,10 @@ const conn = await oracledb.getConnection({
   connectString: `${process.env.ORACLE_HOST}:${process.env.ORACLE_PORT}/${process.env.ORACLE_SERVICE_NAME}`,
 });
 
-const r = await conn.execute("SELECT banner FROM v$version");
-console.log(r.rows);
+const eu = await conn.execute("SELECT USER FROM dual");
+console.log("Conectado como:", eu.rows[0][0]);
 
-const c = await conn.execute(
-  "SELECT parameter, value FROM nls_database_parameters WHERE parameter IN ('NLS_CHARACTERSET','NLS_NCHAR_CHARACTERSET')",
-);
-console.log(c.rows);
+const minhas = await conn.execute("SELECT table_name FROM user_tables ORDER BY table_name");
+console.log("Tabelas no meu schema:", minhas.rows.flat());
 
 await conn.close();

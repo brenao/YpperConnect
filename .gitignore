@@ -34,4 +34,4 @@ dist-ssr
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.sw?check-oracle.mjs

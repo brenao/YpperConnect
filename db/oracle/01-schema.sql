@@ -7,7 +7,7 @@
 --     a bytes, mas mantem o schema correto se o banco migrar para
 --     AL32UTF8 no futuro.
 --   - Booleano: NUMBER(1) com CHECK (0,1). Oracle 19c nao tem BOOLEAN.
---   - Instante no tempo: TIMESTAMP WITH LOCAL TIME ZONE.
+--   - Instante no tempo: TIMESTAMP.
 --     Data pura (cronograma): DATE, sempre com TRUNC na aplicacao.
 --   - Enum de negocio ITIL: CHECK constraint (mudar exige mudar codigo).
 --     Lista administravel: tabela (equipes, categorias).
@@ -75,9 +75,9 @@ CREATE TABLE usuarios (
   origem           VARCHAR2(10 CHAR)  DEFAULT 'manual' NOT NULL,
   admin            NUMBER(1)          DEFAULT 0 NOT NULL,
   ativo            NUMBER(1)          DEFAULT 1 NOT NULL,
-  sincronizado_em  TIMESTAMP WITH LOCAL TIME ZONE,
-  criado_em        TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  atualizado_em    TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  sincronizado_em  TIMESTAMP,
+  criado_em        TIMESTAMP NOT NULL,
+  atualizado_em    TIMESTAMP NOT NULL,
   CONSTRAINT pk_usuarios PRIMARY KEY (id),
   CONSTRAINT uq_usuarios_ad_object UNIQUE (ad_object_id),
   CONSTRAINT uq_usuarios_login UNIQUE (login),
@@ -126,8 +126,8 @@ CREATE TABLE servicos (
   equipe_id      VARCHAR2(36 CHAR),
   gerado_por_ia  NUMBER(1)           DEFAULT 0 NOT NULL,
   ativo          NUMBER(1)           DEFAULT 1 NOT NULL,
-  criado_em      TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  atualizado_em  TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  criado_em      TIMESTAMP NOT NULL,
+  atualizado_em  TIMESTAMP NOT NULL,
   CONSTRAINT pk_servicos PRIMARY KEY (id),
   CONSTRAINT ck_servicos_tipo CHECK (tipo_padrao IN
     ('incidente','requisicao','melhoria','problema','tarefa')),
@@ -174,8 +174,8 @@ CREATE TABLE artigos (
   visualizacoes  NUMBER(10)          DEFAULT 0 NOT NULL,
   gerado_por_ia  NUMBER(1)           DEFAULT 0 NOT NULL,
   autor_id       VARCHAR2(36 CHAR),
-  criado_em      TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  atualizado_em  TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  criado_em      TIMESTAMP NOT NULL,
+  atualizado_em  TIMESTAMP NOT NULL,
   CONSTRAINT pk_artigos PRIMARY KEY (id),
   CONSTRAINT ck_artigos_status CHECK (status IN ('publicado','revisar','rascunho')),
   CONSTRAINT ck_artigos_ia CHECK (gerado_por_ia IN (0,1)),
@@ -213,12 +213,12 @@ CREATE TABLE chamados (
   origem                 VARCHAR2(10 CHAR)  NOT NULL,
   problema_vinculado_id  VARCHAR2(36 CHAR),
   descricao_encerramento CLOB,                          -- [TEXTO LIVRE]
-  criado_em              TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  prazo_resposta         TIMESTAMP WITH LOCAL TIME ZONE,
-  prazo_sla              TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  respondido_em          TIMESTAMP WITH LOCAL TIME ZONE,
-  resolvido_em           TIMESTAMP WITH LOCAL TIME ZONE,
-  fechado_em             TIMESTAMP WITH LOCAL TIME ZONE,
+  criado_em              TIMESTAMP NOT NULL,
+  prazo_resposta         TIMESTAMP,
+  prazo_sla              TIMESTAMP NOT NULL,
+  respondido_em          TIMESTAMP,
+  resolvido_em           TIMESTAMP,
+  fechado_em             TIMESTAMP,
   CONSTRAINT pk_chamados PRIMARY KEY (id),
   CONSTRAINT uq_chamados_numero UNIQUE (numero),
   CONSTRAINT ck_chamados_tipo CHECK (tipo IN
@@ -256,7 +256,7 @@ CREATE TABLE chamado_interacoes (
   autor_id    VARCHAR2(36 CHAR),
   tipo        VARCHAR2(15 CHAR) NOT NULL,
   corpo       CLOB              NOT NULL,   -- [TEXTO LIVRE]
-  criado_em   TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  criado_em   TIMESTAMP NOT NULL,
   CONSTRAINT pk_chamado_interacoes PRIMARY KEY (id),
   CONSTRAINT ck_interacoes_tipo CHECK (tipo IN ('comentario','nota_interna','email')),
   CONSTRAINT fk_interacoes_chamado FOREIGN KEY (chamado_id)
@@ -276,7 +276,7 @@ CREATE TABLE chamado_historico (
   campo           VARCHAR2(60 CHAR)  NOT NULL,
   valor_anterior  VARCHAR2(500 CHAR),
   valor_novo      VARCHAR2(500 CHAR),
-  criado_em       TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  criado_em       TIMESTAMP NOT NULL,
   CONSTRAINT pk_chamado_historico PRIMARY KEY (id),
   CONSTRAINT fk_historico_chamado FOREIGN KEY (chamado_id)
     REFERENCES chamados (id) ON DELETE CASCADE,
@@ -326,8 +326,8 @@ CREATE TABLE projetos (
   status         VARCHAR2(15 CHAR)  DEFAULT 'planejamento' NOT NULL,
   inicio         DATE               NOT NULL,
   fim            DATE               NOT NULL,
-  criado_em      TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  atualizado_em  TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  criado_em      TIMESTAMP NOT NULL,
+  atualizado_em  TIMESTAMP NOT NULL,
   CONSTRAINT pk_projetos PRIMARY KEY (id),
   CONSTRAINT ck_projetos_status CHECK (status IN
     ('planejamento','execucao','paralisado','cancelado','concluido')),
@@ -357,7 +357,7 @@ CREATE TABLE projeto_tarefas (
   duracao_unidade  VARCHAR2(6 CHAR),
   alocacao_pct     NUMBER(3),
   ordem            NUMBER(6)          DEFAULT 0 NOT NULL,
-  concluido_em     TIMESTAMP WITH LOCAL TIME ZONE,
+  concluido_em     TIMESTAMP,
   CONSTRAINT pk_projeto_tarefas PRIMARY KEY (id),
   CONSTRAINT ck_tarefas_progresso CHECK (progresso BETWEEN 0 AND 100),
   CONSTRAINT ck_tarefas_quadro CHECK (quadro IN ('backlog','todo','doing','done')),
@@ -412,7 +412,7 @@ CREATE TABLE projeto_atualizacoes (
   descricao          CLOB,                        -- [TEXTO LIVRE]
   ultimas_entregas   CLOB,                        -- [TEXTO LIVRE]
   proximas_entregas  CLOB,                        -- [TEXTO LIVRE]
-  criado_em          TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  criado_em          TIMESTAMP NOT NULL,
   CONSTRAINT pk_projeto_atualizacoes PRIMARY KEY (id),
   CONSTRAINT fk_patual_projeto FOREIGN KEY (projeto_id)
     REFERENCES projetos (id) ON DELETE CASCADE,
@@ -429,7 +429,7 @@ CREATE TABLE projeto_riscos (
   impacto        VARCHAR2(10 CHAR) NOT NULL,
   mitigacao      CLOB,                         -- [TEXTO LIVRE]
   status         VARCHAR2(12 CHAR) DEFAULT 'aberto' NOT NULL,
-  criado_em      TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
+  criado_em      TIMESTAMP NOT NULL,
   CONSTRAINT pk_projeto_riscos PRIMARY KEY (id),
   CONSTRAINT ck_riscos_prob CHECK (probabilidade IN ('alta','media','baixa')),
   CONSTRAINT ck_riscos_impacto CHECK (impacto IN ('alto','medio','baixo')),
@@ -448,8 +448,8 @@ CREATE TABLE projeto_atencoes (
   decisao_necessaria      CLOB,                          -- [TEXTO LIVRE]
   responsavel_decisao_id  VARCHAR2(36 CHAR),
   status                  VARCHAR2(12 CHAR)  DEFAULT 'aberto' NOT NULL,
-  criado_em               TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  resolvido_em            TIMESTAMP WITH LOCAL TIME ZONE,
+  criado_em               TIMESTAMP NOT NULL,
+  resolvido_em            TIMESTAMP,
   CONSTRAINT pk_projeto_atencoes PRIMARY KEY (id),
   CONSTRAINT ck_atencoes_status CHECK (status IN ('aberto','resolvido')),
   CONSTRAINT fk_atencoes_projeto FOREIGN KEY (projeto_id)
@@ -479,8 +479,8 @@ CREATE TABLE notificacoes (
   status              VARCHAR2(12 CHAR)   DEFAULT 'pendente' NOT NULL,
   tentativas          NUMBER(4)           DEFAULT 0 NOT NULL,
   erro                VARCHAR2(1000 CHAR),
-  criado_em           TIMESTAMP WITH LOCAL TIME ZONE NOT NULL,
-  enviado_em          TIMESTAMP WITH LOCAL TIME ZONE,
+  criado_em           TIMESTAMP NOT NULL,
+  enviado_em          TIMESTAMP,
   CONSTRAINT pk_notificacoes PRIMARY KEY (id),
   CONSTRAINT ck_notif_tipo CHECK (tipo IN
     ('chamado_status','chamado_criado','projeto_lembrete')),

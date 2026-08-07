@@ -1,5 +1,0 @@
-[install]
-saveTextLockfile = true
-# Guarda de supply-chain de 24h: ignora versões publicadas há menos de um dia.
-minimumReleaseAge = 86400
-minimumReleaseAgeExcludes = []
