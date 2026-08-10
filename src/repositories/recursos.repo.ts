@@ -25,10 +25,9 @@ export interface Recurso {
   ativo: boolean;
 }
 
-/** Horas/dia efetivamente disponíveis para projeto. */
-export function capacidadeProjeto(r: Recurso): number {
-  return Math.round(((r.horasDia * r.disponibilidadeProjetos) / 100) * 100) / 100;
-}
+// capacidadeProjeto vive em @/services/resource-utils: a tela de recursos
+// precisa dela no navegador, e importar valor deste arquivo levaria o
+// client.server.ts (credenciais do Oracle) para o bundle do cliente.
 
 interface Linha extends Omit<Recurso, "ativo"> {
   ativo: number;

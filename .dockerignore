@@ -1,0 +1,30 @@
+# Tudo que nao deve entrar no contexto de build.
+# O .env fica de fora de proposito: o segredo entra por volume/--env-file
+# no docker run, nunca assado dentro da imagem.
+
+.git
+.gitignore
+.gitattributes
+
+node_modules
+.output
+.nitro
+.vinxi
+.tanstack
+dist
+dist-ssr
+
+.env
+.env.*
+!.env.example
+.dev.vars
+
+*.log
+logs
+
+.vscode
+.idea
+.DS_Store
+
+README.md
+AGENTS.md
