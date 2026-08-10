@@ -1,4 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Ticket,
@@ -17,8 +18,7 @@ import logo from "@/assets/ypperconnect-logo.png";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
-import { RoleSwitch } from "./role-switch";
-import { useItsm } from "@/controllers/itsm-store";
+import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functions";
 
 const nav = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
@@ -46,8 +46,17 @@ export function AppShell({
   children: ReactNode;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { canAccess } = useItsm();
-  const visibleNav = nav.filter((item) => canAccess(item.to));
+
+  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
+  const permissoes = useQuery({
+    queryKey: ["minhas-permissoes"],
+    queryFn: () => minhasPermissoesFn(),
+  });
+
+  // Enquanto carrega, mostra o menu inteiro: esconder e depois revelar
+  // produz um piscar desagradável a cada navegação.
+  const modulos = permissoes.data?.modulos;
+  const visibleNav = modulos ? nav.filter((item) => modulos.includes(item.to)) : nav;
 
   return (
     <div className="flex min-h-screen">
@@ -101,7 +110,17 @@ export function AppShell({
           </div>
           <div className="flex items-center gap-2">
             {actions}
-            <RoleSwitch />
+            {/* Identidade real, vinda do banco. Substituiu o RoleSwitch,
+                que trocava papel por clique e passou a conflitar com o
+                perfil do usuário autenticado. */}
+            {usuario.data ? (
+              <span className="hidden text-right sm:block">
+                <span className="block text-xs font-medium leading-tight">{usuario.data.nome}</span>
+                <span className="block text-[11px] leading-tight text-muted-foreground">
+                  {usuario.data.admin ? "Administrador" : "Usuário"}
+                </span>
+              </span>
+            ) : null}
             <ThemeToggle />
             <NewTicketDialog />
           </div>

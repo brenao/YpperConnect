@@ -312,3 +312,31 @@ export const testarSmtpFn = createServerFn({ method: "POST" }).handler(async () 
   await testarConexao();
   return { ok: true };
 });
+
+// ------------------------------------------------- permissões do usuário
+
+/**
+ * Módulos e funcionalidades do perfil do usuário atual.
+ *
+ * Substitui o `canAccess` do store antigo, que lia papel do
+ * localStorage. Admin recebe tudo: sem isso, um erro de configuração de
+ * perfil trancaria o administrador para fora da tela de permissões — e
+ * não haveria como consertar pela interface.
+ */
+export const minhasPermissoesFn = createServerFn({ method: "GET" }).handler(async () => {
+  const c = await ctx();
+  const { listarPerfis } = await import("@/repositories/perfis.repo");
+  const perfis = await listarPerfis();
+
+  if (c.admin) {
+    const todos = perfis.flatMap((p) => p.modulos);
+    return { modulos: [...new Set(["/", ...todos])], funcionalidades: [], admin: true };
+  }
+
+  const meu = perfis.find((p) => p.id === c.perfilId && p.ativo);
+  return {
+    modulos: [...new Set(["/", ...(meu?.modulos ?? [])])],
+    funcionalidades: meu?.funcionalidades ?? [],
+    admin: false,
+  };
+});

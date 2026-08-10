@@ -1,20 +1,36 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CalendarClock,
+  ChevronRight,
+  Loader2,
+  MessageSquarePlus,
+  Plus,
+  ShieldAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
-import {
-  AttentionDialog,
-  BaselineDialog,
-  RiskDialog,
-  TaskDialog,
-  WeeklyUpdateDialog,
-} from "@/views/project-forms";
+import { ProjectDialog } from "@/views/project-dialogs";
 import { ProjectKanban } from "@/views/project-kanban";
+import { TaskDialog } from "@/views/task-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -23,1031 +39,860 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useHydrated } from "@/hooks/use-hydrated";
-import { evaluateProjectPlan, type CoachResult } from "@/services/ai-project-coach.functions";
-import { useItsm } from "@/controllers/itsm-store";
-import { PROJECT_STATUS_LABEL, type Project, type ProjectStatus } from "@/models/itsm-types";
+import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
+import type { Tarefa } from "@/repositories/projetos.repo";
 import {
-  HEALTH_CLASS,
-  HEALTH_DOT,
-  HEALTH_LABEL,
-  baselineExpectedProgress,
-  criticalPath,
-  currentBaseline,
-  expectedProgress,
-  fmtDate,
-  fmtDateFull,
-  fmtDateShort,
-  hasBaseline,
-  parseDate,
-  projectHealth,
-  projectProgress,
-  taskDurationDays,
-  taskDurationLabel,
-  toISODate,
-} from "@/services/project-utils";
-import {
-  durationWithResources,
-  effectiveDurationDays,
-  findResource,
-  portfolioLoad,
-  taskAllocation,
-  taskResponsibles,
-} from "@/services/resource-utils";
+  detalheProjetoFn,
+  criarRiscoFn,
+  criarAtualizacaoFn,
+  criarAtencaoFn,
+  resolverAtencaoFn,
+  type RiscoInput,
+  type AtualizacaoInput,
+  type AtencaoInput,
+} from "@/services/projetos.functions";
+import { listarRecursosFn } from "@/services/recursos.functions";
+import { usuarioAtualFn } from "@/services/cadastros.functions";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/projetos_/$projectId")({
-  head: () => ({
-    meta: [
-      { title: "Detalhe do projeto · YpperConnect" },
-      {
-        name: "description",
-        content:
-          "Visão única do projeto: cronograma, caminho crítico, riscos, pontos de atenção e avaliação de IA baseada no PMI.",
-      },
-      { property: "og:title", content: "Detalhe do projeto · YpperConnect" },
-      {
-        property: "og:description",
-        content: "Cronograma, caminho crítico, riscos e avaliação de IA do projeto de TI.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
-  component: ProjetoDetalhe,
+  component: DetalheProjeto,
 });
 
-function Semaforo({ tone, label }: { tone: "verde" | "amarelo" | "vermelho"; label: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-xl border border-border/60 px-3 py-2">
-      <span className={cn("h-2.5 w-2.5 rounded-full", HEALTH_DOT[tone])} />
-      <span className="text-sm">{label}</span>
-    </div>
-  );
+const statusStyle: Record<ProjectStatus, string> = {
+  planejamento: "bg-info/12 text-info border-info/30",
+  execucao: "bg-primary/12 text-primary border-primary/30",
+  paralisado: "bg-warning/12 text-warning border-warning/30",
+  cancelado: "bg-muted text-muted-foreground border-border",
+  concluido: "bg-success/12 text-success border-success/30",
+};
+
+const nivelStyle: Record<string, string> = {
+  alta: "border-destructive/40 text-destructive",
+  alto: "border-destructive/40 text-destructive",
+  media: "border-warning/40 text-warning",
+  medio: "border-warning/40 text-warning",
+  baixa: "border-border text-muted-foreground",
+  baixo: "border-border text-muted-foreground",
+};
+
+const SEM = "__nenhum__";
+
+function fmt(v: Date | string | null | undefined): string {
+  if (!v) return "—";
+  return new Date(v).toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
-function Gantt({ project }: { project: Project }) {
-  const hydrated = useHydrated();
-  const { resources, projects } = useItsm();
-  const cpm = useMemo(
-    () =>
-      hydrated
-        ? criticalPath(project, durationWithResources(resources, projects))
-        : criticalPath(project),
-    [project, resources, projects, hydrated],
-  );
-  const start = Math.min(
-    parseDate(project.inicio),
-    ...project.tarefas.map((t) => parseDate(t.inicio)),
-  );
-  const end = Math.max(
-    parseDate(project.fim),
-    ...project.tarefas.map((t) => cpm.get(t.id)?.ef ?? parseDate(t.fim)),
-  );
-  const span = Math.max(end - start, 1);
-  const hojePct = ((Date.now() - start) / span) * 100;
+function paraInput(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
-  if (!project.tarefas.length) {
-    return (
-      <p className="mt-4 text-sm text-muted-foreground">
-        Nenhuma tarefa cadastrada. Adicione tarefas para gerar o cronograma e o caminho crítico.
-      </p>
-    );
+function doInput(v: string): Date {
+  const [a, m, d] = v.split("-").map(Number);
+  return new Date(a ?? 1970, (m ?? 1) - 1, d ?? 1);
+}
+
+/** Ordena a WBS: filhas logo abaixo da mãe, com nível para indentar. */
+function achatarWbs(tarefas: Tarefa[]): { tarefa: Tarefa; nivel: number }[] {
+  const porPai = new Map<string | null, Tarefa[]>();
+  for (const t of tarefas) {
+    const chave = t.paiId ?? null;
+    porPai.set(chave, [...(porPai.get(chave) ?? []), t]);
   }
 
-  return (
-    <div className="relative mt-4 space-y-2">
-      {hydrated && hojePct > 0 && hojePct < 100 ? (
-        <div
-          className="pointer-events-none absolute inset-y-0 z-10 w-px bg-primary/60"
-          style={{ left: `calc(16rem + (100% - 16rem) * ${hojePct / 100})` }}
-        />
-      ) : null}
-      {project.tarefas.map((t, idx) => {
-        const sched = cpm.get(t.id);
-        const ehPai = project.tarefas.some((x) => x.paiId === t.id);
-        const ini = sched?.es ?? parseDate(t.inicio);
-        const fim = sched?.ef ?? parseDate(t.fim);
-        const left = ((ini - start) / span) * 100;
-        const width = Math.max(((fim - ini) / span) * 100, 1.5);
-        const critica = sched?.critica;
-        return (
-          <div key={t.id} className="flex items-center gap-3 text-sm">
-            <div className="flex w-64 shrink-0 items-start gap-1">
-              <span className="mt-0.5 w-6 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-                {idx + 1}
-              </span>
-              <TaskDialog
-                project={project}
-                afterTask={t}
-                trigger={
-                  <button
-                    type="button"
-                    title="Adicionar tarefa abaixo desta"
-                    aria-label={`Adicionar tarefa abaixo de ${t.nome}`}
-                    className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded border border-border/60 text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary"
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                }
-              />
-              <div className="min-w-0" style={{ paddingLeft: t.paiId ? 12 : 0 }}>
-                <div className="flex items-center gap-2">
-                  {critica ? (
-                    <span
-                      className="h-1.5 w-1.5 rounded-full bg-destructive"
-                      title="Tarefa crítica"
-                    />
-                  ) : null}
-                  <span className="truncate">{t.nome}</span>
-                </div>
-                <span className="text-[11px] text-muted-foreground">
-                  {ehPai
-                    ? `${taskDurationLabel(t)} · resumo`
-                    : `${(t.responsaveis ?? [t.responsavel]).join(", ")} · ${taskDurationLabel(t)} · ${taskAllocation(t)}% alocado`}
-                  {(t.predecessoras ?? []).length
-                    ? ` · após ${(t.predecessoras ?? [])
-                        .map((p) => project.tarefas.findIndex((x) => x.id === p) + 1)
-                        .filter((n) => n > 0)
-                        .join(", ")}`
-                    : ""}
-                </span>
-              </div>
-            </div>
-            <div className="relative h-7 flex-1 rounded-md bg-muted/40">
-              <div
-                className={cn(
-                  "absolute inset-y-1 rounded-md",
-                  t.marco ? "bg-warning/70" : critica ? "bg-destructive/60" : "bg-primary/50",
-                )}
-                style={{ left: `${left}%`, width: `${width}%` }}
-              >
-                <div
-                  className="h-full rounded-md bg-foreground/25"
-                  style={{ width: `${t.progresso}%` }}
-                />
-              </div>
-            </div>
-            <span className="w-28 shrink-0 text-right text-[11px] text-muted-foreground">
-              {fmtDate(toISODate(ini))} — {fmtDate(toISODate(fim))}
-            </span>
-            <span className="w-10 shrink-0 text-right text-xs">{t.progresso}%</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+  const saida: { tarefa: Tarefa; nivel: number }[] = [];
+  // Guarda contra ciclo em pai_id, que o banco não impede além do self.
+  const visitados = new Set<string>();
 
-function AiCoach({ project }: { project: Project }) {
-  const run = useServerFn(evaluateProjectPlan);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<CoachResult | null>(null);
-
-  const resumo = useMemo(() => {
-    const cpm = criticalPath(project);
-    const linhas = project.tarefas.map((t) => {
-      const s = cpm.get(t.id);
-      return `- ${t.nome} | atividade: ${t.atividade ?? "-"} | ${t.inicio} a ${t.fim} | duração ${taskDurationLabel(t)} | ${t.progresso}% | responsáveis: ${(t.responsaveis ?? [t.responsavel]).join(", ")} | predecessoras: ${(t.predecessoras ?? []).length} | pai: ${t.paiId ?? "-"} | marco: ${t.marco ? "sim" : "não"} | crítica: ${s?.critica ? "sim" : "não"} | folga: ${s?.folga ?? 0}d`;
-    });
-    const duracaoProjeto = Math.round(
-      (parseDate(project.fim) - parseDate(project.inicio)) / 86_400_000,
-    );
-    return [
-      `Projeto: ${project.nome} (${project.id})`,
-      `Objetivo: ${project.objetivo}`,
-      `GP: ${project.gerente} | Sponsor: ${project.sponsor} | Status: ${PROJECT_STATUS_LABEL[project.status]}`,
-      `Período: ${project.inicio} a ${project.fim} (${duracaoProjeto} dias corridos)`,
-      `Progresso real: ${projectProgress(project)}% | esperado pela linha do tempo: ${expectedProgress(project)}%`,
-      `Total de tarefas: ${project.tarefas.length} | marcos: ${project.tarefas.filter((t) => t.marco).length}`,
-      `Riscos cadastrados: ${(project.riscos ?? []).length}`,
-      `Atualizações de status: ${(project.atualizacoes ?? []).length} (última: ${(project.atualizacoes ?? [])[0]?.data ?? "nenhuma"})`,
-      `Pontos de atenção abertos: ${(project.atencoes ?? []).filter((a) => a.status === "aberto").length}`,
-      "Tarefas:",
-      ...(linhas.length ? linhas : ["- nenhuma tarefa cadastrada"]),
-    ].join("\n");
-  }, [project]);
-
-  async function avaliar() {
-    setLoading(true);
-    try {
-      const r = await run({ data: { resumo } });
-      setResult(r);
-    } catch (error) {
-      toast.error("Não foi possível avaliar o projeto", {
-        description: error instanceof Error ? error.message : "Tente novamente.",
-      });
-    } finally {
-      setLoading(false);
+  function descer(paiId: string | null, nivel: number) {
+    for (const t of porPai.get(paiId) ?? []) {
+      if (visitados.has(t.id)) continue;
+      visitados.add(t.id);
+      saida.push({ tarefa: t, nivel });
+      descer(t.id, nivel + 1);
     }
   }
 
-  const tone =
-    result?.veredito === "bom" ? "verde" : result?.veredito === "regular" ? "amarelo" : "vermelho";
-
-  return (
-    <div className="glass-panel rounded-2xl border border-border/60 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-semibold">Instrutor de IA · boas práticas PMI</h3>
-          <p className="text-sm text-muted-foreground">
-            Avalia o detalhamento do cronograma, decomposição de tarefas, marcos, riscos e coerência
-            de prazos.
-          </p>
-        </div>
-        <Button size="sm" onClick={avaliar} disabled={loading}>
-          {loading ? "Avaliando..." : "Avaliar projeto"}
-        </Button>
-      </div>
-
-      {result ? (
-        <div className="mt-4 space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge variant="outline" className={HEALTH_CLASS[tone]}>
-              {result.veredito === "bom"
-                ? "Detalhamento bom"
-                : result.veredito === "regular"
-                  ? "Detalhamento regular"
-                  : "Detalhamento ruim"}
-            </Badge>
-            <span className="text-sm text-muted-foreground">Nota {result.nota}/100</span>
-          </div>
-          <p className="text-sm">{result.resumo}</p>
-          {result.pontosFortes.length ? (
-            <div>
-              <h4 className="text-xs uppercase tracking-wide text-muted-foreground">
-                Pontos fortes
-              </h4>
-              <ul className="mt-2 space-y-1 text-sm">
-                {result.pontosFortes.map((p) => (
-                  <li key={p} className="text-success">
-                    • {p}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {result.problemas.length ? (
-            <div>
-              <h4 className="text-xs uppercase tracking-wide text-muted-foreground">
-                Pontos de melhoria
-              </h4>
-              <ul className="mt-2 space-y-3 text-sm">
-                {result.problemas.map((p) => (
-                  <li key={p.titulo} className="rounded-lg border border-border/60 p-3">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "h-1.5 w-1.5 rounded-full",
-                          p.severidade === "alta"
-                            ? "bg-destructive"
-                            : p.severidade === "media"
-                              ? "bg-warning"
-                              : "bg-info",
-                        )}
-                      />
-                      <span className="font-medium">{p.titulo}</span>
-                    </div>
-                    <p className="mt-1 text-muted-foreground">{p.recomendacao}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
+  descer(null, 0);
+  // Órfãs (pai excluído) entram no fim para não sumirem da tela.
+  for (const t of tarefas) {
+    if (!visitados.has(t.id)) saida.push({ tarefa: t, nivel: 0 });
+  }
+  return saida;
 }
 
-function Metric({
-  label,
-  value,
-  hint,
-  alerta,
-}: {
-  label: string;
-  value: string;
-  hint?: string | undefined;
-  alerta?: boolean | undefined;
-}) {
-  return (
-    <div className="rounded-xl border border-border/50 bg-surface/60 p-3">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold">{value}</p>
-      {hint ? (
-        <p className={cn("text-[11px]", alerta ? "text-destructive" : "text-muted-foreground")}>
-          {hint}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function SidePanel({
-  titulo,
-  contagem,
-  acao,
-  children,
-}: {
-  titulo: string;
-  contagem: number;
-  acao?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="glass-panel rounded-2xl border border-border/60 p-5">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">
-          {titulo}
-          <span className="ml-2 rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
-            {contagem}
-          </span>
-        </h3>
-        {acao}
-      </div>
-      <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">{children}</div>
-    </div>
-  );
-}
-
-function ProjetoDetalhe() {
-  return <ProjetoDetalheInner />;
-}
-
-/** Log de baselines: seleção de versão e comparação com o cronograma atual. */
-function BaselinePanel({ project }: { project: Project }) {
-  const baselines = project.baselines ?? [];
-  const [versao, setVersao] = useState<string>("");
-  const selecionada =
-    baselines.find((b) => String(b.versao) === versao) ?? baselines[baselines.length - 1];
-
-  return (
-    <SidePanel
-      titulo="Baselines"
-      contagem={baselines.length}
-      acao={<BaselineDialog project={project} />}
-    >
-      {!baselines.length ? (
-        <p className="text-xs text-destructive">
-          Nenhuma baseline registrada — salve a primeira versão do cronograma para habilitar a
-          comparação entre planejado e realizado.
-        </p>
-      ) : (
-        <div className="space-y-3">
-          <Select value={String(selecionada?.versao ?? "")} onValueChange={setVersao}>
-            <SelectTrigger className="h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {[...baselines].reverse().map((b) => (
-                <SelectItem key={b.id} value={String(b.versao)}>
-                  v{b.versao} · {new Date(b.criadaEm).toLocaleDateString("pt-BR")}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {selecionada ? (
-            <div className="rounded-lg border border-border/60 p-3 text-xs">
-              <p className="text-muted-foreground">
-                Registrada por {selecionada.autor} em{" "}
-                {new Date(selecionada.criadaEm).toLocaleString("pt-BR")}
-              </p>
-              <p className="mt-1">
-                Período: {fmtDateShort(selecionada.inicio)} — {fmtDateShort(selecionada.fim)} ·{" "}
-                {selecionada.tarefas.length} tarefa(s)
-              </p>
-              {selecionada.justificativa ? (
-                <p className="mt-1 text-muted-foreground">
-                  Justificativa: {selecionada.justificativa}
-                </p>
-              ) : (
-                <p className="mt-1 text-muted-foreground">Baseline original do cronograma.</p>
-              )}
-              <ul className="mt-2 space-y-1">
-                {selecionada.tarefas.slice(0, 8).map((t) => {
-                  const atual = project.tarefas.find((x) => x.id === t.id);
-                  const desvio = atual
-                    ? Math.round((parseDate(atual.fim) - parseDate(t.fim)) / 86_400_000)
-                    : null;
-                  return (
-                    <li key={t.id} className="flex items-center justify-between gap-2">
-                      <span className="truncate text-muted-foreground">{t.nome}</span>
-                      <span
-                        className={cn(
-                          "shrink-0 tabular-nums",
-                          desvio && desvio > 0 ? "text-destructive" : "text-muted-foreground",
-                        )}
-                      >
-                        {fmtDateShort(t.fim)}
-                        {desvio === null ? " · removida" : desvio > 0 ? ` · +${desvio}d` : ""}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              {selecionada.tarefas.length > 8 ? (
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  +{selecionada.tarefas.length - 8} tarefa(s) na baseline
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      )}
-    </SidePanel>
-  );
-}
-
-function ProjetoDetalheInner() {
+function DetalheProjeto() {
   const { projectId } = Route.useParams();
-  const { projects, resources, updateProject, updateTask, removeTask, resolveAttention } =
-    useItsm();
-  const hydrated = useHydrated();
-  const project = projects.find((p) => p.id === projectId);
+  const qc = useQueryClient();
 
-  if (!project) {
+  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
+  const q = useQuery({
+    queryKey: ["projeto", projectId],
+    queryFn: () => detalheProjetoFn({ data: { id: projectId } }),
+  });
+  const recursosQuery = useQuery({ queryKey: ["recursos"], queryFn: () => listarRecursosFn() });
+
+  const [editando, setEditando] = useState<Tarefa | undefined>(undefined);
+  const [tarefaAberta, setTarefaAberta] = useState(false);
+
+  const editavel = usuario.data ? usuario.data.admin || usuario.data.equipeId !== null : false;
+  const recursos = useMemo(() => recursosQuery.data?.recursos ?? [], [recursosQuery.data]);
+
+  const nomeRecurso = (id: string) => recursos.find((r) => r.id === id)?.nome ?? "—";
+
+  const erro = (e: Error) => toast.error("Não foi possível salvar", { description: e.message });
+  function invalidar() {
+    qc.invalidateQueries({ queryKey: ["projeto", projectId] });
+    qc.invalidateQueries({ queryKey: ["projetos"] });
+  }
+
+  const novoRisco = useMutation({
+    mutationFn: (v: RiscoInput) => criarRiscoFn({ data: v }),
+    onSuccess: () => {
+      invalidar();
+      toast.success("Risco registrado");
+    },
+    onError: erro,
+  });
+
+  const novaAtualizacao = useMutation({
+    mutationFn: (v: AtualizacaoInput) => criarAtualizacaoFn({ data: v }),
+    onSuccess: () => {
+      invalidar();
+      toast.success("Atualização registrada");
+    },
+    onError: erro,
+  });
+
+  const novaAtencao = useMutation({
+    mutationFn: (v: AtencaoInput) => criarAtencaoFn({ data: v }),
+    onSuccess: () => {
+      invalidar();
+      toast.success("Ponto de atenção registrado");
+    },
+    onError: erro,
+  });
+
+  const resolver = useMutation({
+    mutationFn: (id: string) => resolverAtencaoFn({ data: { id } }),
+    onSuccess: () => {
+      invalidar();
+      toast.success("Ponto de atenção resolvido");
+    },
+    onError: erro,
+  });
+
+  if (q.isPending) {
     return (
-      <AppShell
-        title="Projeto não encontrado"
-        subtitle="O projeto solicitado não existe no portfólio"
-      >
-        <Link to="/projetos" className="text-sm text-primary underline">
-          Voltar ao portfólio
-        </Link>
+      <AppShell title="Projeto" subtitle="Carregando...">
+        <p className="flex items-center gap-2 py-16 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> Carregando projeto...
+        </p>
       </AppShell>
     );
   }
 
-  const health = hydrated ? projectHealth(project) : null;
-  const progresso = projectProgress(project);
-  const esperado = hydrated ? baselineExpectedProgress(project) : 0;
-  const baseline = currentBaseline(project);
-  const semBaseline = !hasBaseline(project);
-  const cpm = criticalPath(project);
-  const criticas = project.tarefas.filter((t) => cpm.get(t.id)?.critica);
-  const cpmReal = criticalPath(project, durationWithResources(resources, projects));
-  const previsaoFim = project.tarefas.length
-    ? Math.max(...project.tarefas.map((t) => cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))
-    : parseDate(project.fim);
-  const desvioDias = Math.round((previsaoFim - parseDate(project.fim)) / 86_400_000);
-  const equipe = Array.from(new Set(project.tarefas.flatMap(taskResponsibles)));
-  const cargas = portfolioLoad(resources, projects).filter((c) => equipe.includes(c.recurso.nome));
-  const semCadastro = equipe.filter((n) => !findResource(resources, n));
+  if (q.error || !q.data) {
+    return (
+      <AppShell title="Projeto" subtitle="Não encontrado">
+        <div className="panel p-6 text-sm">
+          <p className="text-muted-foreground">
+            {q.error ? String(q.error) : "Este projeto não existe ou foi removido."}
+          </p>
+          <Link to="/projetos" className="mt-3 inline-flex items-center gap-1 text-primary">
+            <ArrowLeft className="size-4" /> Voltar ao portfólio
+          </Link>
+        </div>
+      </AppShell>
+    );
+  }
+
+  const { projeto, tarefas, vinculos, riscos, atualizacoes, atencoes } = q.data;
+  const wbs = achatarWbs(tarefas);
+  const concluidas = tarefas.filter((t) => t.quadro === "done").length;
+  const progresso = tarefas.length
+    ? Math.round(tarefas.reduce((s, t) => s + t.progresso, 0) / tarefas.length)
+    : 0;
+  const atencoesAbertas = atencoes.filter((a) => a.status === "aberto");
+  const riscosAbertos = riscos.filter((r) => r.status !== "mitigado");
+  const atrasado = new Date(projeto.fim) < new Date() && projeto.status === "execucao";
 
   return (
     <AppShell
-      title={project.nome}
-      subtitle={`${project.id} · GP ${project.gerente} · Sponsor ${project.sponsor}`}
-      actions={<TaskDialog project={project} trigger={<Button size="sm">Nova tarefa</Button>} />}
+      title={projeto.nome}
+      subtitle={`${projeto.gerenteNome ?? "Sem gerente"} · ${fmt(projeto.inicio)} — ${fmt(projeto.fim)}`}
+      actions={
+        editavel ? (
+          <span className="flex gap-2">
+            <ProjectDialog
+              project={projeto}
+              trigger={
+                <Button variant="outline" size="sm">
+                  Editar projeto
+                </Button>
+              }
+            />
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={() => {
+                setEditando(undefined);
+                setTarefaAberta(true);
+              }}
+            >
+              <Plus className="size-4" /> Nova tarefa
+            </Button>
+          </span>
+        ) : undefined
+      }
     >
-      <Link to="/projetos" className="text-xs text-muted-foreground hover:text-foreground">
-        ← Portfólio de projetos
-      </Link>
+      <div className="space-y-4">
+        <Link
+          to="/projetos"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" /> Portfólio
+        </Link>
 
-      <div className="mt-4 grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
-        <div className="min-w-0 space-y-5">
-          <div className="glass-panel rounded-2xl border border-border/60 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <p className="max-w-2xl text-sm text-muted-foreground">{project.objetivo}</p>
-              <Select
-                value={project.status}
-                onValueChange={(v) => updateProject(project.id, { status: v as ProjectStatus })}
-              >
-                <SelectTrigger className="h-8 w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {PROJECT_STATUS_LABEL[s]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-4">
-              <Metric
-                label="Início — Fim"
-                value={`${fmtDateShort(project.inicio)} — ${fmtDateShort(project.fim)}`}
-                hint={`${project.tarefas.length} tarefa(s) · ${criticas.length} crítica(s)`}
-              />
-              <Metric
-                label="Progresso esperado"
-                value={hydrated ? `${esperado}%` : "—"}
-                hint={baseline ? `baseline v${baseline.versao}` : "sem baseline registrada"}
-                alerta={semBaseline}
-              />
-              <Metric
-                label="Progresso real"
-                value={`${progresso}%`}
-                hint={
-                  hydrated
-                    ? progresso >= esperado
-                      ? `${progresso - esperado} p.p. acima do esperado`
-                      : `${esperado - progresso} p.p. abaixo do esperado`
-                    : undefined
-                }
-                alerta={hydrated && progresso < esperado}
-              />
-              <Metric
-                label="Previsão real"
-                value={hydrated ? fmtDate(toISODate(previsaoFim)) : "—"}
-                hint={
-                  hydrated
-                    ? desvioDias > 0
-                      ? `${desvioDias}d de desvio`
-                      : "dentro do plano"
-                    : undefined
-                }
-                alerta={hydrated && desvioDias > 0}
-              />
-            </div>
-            <Progress value={progresso} className="mt-4 h-2" />
-            <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Real {progresso}%</span>
-              <span>Esperado {hydrated ? esperado : "—"}%</span>
-            </div>
-            {semBaseline ? (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
-                <p className="text-xs text-destructive">
-                  Baseline não registrada — o cronograma ainda não tem linha de base para comparar o
-                  planejado com o realizado.
-                </p>
-                <BaselineDialog project={project} />
-              </div>
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="panel p-4">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Situação</p>
+            <span
+              className={cn(
+                "mt-2 inline-block rounded-md border px-2 py-0.5 text-sm font-medium",
+                statusStyle[projeto.status],
+              )}
+            >
+              {PROJECT_STATUS_LABEL[projeto.status]}
+            </span>
+            {atrasado ? (
+              <p className="mt-1.5 flex items-center gap-1 text-xs text-destructive">
+                <AlertTriangle className="size-3.5" /> Prazo vencido
+              </p>
             ) : null}
           </div>
+          <div className="panel p-4">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Progresso</p>
+            <p className="mt-1 font-mono text-2xl font-semibold">{progresso}%</p>
+            <Progress value={progresso} className="mt-2" />
+            <p className="mt-1 text-xs text-muted-foreground">
+              {concluidas} de {tarefas.length} tarefa(s)
+            </p>
+          </div>
+          <div className="panel p-4">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Riscos abertos</p>
+            <p
+              className={cn(
+                "mt-1 font-mono text-2xl font-semibold",
+                riscosAbertos.length ? "text-warning" : "",
+              )}
+            >
+              {riscosAbertos.length}
+            </p>
+          </div>
+          <div className="panel p-4">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Decisões pendentes
+            </p>
+            <p
+              className={cn(
+                "mt-1 font-mono text-2xl font-semibold",
+                atencoesAbertas.length ? "text-destructive" : "",
+              )}
+            >
+              {atencoesAbertas.length}
+            </p>
+          </div>
+        </section>
 
-          <Tabs defaultValue="tarefas">
-            <TabsList>
-              <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
-              <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
-              <TabsTrigger value="kanban">Kanban</TabsTrigger>
-              <TabsTrigger value="recursos">Recursos</TabsTrigger>
-            </TabsList>
+        {projeto.objetivo ? (
+          <section className="panel p-5">
+            <h2 className="text-sm font-semibold">Objetivo</h2>
+            <p className="mt-2 whitespace-pre-line text-sm text-muted-foreground">
+              {projeto.objetivo}
+            </p>
+          </section>
+        ) : null}
 
-            <TabsContent value="cronograma">
-              <div className="glass-panel rounded-2xl border border-border/60 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-semibold">Cronograma e caminho crítico</h3>
-                  <span className="text-xs text-muted-foreground">
-                    {criticas.length} tarefa(s) crítica(s) · atraso nelas desloca o fim do projeto
-                  </span>
-                </div>
-                <Gantt project={project} />
+        <Tabs defaultValue="kanban">
+          <TabsList>
+            <TabsTrigger value="kanban">Quadro</TabsTrigger>
+            <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
+            <TabsTrigger value="riscos">Riscos e atenções</TabsTrigger>
+            <TabsTrigger value="acompanhamento">Acompanhamento</TabsTrigger>
+          </TabsList>
+
+          {/* ------------------------------------------------------ kanban */}
+          <TabsContent value="kanban" className="mt-4">
+            {tarefas.length === 0 ? (
+              <div className="panel p-8 text-center text-sm text-muted-foreground">
+                Nenhuma tarefa cadastrada. Sem cronograma, o projeto não entra no cálculo de
+                capacidade da equipe.
               </div>
-              {criticas.length ? (
-                <div className="glass-panel mt-4 rounded-2xl border border-destructive/30 p-5">
-                  <h3 className="text-sm font-semibold text-destructive">Caminho crítico</h3>
-                  <ol className="mt-2 space-y-1 text-sm">
-                    {criticas.map((t, i) => (
-                      <li key={t.id} className="text-muted-foreground">
-                        {i + 1}. <span className="text-foreground">{t.nome}</span> ·{" "}
-                        {taskDurationLabel(t)} · {t.progresso}% concluída
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              ) : null}
-            </TabsContent>
+            ) : (
+              <ProjectKanban
+                projetoId={projectId}
+                tarefas={tarefas}
+                responsaveis={vinculos.responsaveis}
+                nomeRecurso={nomeRecurso}
+                editavel={editavel}
+                onEditar={(t) => {
+                  setEditando(t);
+                  setTarefaAberta(true);
+                }}
+              />
+            )}
+          </TabsContent>
 
-            <TabsContent value="kanban">
-              <div className="glass-panel rounded-2xl border border-border/60 p-5">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-                  <div className="min-w-0">
-                    <h3 className="font-semibold">Quadro de tarefas</h3>
-                    <p className="text-xs text-muted-foreground">
-                      Arraste os post-its entre as colunas. Ao mover para <strong>Concluído</strong>
-                      , a tarefa vai a 100% e assume a data de hoje como fim.
-                    </p>
-                  </div>
-                  <TaskDialog
-                    project={project}
-                    trigger={
-                      <Button size="sm" variant="outline">
-                        Nova tarefa
-                      </Button>
-                    }
-                  />
-                </div>
-                <div className="mt-4">
-                  <ProjectKanban project={project} />
-                </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="tarefas">
-              <div className="glass-panel overflow-x-auto rounded-2xl border border-border/60 p-5">
-                <table className="w-full text-sm">
-                  <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-                    <tr className="border-b border-border/60">
-                      <th className="w-10 py-2 text-left">#</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-left">Tarefa</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-left">Duração</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-left">Início</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-left">Fim</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-left">%</th>
-                      <th className="px-2 py-2 text-right">Ações</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-left">Responsável</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-border/60 bg-surface/60">
-                      <td className="px-2 py-3 font-mono text-[11px] text-muted-foreground">0</td>
-                      <td className="px-2 py-3">
-                        <span className="font-semibold">{project.nome}</span>
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
-                        {Math.round(
-                          (parseDate(project.fim) - parseDate(project.inicio)) / 86_400_000 + 1,
-                        )}{" "}
-                        d
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
-                        {fmtDateShort(project.inicio)}
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-3 text-muted-foreground">
-                        {fmtDateShort(project.fim)}
-                      </td>
-                      <td className="px-2 py-3 font-semibold">{progresso}%</td>
-                      <td className="px-2 py-3" />
-                      <td className="px-2 py-3 text-muted-foreground">—</td>
-                    </tr>
-                    {project.tarefas.map((t, idx) => {
-                      const s = cpm.get(t.id);
-                      const ehPai = project.tarefas.some((x) => x.paiId === t.id);
-                      return (
-                        <tr key={t.id} className="border-b border-border/40">
-                          <td className="px-2 py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
-                            {idx + 1}
-                          </td>
-                          <td className="px-2 py-2" style={{ paddingLeft: t.paiId ? 20 : 0 }}>
-                            <div className="flex items-center gap-2">
-                              <TaskDialog
-                                project={project}
-                                afterTask={t}
-                                trigger={
-                                  <button
-                                    type="button"
-                                    title="Adicionar tarefa abaixo desta"
-                                    aria-label={`Adicionar tarefa abaixo de ${t.nome}`}
-                                    className="grid h-5 w-5 shrink-0 place-items-center rounded border border-border/60 text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary"
-                                  >
-                                    <Plus className="h-3 w-3" />
-                                  </button>
-                                }
-                              />
-                              {s?.critica ? (
-                                <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
-                              ) : null}
-                              <span>{t.nome}</span>
-                              {t.marco ? (
-                                <Badge variant="outline" className="border-warning/40 text-warning">
-                                  marco
-                                </Badge>
-                              ) : null}
-                            </div>
-                            <span className="text-[11px] text-muted-foreground">
-                              {t.atividade ?? "Execução"}
-                              {s?.critica ? (
-                                <span className="text-destructive"> · caminho crítico</span>
-                              ) : (
-                                ` · folga ${s?.folga ?? 0}d`
-                              )}
-                              {(t.predecessoras ?? []).length
-                                ? ` · após ${(t.predecessoras ?? [])
-                                    .map((p) => {
-                                      const i = project.tarefas.findIndex((x) => x.id === p);
-                                      return i >= 0 ? `${i + 1}. ${project.tarefas[i]!.nome}` : p;
-                                    })
-                                    .join(", ")}`
+          {/* -------------------------------------------------- cronograma */}
+          <TabsContent value="cronograma" className="mt-4">
+            <div className="panel overflow-x-auto">
+              <table className="w-full min-w-[44rem] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-4 py-2 font-medium">Tarefa</th>
+                    <th className="px-4 py-2 font-medium">Responsáveis</th>
+                    <th className="px-4 py-2 font-medium">Início</th>
+                    <th className="px-4 py-2 font-medium">Término</th>
+                    <th className="px-4 py-2 font-medium">Progresso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wbs.map(({ tarefa: t, nivel }) => {
+                    const preds = vinculos.predecessoras[t.id] ?? [];
+                    return (
+                      <tr
+                        key={t.id}
+                        className={cn(
+                          "border-b border-border/60",
+                          editavel ? "cursor-pointer hover:bg-secondary/40" : "",
+                        )}
+                        onClick={() => {
+                          if (!editavel) return;
+                          setEditando(t);
+                          setTarefaAberta(true);
+                        }}
+                      >
+                        <td className="px-4 py-2">
+                          <span
+                            className="flex items-center gap-1"
+                            style={{ paddingLeft: `${nivel * 16}px` }}
+                          >
+                            {nivel > 0 ? (
+                              <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                            ) : null}
+                            <span
+                              className={cn(t.quadro === "done" ? "line-through opacity-70" : "")}
+                            >
+                              {t.nome}
+                            </span>
+                            {t.marco ? (
+                              <Badge variant="outline" className="ml-1 text-[10px]">
+                                marco
+                              </Badge>
+                            ) : null}
+                          </span>
+                          {t.atividade || preds.length ? (
+                            <span
+                              className="mt-0.5 block text-[11px] text-muted-foreground"
+                              style={{ paddingLeft: `${nivel * 16 + 16}px` }}
+                            >
+                              {t.atividade ?? ""}
+                              {preds.length
+                                ? `${t.atividade ? " · " : ""}depende de ${preds.length} tarefa(s)`
                                 : ""}
                             </span>
-                          </td>
-                          <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
-                            {taskDurationLabel(t)}
-                          </td>
-                          <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
-                            {fmtDateShort(t.inicio)}
-                          </td>
-                          <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">
-                            {fmtDateShort(t.fim)}
-                          </td>
-                          <td className="px-2 py-2">
-                            <input
-                              type="number"
-                              min={0}
-                              max={100}
-                              value={t.progresso}
-                              onChange={(e) =>
-                                updateTask(project.id, t.id, {
-                                  progresso: Math.max(
-                                    0,
-                                    Math.min(100, Number(e.target.value) || 0),
-                                  ),
-                                })
-                              }
-                              className="w-16 rounded-md border border-border bg-transparent px-1.5 py-1 text-center text-xs tabular-nums"
-                            />
-                          </td>
-                          <td className="px-2 py-2 text-right">
-                            <div className="flex justify-end gap-1">
-                              <TaskDialog
-                                project={project}
-                                task={t}
-                                trigger={
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-7 w-7"
-                                    title="Editar tarefa"
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </Button>
-                                }
-                              />
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-destructive"
-                                title="Excluir tarefa"
-                                onClick={() => removeTask(project.id, t.id)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </td>
-                          <td className="max-w-[9rem] truncate px-2 py-2 text-muted-foreground">
-                            {ehPai ? "—" : (t.responsaveis ?? [t.responsavel]).join(", ")}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {!project.tarefas.length ? (
-                  <p className="py-6 text-center text-sm text-muted-foreground">
-                    Nenhuma tarefa cadastrada ainda.
-                  </p>
-                ) : null}
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Total planejado:{" "}
-                  {Math.round(project.tarefas.reduce((a, t) => a + taskDurationDays(t), 0))} dias de
-                  trabalho distribuídos.
-                </p>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="recursos">
-              <div className="glass-panel rounded-2xl border border-border/60 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-semibold">Capacidade e ritmo real</h3>
-                  <span
-                    className={cn(
-                      "text-xs",
-                      desvioDias > 0 ? "text-destructive" : "text-muted-foreground",
-                    )}
-                  >
-                    Previsão com disponibilidade: {fmtDateFull(toISODate(previsaoFim))}
-                    {desvioDias > 0
-                      ? ` · ${desvioDias} dia(s) além do planejado`
-                      : " · dentro do plano"}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  A duração real considera o percentual do dia que cada pessoa tem para projetos e a
-                  concorrência com tarefas de outros projetos do portfólio.
-                </p>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-                      <tr className="border-b border-border/60">
-                        <th className="py-2 text-left">Tarefa</th>
-                        <th className="py-2 text-left">Responsáveis</th>
-                        <th className="py-2 text-left">Alocação</th>
-                        <th className="py-2 text-left">Duração planejada</th>
-                        <th className="py-2 text-left">Duração real</th>
-                        <th className="py-2 text-left">Término previsto</th>
+                          ) : null}
+                        </td>
+                        <td className="px-4 py-2 text-muted-foreground">
+                          {(vinculos.responsaveis[t.id] ?? []).map(nomeRecurso).join(", ") || "—"}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+                          {fmt(t.inicio)}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+                          {fmt(t.fim)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className="flex items-center gap-2">
+                            <Progress value={t.progresso} className="w-20" />
+                            <span className="font-mono text-xs">{t.progresso}%</span>
+                          </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {project.tarefas.map((t) => {
-                        const real = effectiveDurationDays(t, resources, projects);
-                        const plano = taskDurationDays(t);
-                        return (
-                          <tr key={t.id} className="border-b border-border/40">
-                            <td className="py-2">{t.nome}</td>
-                            <td className="py-2 text-muted-foreground">
-                              {taskResponsibles(t).join(", ")}
-                            </td>
-                            <td className="py-2 text-muted-foreground">{taskAllocation(t)}%</td>
-                            <td className="py-2 text-muted-foreground">{Math.round(plano)} d</td>
-                            <td className={cn("py-2", real > plano * 1.2 && "text-warning")}>
-                              {Math.ceil(real)} d
-                            </td>
-                            <td className="py-2 text-muted-foreground">
-                              {fmtDate(toISODate(cpmReal.get(t.id)?.ef ?? parseDate(t.fim)))}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  {!project.tarefas.length ? (
-                    <p className="py-6 text-center text-sm text-muted-foreground">
-                      Cadastre tarefas para simular a capacidade da equipe.
-                    </p>
+                    );
+                  })}
+                  {tarefas.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                        Nenhuma tarefa cadastrada.
+                      </td>
+                    </tr>
                   ) : null}
-                </div>
-              </div>
+                </tbody>
+              </table>
+            </div>
+          </TabsContent>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {cargas.map((c) => (
-                  <div
-                    key={c.recurso.id}
-                    className={cn(
-                      "glass-panel rounded-2xl border p-5",
-                      c.conflito ? "border-destructive/50" : "border-border/60",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <h4 className="font-medium">{c.recurso.nome}</h4>
-                        <p className="text-xs text-muted-foreground">
-                          {c.recurso.disponibilidadeProjetos}% do dia para projetos ·{" "}
-                          {c.capacidadeHoras.toFixed(1)}h/dia
-                        </p>
-                      </div>
+          {/* ------------------------------------------------------ riscos */}
+          <TabsContent value="riscos" className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="panel p-5">
+              <div className="flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <ShieldAlert className="size-4 text-warning" /> Riscos
+                </h2>
+                {editavel ? (
+                  <RiscoDialog
+                    projetoId={projectId}
+                    onSalvar={(v) => novoRisco.mutate(v)}
+                    salvando={novoRisco.isPending}
+                  />
+                ) : null}
+              </div>
+              <ul className="mt-4 space-y-2">
+                {riscos.map((r) => (
+                  <li key={r.id} className="rounded-lg border border-border bg-surface p-3">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Badge
                         variant="outline"
-                        className={c.conflito ? HEALTH_CLASS.vermelho : HEALTH_CLASS.verde}
+                        className={cn("text-xs", nivelStyle[r.probabilidade])}
                       >
-                        {Math.round(c.demandaPct)}% alocado
+                        prob. {r.probabilidade}
+                      </Badge>
+                      <Badge variant="outline" className={cn("text-xs", nivelStyle[r.impacto])}>
+                        impacto {r.impacto}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {r.status}
                       </Badge>
                     </div>
-                    <Progress value={Math.min(c.demandaPct, 100)} className="mt-3 h-1.5" />
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Atua em {c.projetos.length} projeto(s): {c.projetos.join(", ") || "—"}
-                    </p>
-                  </div>
+                    <p className="mt-2 text-sm">{r.descricao}</p>
+                    {r.mitigacao ? (
+                      <p className="mt-1 text-xs text-muted-foreground">Mitigação: {r.mitigacao}</p>
+                    ) : null}
+                  </li>
                 ))}
-                {semCadastro.length ? (
-                  <p className="text-sm text-warning">
-                    Sem cadastro de recurso: {semCadastro.join(", ")} — considerados 100%
-                    disponíveis até serem cadastrados em Recursos e capacidade.
-                  </p>
+                {riscos.length === 0 ? (
+                  <li className="py-6 text-center text-sm text-muted-foreground">
+                    Nenhum risco registrado.
+                  </li>
+                ) : null}
+              </ul>
+            </div>
+
+            <div className="panel p-5">
+              <div className="flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <AlertTriangle className="size-4 text-destructive" /> Pontos de atenção
+                </h2>
+                {editavel ? (
+                  <AtencaoDialog
+                    projetoId={projectId}
+                    onSalvar={(v) => novaAtencao.mutate(v)}
+                    salvando={novaAtencao.isPending}
+                  />
                 ) : null}
               </div>
-            </TabsContent>
-          </Tabs>
-
-          {health ? (
-            <p className="text-xs text-muted-foreground">
-              Saúde geral do projeto: {HEALTH_LABEL[health.geral]}
-            </p>
-          ) : null}
-        </div>
-
-        <aside className="space-y-4 xl:sticky xl:top-4">
-          <div className="glass-panel space-y-3 rounded-2xl border border-border/60 p-5">
-            <h3 className="text-sm font-semibold">Semáforos de governança</h3>
-            {health ? (
-              <div className="grid gap-2">
-                <Semaforo tone={health.prazo} label={`Prazo (${health.atrasoPct}% atraso)`} />
-                <Semaforo
-                  tone={health.atualizacao}
-                  label={
-                    health.diasSemAtualizacao === null
-                      ? "Sem atualização"
-                      : `${health.diasSemAtualizacao}d sem update`
-                  }
-                />
-                <Semaforo tone={health.risco} label={`Riscos (${(project.riscos ?? []).length})`} />
-                <Semaforo
-                  tone={health.baseline}
-                  label={baseline ? `Baseline v${baseline.versao}` : "Baseline não registrada"}
-                />
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">Calculando...</p>
-            )}
-            {health?.alertas.length ? (
-              <ul className="space-y-1 text-xs text-muted-foreground">
-                {health.alertas.map((a) => (
-                  <li key={a}>• {a}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-
-          <BaselinePanel project={project} />
-
-          <SidePanel
-            titulo="Riscos"
-            contagem={(project.riscos ?? []).length}
-            acao={<RiskDialog project={project} />}
-          >
-            {(project.riscos ?? []).length ? (
-              <ul className="space-y-2">
-                {(project.riscos ?? []).map((r) => (
-                  <li key={r.id} className="rounded-lg border border-border/60 p-3">
-                    <div className="flex flex-wrap items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                      <span>Prob. {r.probabilidade}</span>
-                      <span>· Impacto {r.impacto}</span>
-                      <span>· {r.status}</span>
-                    </div>
-                    <p className="mt-1 text-sm">{r.descricao}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Mitigação: {r.mitigacao || "—"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-xs text-warning">Nenhum risco cadastrado — projeto em alerta.</p>
-            )}
-          </SidePanel>
-
-          <SidePanel
-            titulo="Atualizações"
-            contagem={(project.atualizacoes ?? []).length}
-            acao={<WeeklyUpdateDialog project={project} />}
-          >
-            {(project.atualizacoes ?? []).length ? (
-              <ul className="space-y-2">
-                {(project.atualizacoes ?? []).map((u) => (
-                  <li key={u.id} className="rounded-lg border border-border/60 p-3">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span suppressHydrationWarning>
-                        {hydrated && !Number.isNaN(new Date(u.data).getTime())
-                          ? new Date(u.data).toLocaleDateString("pt-BR")
-                          : "—"}
-                      </span>
-                      <span>{u.autor}</span>
-                    </div>
-                    <p className="mt-1 text-sm">{u.descricao}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Próximas: {u.proximasEntregas || "—"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Nenhuma atualização registrada — o projeto está sinalizado em vermelho.
-              </p>
-            )}
-          </SidePanel>
-
-          <SidePanel
-            titulo="Pontos de atenção"
-            contagem={(project.atencoes ?? []).filter((a) => a.status === "aberto").length}
-            acao={<AttentionDialog project={project} />}
-          >
-            {(project.atencoes ?? []).length ? (
-              <ul className="space-y-2">
-                {(project.atencoes ?? []).map((a) => (
+              <ul className="mt-4 space-y-2">
+                {atencoes.map((a) => (
                   <li
                     key={a.id}
                     className={cn(
                       "rounded-lg border p-3",
-                      a.status === "aberto" ? "border-destructive/40" : "border-border/60",
+                      a.status === "aberto"
+                        ? "border-destructive/30 bg-destructive/5"
+                        : "border-border bg-surface opacity-70",
                     )}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium">{a.titulo}</p>
-                      {a.status === "aberto" ? (
+                      {editavel && a.status === "aberto" ? (
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-6 px-2 text-[11px]"
-                          onClick={() => resolveAttention(project.id, a.id)}
+                          className="h-6 text-xs"
+                          disabled={resolver.isPending}
+                          onClick={() => resolver.mutate(a.id)}
                         >
                           Resolver
                         </Button>
-                      ) : (
-                        <Badge variant="outline" className={HEALTH_CLASS.verde}>
-                          Resolvido
-                        </Badge>
-                      )}
+                      ) : null}
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{a.descricao}</p>
-                    <p className="mt-1 text-xs">
-                      <span className="text-muted-foreground">Decisão: </span>
-                      {a.decisaoNecessaria} · {a.responsavelDecisao}
+                    {a.descricao ? (
+                      <p className="mt-1 text-sm text-muted-foreground">{a.descricao}</p>
+                    ) : null}
+                    {a.decisaoNecessaria ? (
+                      <p className="mt-1 text-xs">
+                        <strong>Decisão:</strong> {a.decisaoNecessaria}
+                      </p>
+                    ) : null}
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      {a.responsavelDecisaoNome ? `${a.responsavelDecisaoNome} · ` : ""}
+                      {fmt(a.criadoEm)}
+                      {a.resolvidoEm ? ` · resolvido em ${fmt(a.resolvidoEm)}` : ""}
                     </p>
                   </li>
                 ))}
+                {atencoes.length === 0 ? (
+                  <li className="py-6 text-center text-sm text-muted-foreground">
+                    Nenhum ponto de atenção.
+                  </li>
+                ) : null}
               </ul>
-            ) : (
-              <p className="text-xs text-muted-foreground">Nenhum ponto de atenção aberto.</p>
-            )}
-          </SidePanel>
+            </div>
+          </TabsContent>
 
-          <AiCoach project={project} />
-        </aside>
+          {/* ---------------------------------------------- acompanhamento */}
+          <TabsContent value="acompanhamento" className="mt-4">
+            <div className="panel p-5">
+              <div className="flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <CalendarClock className="size-4 text-primary" /> Atualizações de status
+                </h2>
+                {editavel ? (
+                  <AtualizacaoDialog
+                    projetoId={projectId}
+                    onSalvar={(v) => novaAtualizacao.mutate(v)}
+                    salvando={novaAtualizacao.isPending}
+                  />
+                ) : null}
+              </div>
+
+              <ol className="mt-4 space-y-0">
+                {atualizacoes.map((a, i) => (
+                  <li key={a.id} className="relative flex gap-3 pb-5">
+                    {i < atualizacoes.length - 1 ? (
+                      <span
+                        className="absolute left-[5px] top-3 h-full w-px bg-border"
+                        aria-hidden
+                      />
+                    ) : null}
+                    <span className="relative mt-1.5 size-[11px] shrink-0 rounded-full border-2 border-primary bg-background" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {fmt(a.dataRef)}
+                        {a.autorNome ? ` · ${a.autorNome}` : ""}
+                      </p>
+                      {a.descricao ? <p className="mt-1 text-sm">{a.descricao}</p> : null}
+                      {a.ultimasEntregas ? (
+                        <p className="mt-1.5 text-xs text-muted-foreground">
+                          <strong className="text-foreground">Entregue:</strong> {a.ultimasEntregas}
+                        </p>
+                      ) : null}
+                      {a.proximasEntregas ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          <strong className="text-foreground">A seguir:</strong>{" "}
+                          {a.proximasEntregas}
+                        </p>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+                {atualizacoes.length === 0 ? (
+                  <li className="py-8 text-center text-sm text-muted-foreground">
+                    Nenhuma atualização registrada. Projeto sem acompanhamento some do radar da
+                    diretoria.
+                  </li>
+                ) : null}
+              </ol>
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
+
+      <TaskDialog
+        projetoId={projectId}
+        tarefa={editando}
+        tarefas={tarefas}
+        recursos={recursos}
+        responsaveisAtuais={editando ? (vinculos.responsaveis[editando.id] ?? []) : []}
+        predecessorasAtuais={editando ? (vinculos.predecessoras[editando.id] ?? []) : []}
+        open={tarefaAberta}
+        onOpenChange={setTarefaAberta}
+      />
     </AppShell>
+  );
+}
+
+// ------------------------------------------------------------ subdiálogos
+
+function RiscoDialog({
+  projetoId,
+  onSalvar,
+  salvando,
+}: {
+  projetoId: string;
+  onSalvar: (v: RiscoInput) => void;
+  salvando: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [descricao, setDescricao] = useState("");
+  const [probabilidade, setProbabilidade] = useState<"alta" | "media" | "baixa">("media");
+  const [impacto, setImpacto] = useState<"alto" | "medio" | "baixo">("medio");
+  const [mitigacao, setMitigacao] = useState("");
+
+  function salvar() {
+    if (descricao.trim().length < 5) {
+      toast.error("Descreva o risco.");
+      return;
+    }
+    onSalvar({
+      projetoId,
+      descricao: descricao.trim(),
+      probabilidade,
+      impacto,
+      mitigacao: mitigacao.trim() || null,
+    });
+    setDescricao("");
+    setMitigacao("");
+    setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1">
+          <Plus className="size-3.5" /> Risco
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Registrar risco</DialogTitle>
+          <DialogDescription>
+            Risco é o que ainda não aconteceu mas pode comprometer o projeto.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label>Descrição</Label>
+            <Textarea
+              rows={2}
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+              placeholder="Ex.: fornecedor pode atrasar a entrega dos equipamentos"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label>Probabilidade</Label>
+              <Select
+                value={probabilidade}
+                onValueChange={(v) => setProbabilidade(v as typeof probabilidade)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alta">Alta</SelectItem>
+                  <SelectItem value="media">Média</SelectItem>
+                  <SelectItem value="baixa">Baixa</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Impacto</Label>
+              <Select value={impacto} onValueChange={(v) => setImpacto(v as typeof impacto)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alto">Alto</SelectItem>
+                  <SelectItem value="medio">Médio</SelectItem>
+                  <SelectItem value="baixo">Baixo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Plano de mitigação</Label>
+            <Textarea
+              rows={2}
+              value={mitigacao}
+              onChange={(e) => setMitigacao(e.target.value)}
+              placeholder="O que será feito para reduzir a probabilidade ou o impacto"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button onClick={salvar} disabled={salvando}>
+            Registrar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AtencaoDialog({
+  projetoId,
+  onSalvar,
+  salvando,
+}: {
+  projetoId: string;
+  onSalvar: (v: AtencaoInput) => void;
+  salvando: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [titulo, setTitulo] = useState("");
+  const [descricao, setDescricao] = useState("");
+  const [decisao, setDecisao] = useState("");
+  const [responsavel, setResponsavel] = useState(SEM);
+
+  const usuarios = useQuery({
+    queryKey: ["usuarios"],
+    queryFn: () => import("@/services/cadastros.functions").then((m) => m.listarUsuariosFn()),
+    enabled: open,
+  });
+
+  function salvar() {
+    if (titulo.trim().length < 5) {
+      toast.error("Informe o título.");
+      return;
+    }
+    onSalvar({
+      projetoId,
+      titulo: titulo.trim(),
+      descricao: descricao.trim() || null,
+      decisaoNecessaria: decisao.trim() || null,
+      responsavelDecisaoId: responsavel === SEM ? null : responsavel,
+    });
+    setTitulo("");
+    setDescricao("");
+    setDecisao("");
+    setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1">
+          <Plus className="size-3.5" /> Atenção
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Ponto de atenção</DialogTitle>
+          <DialogDescription>
+            Algo que trava o projeto e depende de decisão de alguém.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label>Título</Label>
+            <Input maxLength={300} value={titulo} onChange={(e) => setTitulo(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label>Contexto</Label>
+            <Textarea rows={2} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label>Decisão necessária</Label>
+            <Textarea rows={2} value={decisao} onChange={(e) => setDecisao(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label>Quem decide</Label>
+            <Select value={responsavel} onValueChange={setResponsavel}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SEM}>Não definido</SelectItem>
+                {(usuarios.data ?? [])
+                  .filter((u) => u.ativo)
+                  .map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.nome}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button onClick={salvar} disabled={salvando}>
+            Registrar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AtualizacaoDialog({
+  projetoId,
+  onSalvar,
+  salvando,
+}: {
+  projetoId: string;
+  onSalvar: (v: AtualizacaoInput) => void;
+  salvando: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [dataRef, setDataRef] = useState(paraInput(new Date()));
+  const [descricao, setDescricao] = useState("");
+  const [ultimas, setUltimas] = useState("");
+  const [proximas, setProximas] = useState("");
+
+  function salvar() {
+    if (descricao.trim().length < 5 && ultimas.trim().length < 5) {
+      toast.error("Descreva o andamento ou o que foi entregue.");
+      return;
+    }
+    onSalvar({
+      projetoId,
+      dataRef: doInput(dataRef),
+      descricao: descricao.trim() || null,
+      ultimasEntregas: ultimas.trim() || null,
+      proximasEntregas: proximas.trim() || null,
+    });
+    setDescricao("");
+    setUltimas("");
+    setProximas("");
+    setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1">
+          <MessageSquarePlus className="size-3.5" /> Atualizar
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Atualização de status</DialogTitle>
+          <DialogDescription>
+            Registro semanal do andamento. É o que a diretoria lê.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label>Data de referência</Label>
+            <Input type="date" value={dataRef} onChange={(e) => setDataRef(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label>Andamento geral</Label>
+            <Textarea rows={2} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label>Últimas entregas</Label>
+            <Textarea rows={2} value={ultimas} onChange={(e) => setUltimas(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label>Próximas entregas</Label>
+            <Textarea rows={2} value={proximas} onChange={(e) => setProximas(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button onClick={salvar} disabled={salvando}>
+            Registrar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,165 +1,144 @@
 import { useState } from "react";
-import { CalendarDays, GripVertical, User } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useItsm } from "@/controllers/itsm-store";
-import {
-  KANBAN_LABEL,
-  type KanbanStatus,
-  type Project,
-  type ProjectTask,
-} from "@/models/itsm-types";
-import { fmtDate, toISODate } from "@/services/project-utils";
+import { Badge } from "@/components/ui/badge";
+import type { QuadroTarefa, Tarefa } from "@/repositories/projetos.repo";
+import { moverTarefaFn } from "@/services/projetos.functions";
 import { cn } from "@/lib/utils";
 
-const COLUNAS: KanbanStatus[] = ["backlog", "todo", "doing", "done"];
+export const QUADROS: { key: QuadroTarefa; label: string }[] = [
+  { key: "backlog", label: "Backlog" },
+  { key: "todo", label: "A fazer" },
+  { key: "doing", label: "Em andamento" },
+  { key: "done", label: "Concluído" },
+];
 
-const COL_ACCENT: Record<KanbanStatus, string> = {
-  backlog: "bg-muted-foreground/40",
-  todo: "bg-info",
-  doing: "bg-warning",
-  done: "bg-success",
-};
-
-/** Coluna atual da tarefa: explícita quando movida, senão derivada do progresso. */
-export function taskBoard(t: ProjectTask): KanbanStatus {
-  if (t.quadro) return t.quadro;
-  if (t.progresso >= 100) return "done";
-  if (t.progresso > 0) return "doing";
-  return "backlog";
+function fmt(v: Date | string): string {
+  return new Date(v).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
-function PostIt({
-  task,
-  project,
-  onDragStart,
+export function ProjectKanban({
+  projetoId,
+  tarefas,
+  responsaveis,
+  nomeRecurso,
+  editavel,
+  onEditar,
 }: {
-  task: ProjectTask;
-  project: Project;
-  onDragStart: () => void;
+  projetoId: string;
+  tarefas: Tarefa[];
+  responsaveis: Record<string, string[]>;
+  nomeRecurso: (id: string) => string;
+  editavel: boolean;
+  onEditar: (t: Tarefa) => void;
 }) {
-  const pessoas = task.responsaveis ?? [task.responsavel];
-  const done = taskBoard(task) === "done";
-  return (
-    <article
-      draggable
-      onDragStart={onDragStart}
-      className={cn(
-        "group cursor-grab rounded-[4px] border border-amber-300/60 bg-amber-200 p-3 text-neutral-900 shadow-[3px_4px_10px_-4px_rgba(0,0,0,0.55)] transition-transform active:cursor-grabbing",
-        "rotate-[-0.6deg] hover:rotate-0 hover:shadow-[4px_6px_14px_-4px_rgba(0,0,0,0.6)]",
-        done && "bg-amber-100",
-      )}
-      style={{ fontFamily: "var(--font-sans)" }}
-    >
-      <div className="flex items-start gap-2">
-        <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-900/40" />
-        <h4
-          className={cn(
-            "min-w-0 text-sm font-semibold leading-snug",
-            done && "line-through opacity-70",
-          )}
-        >
-          {task.nome}
-        </h4>
-      </div>
-      <p className="mt-1 pl-5 text-[11px] text-neutral-900/70">{task.atividade ?? "Execução"}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 pl-5 text-[11px] text-neutral-900/70">
-        <span className="inline-flex items-center gap-1">
-          <User className="h-3 w-3" /> {pessoas.join(", ")}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <CalendarDays className="h-3 w-3" /> {fmtDate(task.inicio)} — {fmtDate(task.fim)}
-        </span>
-      </div>
-      <div className="mt-2 pl-5">
-        <div className="h-1 overflow-hidden rounded-full bg-neutral-900/15">
-          <div
-            className="h-full rounded-full bg-neutral-900/60"
-            style={{ width: `${task.progresso}%` }}
-          />
-        </div>
-        <div className="mt-1 flex items-center justify-between text-[10px] text-neutral-900/60">
-          <span>{project.id}</span>
-          <span>{task.progresso}%</span>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-/** Quadro kanban das tarefas de um projeto (backlog / a fazer / em andamento / concluído). */
-export function ProjectKanban({ project }: { project: Project }) {
-  const { updateTask } = useItsm();
+  const qc = useQueryClient();
   const [arrastando, setArrastando] = useState<string | null>(null);
-  const [sobre, setSobre] = useState<KanbanStatus | null>(null);
+  const [sobre, setSobre] = useState<QuadroTarefa | null>(null);
 
-  function mover(taskId: string, coluna: KanbanStatus) {
-    const t = project.tarefas.find((x) => x.id === taskId);
-    if (!t || taskBoard(t) === coluna) return;
-    if (coluna === "done") {
-      const hoje = toISODate(Date.now());
-      updateTask(project.id, taskId, {
-        quadro: "done",
-        progresso: 100,
-        fim: hoje,
-        concluidoEm: hoje,
-      });
-      toast.success(`"${t.nome}" concluída`, {
-        description: `100% · fim ajustado para ${fmtDate(hoje)}`,
-      });
-      return;
-    }
-    updateTask(project.id, taskId, {
-      quadro: coluna,
-      concluidoEm: undefined,
-      ...(t.progresso >= 100 ? { progresso: coluna === "doing" ? 90 : 0 } : {}),
-    });
+  const mover = useMutation({
+    mutationFn: (v: { id: string; quadro: QuadroTarefa }) => moverTarefaFn({ data: v }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projeto", projetoId] });
+      qc.invalidateQueries({ queryKey: ["projetos"] });
+    },
+    onError: (e: Error) => toast.error("Não foi possível mover", { description: e.message }),
+  });
+
+  function soltar(quadro: QuadroTarefa) {
+    setSobre(null);
+    if (!arrastando) return;
+    const t = tarefas.find((x) => x.id === arrastando);
+    setArrastando(null);
+    if (!t || t.quadro === quadro) return;
+    mover.mutate({ id: t.id, quadro });
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {COLUNAS.map((col) => {
-        const itens = project.tarefas.filter((t) => taskBoard(t) === col);
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {QUADROS.map((col) => {
+        const itens = tarefas.filter((t) => t.quadro === col.key);
         return (
           <section
-            key={col}
+            key={col.key}
             onDragOver={(e) => {
+              if (!editavel) return;
               e.preventDefault();
-              setSobre(col);
+              setSobre(col.key);
             }}
-            onDragLeave={() => setSobre((s) => (s === col ? null : s))}
-            onDrop={(e) => {
-              e.preventDefault();
-              setSobre(null);
-              if (arrastando) mover(arrastando, col);
-              setArrastando(null);
-            }}
+            onDragLeave={() => setSobre(null)}
+            onDrop={() => editavel && soltar(col.key)}
             className={cn(
-              "glass-panel flex min-h-[240px] flex-col rounded-2xl border border-border/60 p-3 transition-colors",
-              sobre === col && "border-primary/60 bg-primary/5",
+              "rounded-xl border border-border bg-surface p-3 transition-colors",
+              sobre === col.key ? "border-primary/50 bg-primary/5" : "",
             )}
           >
-            <header className="flex items-center gap-2 px-1 pb-3">
-              <span className={cn("h-2 w-2 rounded-full", COL_ACCENT[col])} />
-              <h3 className="text-sm font-semibold">{KANBAN_LABEL[col]}</h3>
-              <span className="ml-auto font-mono text-xs text-muted-foreground">
-                {itens.length}
-              </span>
+            <header className="mb-3 flex items-center justify-between">
+              <span className="text-sm font-medium">{col.label}</span>
+              <span className="font-mono text-[11px] text-muted-foreground">{itens.length}</span>
             </header>
-            <div className="flex flex-col gap-3">
-              {itens.map((t) => (
-                <PostIt
-                  key={t.id}
-                  task={t}
-                  project={project}
-                  onDragStart={() => setArrastando(t.id)}
-                />
-              ))}
-              {!itens.length ? (
-                <p className="rounded-lg border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">
-                  Arraste tarefas para cá
-                </p>
+
+            <ul className="space-y-2">
+              {itens.map((t) => {
+                const done = t.quadro === "done";
+                return (
+                  <li key={t.id}>
+                    <button
+                      draggable={editavel}
+                      onDragStart={() => setArrastando(t.id)}
+                      onDragEnd={() => setArrastando(null)}
+                      onClick={() => editavel && onEditar(t)}
+                      className={cn(
+                        "w-full rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40",
+                        editavel ? "cursor-grab active:cursor-grabbing" : "cursor-default",
+                        arrastando === t.id ? "opacity-50" : "",
+                      )}
+                    >
+                      <p
+                        className={cn(
+                          "text-sm font-medium leading-snug",
+                          done ? "line-through opacity-70" : "",
+                        )}
+                      >
+                        {t.nome}
+                      </p>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {t.marco ? (
+                          <Badge variant="outline" className="text-[10px]">
+                            marco
+                          </Badge>
+                        ) : null}
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {fmt(t.inicio)} — {fmt(t.fim)}
+                        </span>
+                      </div>
+
+                      {(responsaveis[t.id] ?? []).length > 0 ? (
+                        <p className="mt-1.5 truncate text-[11px] text-muted-foreground">
+                          {(responsaveis[t.id] ?? []).map(nomeRecurso).join(", ")}
+                        </p>
+                      ) : null}
+
+                      {!done && t.progresso > 0 ? (
+                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className="h-full rounded-full bg-primary/70"
+                            style={{ width: `${t.progresso}%` }}
+                          />
+                        </div>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+
+              {itens.length === 0 ? (
+                <li className="rounded-lg border border-dashed border-border py-6 text-center text-xs text-muted-foreground">
+                  Vazio
+                </li>
               ) : null}
-            </div>
+            </ul>
           </section>
         );
       })}

@@ -10,7 +10,6 @@ import {
 import { type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
-import { ItsmProvider } from "@/controllers/itsm-store";
 import { ThemeProvider } from "../lib/theme";
 import { Toaster } from "../components/ui/sonner";
 
@@ -137,11 +136,9 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <ItsmProvider>
-          {/* Obrigatório: as rotas filhas renderizam aqui. Remover <Outlet /> quebra tudo. */}
-          <Outlet />
-          <Toaster />
-        </ItsmProvider>
+        {/* Obrigatório: as rotas filhas renderizam aqui. Remover <Outlet /> quebra tudo. */}
+        <Outlet />
+        <Toaster />
       </ThemeProvider>
     </QueryClientProvider>
   );
