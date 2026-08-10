@@ -57,10 +57,17 @@ curl -I http://localhost:8083/ypper/
 
 ## Passos no rosset16
 
-Inserir `rosset16/ypper.location.conf` nos **três** arquivos de marca em
-`/var/nginx/data/conf.d/`: `set-teste.rosset.conf`, `teste.valisere.conf` e
-`testerosset.conf`. Aplicar em um só cria comportamento assimétrico entre
-marcas — o mesmo risco levantado no PRE-10.
+Copiar `rosset16/comum/ypper.conf` para `/var/nginx/data/conf.d/comum/` e
+acrescentar **uma linha** em cada um dos três arquivos de marca
+(`set-teste.rosset.conf`, `teste.valisere.conf`, `testerosset.conf`):
+
+```
+include /etc/nginx/conf.d/comum/ypper.conf;
+```
+
+O arquivo compartilhado segue o padrão do `comum/limite-login.conf` que já
+existe ali. Uma cópia só, incluída três vezes: as marcas não podem divergir
+com o tempo — o risco levantado no PRE-10.
 
 Backup, teste e recarga:
 
@@ -94,12 +101,20 @@ sincronia, o vazamento de `client.server` para o bundle do cliente e o
 `baseURL` que faltava no Nitro. Detalhe de cada um nos comentários do
 `Dockerfile`, de `src/services/resource-utils.ts` e do `vite.config.ts`.
 
+## Provado no rosset29 em 2026-08-10
+
+Build a partir da `develop` na própria máquina (x86_64, Docker 24.0.2),
+container `ypper-app` publicando `8083:8080` na `network-rosset`:
+
+- `docker inspect` → `healthy`.
+- `/` → 307, `/ypper/` → 200, CSS sob `/ypper/assets/` → 200.
+- Os quatro containers que já rodavam (`frontend` 8080, `backend` 3000,
+  `frontend-auth` 8081, `backend-auth` 4000) não foram tocados.
+- Oracle 10.8.0.2:1521 alcançável a partir do servidor.
+
 ## O que ainda não foi provado
 
-- **Nada rodou no rosset29.** O teste acima foi em macOS/arm64; o rosset29 é
-  Linux/x86. O `docker build` lá parte do mesmo Dockerfile, mas o primeiro
-  deploy ainda é o primeiro deploy.
-- **O bloco do nginx não foi aplicado.** `ypper.location.conf` está escrito e
+- **O bloco do nginx não foi aplicado.** `comum/ypper.conf` está escrito e
   revisado, mas não passou por `nginx -t` em nenhuma máquina.
 - **Identidade do usuário.** O `check-token.lua` protege a rota e injeta
   `Authorization` e `X-Remote-User`, mas o app ainda não lê esses cabeçalhos —
