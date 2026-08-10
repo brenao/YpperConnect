@@ -14,7 +14,11 @@
 #
 # Uso:  ./atualizar-ypper.sh [branch]     (padrao: main)
 
-set -euo pipefail
+# `set -eu` de proposito, sem `pipefail`: quem roda `sh atualizar-ypper.sh`
+# cai no dash, que ignora o shebang acima e nao conhece `pipefail` -- morreria
+# aqui com "Illegal option -o pipefail". Nao ha pipeline neste script cujo
+# erro precise ser capturado, entao a opcao nao faz falta.
+set -eu
 
 BASE_DIR=/var/ypper
 BRANCH="${1:-main}"
