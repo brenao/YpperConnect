@@ -81,13 +81,12 @@ function Recursos() {
     (r) => (cargaPorId.get(r.id)?.horas ?? 0) > capacidadeProjeto(r),
   ).length;
 
-  const semProjetos = (q.data?.cargas ?? []).length === 0;
+  const semAlocacao = (q.data?.cargas ?? []).length === 0;
 
   return (
     <AppShell
       title="Recursos e capacidade"
       subtitle="Disponibilidade diária para projetos, alocação multiprojeto e conflitos de capacidade"
-      actions={isTi ? <ResourceDialog /> : undefined}
     >
       <div className="space-y-4">
         {q.error ? (
@@ -134,16 +133,18 @@ function Recursos() {
           </div>
         </section>
 
-        {semProjetos ? (
+        {semAlocacao && recursos.length > 0 ? (
           <div className="panel border-warning/40 p-4 text-sm text-muted-foreground">
             <p className="font-medium text-foreground">Alocação zerada.</p>
             <p className="mt-1">
-              A carga é calculada a partir das tarefas de projeto no banco, e a tela de projetos
-              ainda não foi migrada. O cadastro de recursos abaixo já funciona normalmente.
+              A carga vem das tarefas de projeto em andamento. Nenhuma tarefa tem responsável
+              alocado no período atual — vincule os recursos às tarefas dentro de cada projeto.
             </p>
           </div>
         ) : null}
 
+        {/* Ação de coleção fica junto da coleção. O cabeçalho é reservado
+            à identidade e ao "Abrir chamado", que é global de toda tela. */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-56 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
@@ -163,6 +164,7 @@ function Recursos() {
             {mostrarInativos ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
             {mostrarInativos ? "Ocultar inativos" : "Mostrar inativos"}
           </Button>
+          {isTi ? <ResourceDialog /> : null}
         </div>
 
         {q.isPending ? (

@@ -139,7 +139,6 @@ function Projetos() {
     <AppShell
       title="Projetos"
       subtitle="Portfólio de iniciativas de TI com semáforo de prazo, atualização semanal e riscos"
-      actions={isTi ? <ProjectDialog /> : undefined}
     >
       <div className="space-y-4">
         {q.error ? (
@@ -148,7 +147,10 @@ function Projetos() {
           </div>
         ) : null}
 
-        <div className="grid gap-3 md:grid-cols-[1fr_200px_200px]">
+        {/* O botão fica junto da lista, não no cabeçalho: "Abrir chamado"
+            é ação global de toda tela, e dois botões primários no mesmo
+            canto competem por atenção. */}
+        <div className="grid gap-3 md:grid-cols-[1fr_180px_180px_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
             <Input
@@ -185,6 +187,7 @@ function Projetos() {
               ))}
             </SelectContent>
           </Select>
+          {isTi ? <ProjectDialog /> : null}
         </div>
 
         {projetos.length > 0 ? (

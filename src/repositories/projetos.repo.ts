@@ -581,3 +581,395 @@ export async function resolverAtencao(ctx: ContextoUsuario, id: string): Promise
     { id },
   );
 }
+
+// ---------------------------------------------------------------- rollup
+
+export interface TarefaCalculada extends Tarefa {
+  /** true quando tem filhas: valores vêm do rollup e não são editáveis. */
+  ehPai: boolean;
+  /** Progresso efetivo: próprio se folha, ponderado pelas filhas se pai. */
+  progressoEfetivo: number;
+  /** Datas efetivas: próprias se folha, min/max das filhas se pai. */
+  inicioEfetivo: Date;
+  fimEfetivo: Date;
+  /** Quantidade de folhas sob esta tarefa. */
+  totalFolhas: number;
+}
+
+const DIA_MS = 86_400_000;
+
+/**
+ * Calcula o rollup das tarefas mãe a partir das folhas.
+ *
+ * Feito na leitura, não gravado: pai com valor próprio dessincroniza
+ * assim que alguém edita uma filha, e aí a tela mostra um número que o
+ * banco contradiz.
+ *
+ * A ponderação é por duração — tarefa de 20 dias pesa mais que uma de 2.
+ * Média simples faria uma subtarefa trivial concluída puxar o pai para
+ * cima como se fosse metade do trabalho.
+ */
+export function calcularRollup(tarefas: Tarefa[]): TarefaCalculada[] {
+  const filhasDe = new Map<string, Tarefa[]>();
+  for (const t of tarefas) {
+    if (t.paiId) filhasDe.set(t.paiId, [...(filhasDe.get(t.paiId) ?? []), t]);
+  }
+
+  const cache = new Map<string, TarefaCalculada>();
+  // Guarda contra ciclo em pai_id, que o banco só impede no self.
+  const emCurso = new Set<string>();
+
+  function resolver(t: Tarefa): TarefaCalculada {
+    const pronto = cache.get(t.id);
+    if (pronto) return pronto;
+
+    const filhas = filhasDe.get(t.id) ?? [];
+    const folha = filhas.length === 0 || emCurso.has(t.id);
+
+    if (folha) {
+      const r: TarefaCalculada = {
+        ...t,
+        ehPai: false,
+        progressoEfetivo: t.progresso,
+        inicioEfetivo: new Date(t.inicio),
+        fimEfetivo: new Date(t.fim),
+        totalFolhas: 1,
+      };
+      cache.set(t.id, r);
+      return r;
+    }
+
+    emCurso.add(t.id);
+    const calc = filhas.map(resolver);
+    emCurso.delete(t.id);
+
+    const pesos = calc.map((c) =>
+      Math.max(1, Math.round((c.fimEfetivo.getTime() - c.inicioEfetivo.getTime()) / DIA_MS) + 1),
+    );
+    const total = pesos.reduce((s, p) => s + p, 0);
+    const somaPonderada = calc.reduce((s, c, i) => s + c.progressoEfetivo * (pesos[i] ?? 1), 0);
+
+    const r: TarefaCalculada = {
+      ...t,
+      ehPai: true,
+      progressoEfetivo: total ? Math.round(somaPonderada / total) : 0,
+      inicioEfetivo: new Date(Math.min(...calc.map((c) => c.inicioEfetivo.getTime()))),
+      fimEfetivo: new Date(Math.max(...calc.map((c) => c.fimEfetivo.getTime()))),
+      totalFolhas: calc.reduce((s, c) => s + c.totalFolhas, 0),
+    };
+    cache.set(t.id, r);
+    return r;
+  }
+
+  return tarefas.map(resolver);
+}
+
+// ------------------------------------------------------- edição inline
+
+export interface CampoTarefa {
+  progresso?: number | undefined;
+  inicio?: Date | undefined;
+  fim?: Date | undefined;
+  nome?: string | undefined;
+}
+
+/**
+ * Atualiza campos isolados, sem tocar em vínculos. É o que a edição
+ * inline do cronograma usa: salvar a tarefa inteira a cada saída de
+ * campo apagaria responsáveis e predecessoras que não vieram no payload.
+ *
+ * Recusa alteração em tarefa que tem filhas: os valores do pai são
+ * derivados, e gravá-los criaria um número que o rollup contradiz.
+ */
+export async function atualizarCampoTarefa(
+  ctx: ContextoUsuario,
+  id: string,
+  d: CampoTarefa,
+): Promise<void> {
+  exigirTi(ctx, "alterar tarefas");
+
+  const filhas = await consultarUm<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id`,
+    { id },
+  );
+  if ((filhas?.total ?? 0) > 0) {
+    throw new ErroDominio("Tarefa com subtarefas tem datas e progresso calculados a partir delas.");
+  }
+
+  const atual = await consultarUm<{ inicio: Date; fim: Date }>(
+    `SELECT inicio, fim FROM projeto_tarefas WHERE id = :id`,
+    { id },
+  );
+  if (!atual) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+
+  const inicio = d.inicio ?? new Date(atual.inicio);
+  const fim = d.fim ?? new Date(atual.fim);
+  if (fim < inicio) throw new ErroDominio("Data de término anterior ao início");
+
+  const concluida = d.progresso === 100;
+
+  await executar(
+    `UPDATE projeto_tarefas
+        SET nome = NVL(:nome, nome),
+            progresso = NVL(:progresso, progresso),
+            inicio = :inicio,
+            fim = :fim,
+            quadro = CASE WHEN :concluida = 1 THEN 'done'
+                          WHEN quadro = 'done' THEN 'doing' ELSE quadro END,
+            concluido_em = CASE WHEN :concluida = 1
+                                THEN NVL(concluido_em, SYSTIMESTAMP) ELSE NULL END
+      WHERE id = :id`,
+    {
+      id,
+      nome: d.nome?.trim() ?? null,
+      progresso: d.progresso ?? null,
+      inicio,
+      fim,
+      concluida: deBool(concluida),
+    },
+  );
+}
+
+/**
+ * Insere uma tarefa logo abaixo da referência, herdando o mesmo pai.
+ * Abre espaço na ordenação para a nova linha entrar no lugar certo.
+ */
+export async function inserirAbaixo(
+  ctx: ContextoUsuario,
+  referenciaId: string,
+  comoFilha: boolean,
+): Promise<string> {
+  exigirTi(ctx, "criar tarefas");
+
+  const ref = await consultarUm<{
+    projetoId: string;
+    paiId: string | null;
+    ordem: number;
+    inicio: Date;
+    fim: Date;
+  }>(`SELECT projeto_id, pai_id, ordem, inicio, fim FROM projeto_tarefas WHERE id = :id`, {
+    id: referenciaId,
+  });
+  if (!ref) throw new ErroDominio("Tarefa de referência não encontrada");
+
+  const id = novoId();
+  const paiId = comoFilha ? referenciaId : ref.paiId;
+
+  await emTransacao(async (tx) => {
+    await tx.executar(
+      `UPDATE projeto_tarefas SET ordem = ordem + 1
+        WHERE projeto_id = :projetoId AND ordem > :ordem`,
+      { projetoId: ref.projetoId, ordem: ref.ordem },
+    );
+    await tx.executar(
+      `INSERT INTO projeto_tarefas
+         (id, projeto_id, pai_id, nome, inicio, fim, progresso, quadro, marco, ordem)
+       VALUES (:id, :projetoId, :paiId, 'Nova tarefa', :inicio, :fim, 0, 'backlog', 0, :ordem)`,
+      {
+        id,
+        projetoId: ref.projetoId,
+        paiId,
+        inicio: ref.inicio,
+        fim: ref.fim,
+        ordem: ref.ordem + 1,
+      },
+    );
+  });
+
+  return id;
+}
+
+// ---------------------------------------------------------------- baseline
+
+export interface Baseline {
+  id: string;
+  projetoId: string;
+  versao: number;
+  descricao: string | null;
+  autorId: string | null;
+  autorNome: string | null;
+  criadoEm: Date;
+}
+
+export interface BaselineTarefa {
+  tarefaId: string;
+  nome: string;
+  inicio: Date;
+  fim: Date;
+}
+
+export async function listarBaselines(projetoId: string): Promise<Baseline[]> {
+  return consultar<Baseline>(
+    `SELECT b.id, b.projeto_id, b.versao, b.descricao, b.autor_id,
+            u.nome AS autor_nome, b.criado_em
+       FROM projeto_baselines b
+       LEFT JOIN usuarios u ON u.id = b.autor_id
+      WHERE b.projeto_id = :projetoId
+      ORDER BY b.versao DESC`,
+    { projetoId },
+  );
+}
+
+/** Tarefas da baseline mais antiga: é contra o plano original que se mede. */
+export async function baselineOriginal(projetoId: string): Promise<BaselineTarefa[]> {
+  return consultar<BaselineTarefa>(
+    `SELECT bt.tarefa_id, bt.nome, bt.inicio, bt.fim
+       FROM baseline_tarefas bt
+       JOIN projeto_baselines b ON b.id = bt.baseline_id
+      WHERE b.projeto_id = :projetoId
+        AND b.versao = (SELECT MIN(versao) FROM projeto_baselines WHERE projeto_id = :projetoId)`,
+    { projetoId },
+  );
+}
+
+export async function salvarBaseline(
+  ctx: ContextoUsuario,
+  projetoId: string,
+  descricao?: string | null | undefined,
+): Promise<string> {
+  exigirTi(ctx, "salvar baseline");
+
+  const id = novoId();
+  await emTransacao(async (tx) => {
+    const v = await tx.consultar<{ prox: number }>(
+      `SELECT NVL(MAX(versao), 0) + 1 AS prox FROM projeto_baselines WHERE projeto_id = :p`,
+      { p: projetoId },
+    );
+    const versao = v[0]?.prox ?? 1;
+
+    await tx.executar(
+      `INSERT INTO projeto_baselines (id, projeto_id, versao, descricao, autor_id, criado_em)
+       VALUES (:id, :projetoId, :versao, :descricao, :autorId, SYSTIMESTAMP)`,
+      { id, projetoId, versao, descricao: descricao?.trim() ?? null, autorId: ctx.id },
+    );
+
+    // INSERT SELECT: copia o cronograma inteiro numa ida só.
+    await tx.executar(
+      `INSERT INTO baseline_tarefas (baseline_id, tarefa_id, nome, inicio, fim)
+       SELECT :id, id, nome, inicio, fim FROM projeto_tarefas WHERE projeto_id = :projetoId`,
+      { id, projetoId },
+    );
+  });
+
+  return id;
+}
+
+// ------------------------------------------------------------------- CPM
+
+export interface DadosCpm {
+  /** Duração em dias corridos, início e fim inclusive. */
+  duracaoDias: number;
+  /** Quanto a tarefa pode atrasar sem empurrar o fim do projeto. */
+  folgaDias: number;
+  /** Folga zero: atraso aqui atrasa o projeto inteiro. */
+  critica: boolean;
+}
+
+const UM_DIA = 86_400_000;
+
+function duracaoEmDias(inicio: Date, fim: Date): number {
+  const a = new Date(inicio).setHours(0, 0, 0, 0);
+  const b = new Date(fim).setHours(0, 0, 0, 0);
+  return Math.max(1, Math.round((b - a) / UM_DIA) + 1);
+}
+
+/**
+ * Caminho crítico pelo método CPM.
+ *
+ * Só folhas participam: tarefa mãe é resumo, e incluí-la duplicaria a
+ * duração das filhas no cálculo.
+ *
+ * A duração vem das datas, não o contrário. Num CPM clássico a duração
+ * dirige o cronograma; aqui as datas são definidas pelo usuário e o CPM
+ * responde outra pergunta — quanto cada tarefa pode escorregar antes de
+ * empurrar a entrega. É a informação que interessa a quem acompanha.
+ */
+export function calcularCpm(
+  tarefas: TarefaCalculada[],
+  predecessoras: Record<string, string[]>,
+): Map<string, DadosCpm> {
+  const folhas = tarefas.filter((t) => !t.ehPai);
+  const porId = new Map(folhas.map((t) => [t.id, t]));
+  const saida = new Map<string, DadosCpm>();
+  if (folhas.length === 0) return saida;
+
+  // Predecessoras que apontam para tarefa inexistente ou para um pai são
+  // descartadas: manteriam o grafo preso num nó que nunca resolve.
+  const pred = new Map<string, string[]>();
+  for (const t of folhas) {
+    pred.set(
+      t.id,
+      (predecessoras[t.id] ?? []).filter((p) => porId.has(p) && p !== t.id),
+    );
+  }
+
+  const suc = new Map<string, string[]>();
+  for (const [id, ps] of pred) {
+    for (const p of ps) suc.set(p, [...(suc.get(p) ?? []), id]);
+  }
+
+  const dur = new Map<string, number>();
+  for (const t of folhas) dur.set(t.id, duracaoEmDias(t.inicioEfetivo, t.fimEfetivo));
+
+  // Ordenação topológica. Ciclo em predecessora é possível — o banco só
+  // impede a auto-referência —, então a marca de visitado corta o laço e
+  // as tarefas envolvidas ficam sem folga calculada em vez de travar.
+  const ordem: string[] = [];
+  const estado = new Map<string, 0 | 1 | 2>();
+
+  function visitar(id: string) {
+    const e = estado.get(id) ?? 0;
+    if (e === 2) return;
+    if (e === 1) return; // ciclo: interrompe
+    estado.set(id, 1);
+    for (const p of pred.get(id) ?? []) visitar(p);
+    estado.set(id, 2);
+    ordem.push(id);
+  }
+  for (const t of folhas) visitar(t.id);
+
+  // Passada para frente: início e fim mais cedo possíveis.
+  const es = new Map<string, number>();
+  const ef = new Map<string, number>();
+  for (const id of ordem) {
+    const ps = pred.get(id) ?? [];
+    const inicio = ps.length ? Math.max(...ps.map((p) => ef.get(p) ?? 0)) : 0;
+    es.set(id, inicio);
+    ef.set(id, inicio + (dur.get(id) ?? 1));
+  }
+
+  const fimProjeto = Math.max(...[...ef.values()], 0);
+
+  // Passada para trás: início e fim mais tarde sem atrasar o projeto.
+  const lf = new Map<string, number>();
+  const ls = new Map<string, number>();
+  for (const id of [...ordem].reverse()) {
+    const ss = suc.get(id) ?? [];
+    const fim = ss.length ? Math.min(...ss.map((s) => ls.get(s) ?? fimProjeto)) : fimProjeto;
+    lf.set(id, fim);
+    ls.set(id, fim - (dur.get(id) ?? 1));
+  }
+
+  for (const t of folhas) {
+    const folga = (ls.get(t.id) ?? 0) - (es.get(t.id) ?? 0);
+    saida.set(t.id, {
+      duracaoDias: dur.get(t.id) ?? 1,
+      folgaDias: folga,
+      critica: folga <= 0,
+    });
+  }
+
+  // Tarefa mãe herda: duração pelo próprio intervalo, crítica se
+  // qualquer filha for.
+  for (const t of tarefas) {
+    if (!t.ehPai) continue;
+    const filhas = tarefas.filter((x) => x.paiId === t.id);
+    saida.set(t.id, {
+      duracaoDias: duracaoEmDias(t.inicioEfetivo, t.fimEfetivo),
+      folgaDias: 0,
+      critica: filhas.some((f) => saida.get(f.id)?.critica ?? false),
+    });
+  }
+
+  return saida;
+}

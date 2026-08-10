@@ -93,13 +93,6 @@ export function AppShell({
             );
           })}
         </nav>
-
-        <div className="rounded-xl border border-sidebar-border bg-sidebar-accent/50 p-3">
-          <p className="text-xs text-muted-foreground">
-            Registros do tipo <span className="text-warning">Problema</span> são exclusivos da
-            equipe de TI.
-          </p>
-        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

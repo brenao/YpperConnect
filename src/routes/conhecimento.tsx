@@ -74,6 +74,9 @@ const statusLabel: Record<StatusArtigo, string> = {
   rascunho: "Rascunho",
 };
 
+/** Radix não aceita SelectItem com value vazio. */
+const SEM_CATEGORIA = "__nenhum__";
+
 function Conhecimento() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
@@ -177,43 +180,6 @@ function Conhecimento() {
     <AppShell
       title="Base de conhecimento"
       subtitle="Procedimentos, orientações e soluções recorrentes em formato padronizado"
-      actions={
-        isTi ? (
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="gap-2">
-                <Sparkles className="size-4" /> Gerar com IA
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Gerar artigo com IA</DialogTitle>
-                <DialogDescription>
-                  Descreva o tema. O artigo é criado com sintoma, causa provável, solução passo a
-                  passo e critério de escalonamento — e entra como &ldquo;Revisar&rdquo;.
-                </DialogDescription>
-              </DialogHeader>
-              <Textarea
-                rows={3}
-                maxLength={300}
-                value={tema}
-                onChange={(e) => setTema(e.target.value)}
-                placeholder="Ex.: como proceder quando a VPN cai repetidamente"
-              />
-              <DialogFooter>
-                <Button onClick={() => void gerar()} disabled={gerando} className="gap-2">
-                  {gerando ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="size-4" />
-                  )}
-                  Gerar
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        ) : undefined
-      }
     >
       <div className="space-y-4">
         {artigosQuery.error ? (
@@ -222,6 +188,8 @@ function Conhecimento() {
           </div>
         ) : null}
 
+        {/* Ação de coleção fica junto da coleção. O cabeçalho é reservado
+            à identidade e ao "Abrir chamado", que é global de toda tela. */}
         <div className="panel flex flex-wrap items-center gap-3 p-4">
           <div className="relative min-w-56 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
@@ -236,6 +204,41 @@ function Conhecimento() {
           <span className="text-xs text-muted-foreground">
             {publicados} publicado(s) · {pendentes} pendente(s)
           </span>
+          {isTi ? (
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" className="gap-2">
+                  <Sparkles className="size-4" /> Gerar com IA
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Gerar artigo com IA</DialogTitle>
+                  <DialogDescription>
+                    Descreva o tema. O artigo é criado com sintoma, causa provável, solução passo a
+                    passo e critério de escalonamento — e entra como &ldquo;Revisar&rdquo;.
+                  </DialogDescription>
+                </DialogHeader>
+                <Textarea
+                  rows={3}
+                  maxLength={300}
+                  value={tema}
+                  onChange={(e) => setTema(e.target.value)}
+                  placeholder="Ex.: como proceder quando a VPN cai repetidamente"
+                />
+                <DialogFooter>
+                  <Button onClick={() => void gerar()} disabled={gerando} className="gap-2">
+                    {gerando ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-4" />
+                    )}
+                    Gerar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          ) : null}
         </div>
 
         {artigosQuery.isPending ? (
@@ -319,12 +322,12 @@ function Conhecimento() {
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">Categoria</span>
                         <Select
-                          value={a.categoriaId ?? "__nenhum__"}
+                          value={a.categoriaId ?? SEM_CATEGORIA}
                           disabled={atualizar.isPending}
                           onValueChange={(v) =>
                             atualizar.mutate({
                               id: a.id,
-                              categoriaId: v === "__nenhum__" ? null : v,
+                              categoriaId: v === SEM_CATEGORIA ? null : v,
                             })
                           }
                         >
@@ -332,7 +335,7 @@ function Conhecimento() {
                             <SelectValue placeholder="Sem categoria" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="__nenhum__">Sem categoria</SelectItem>
+                            <SelectItem value={SEM_CATEGORIA}>Sem categoria</SelectItem>
                             {(categorias.data ?? []).map((c) => (
                               <SelectItem key={c.id} value={c.id}>
                                 {c.nome}

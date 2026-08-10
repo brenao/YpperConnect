@@ -1,6 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
+/**
+ * Server functions do portfólio de projetos.
+ *
+ * Os repositórios são importados dinamicamente dentro do handler para
+ * o oracledb nunca entrar no bundle do navegador.
+ */
+
 const STATUS = ["planejamento", "execucao", "paralisado", "cancelado", "concluido"] as const;
 const QUADROS = ["backlog", "todo", "doing", "done"] as const;
 const NIVEIS = ["alta", "media", "baixa"] as const;
@@ -24,15 +31,34 @@ export const detalheProjetoFn = createServerFn({ method: "GET" })
     const projeto = await r.buscarProjeto(data.id);
     if (!projeto) return null;
 
-    const [tarefas, vinculos, riscos, atualizacoes, atencoes] = await Promise.all([
-      r.listarTarefas(data.id),
-      r.listarVinculosTarefas(data.id),
-      r.listarRiscos(data.id),
-      r.listarAtualizacoes(data.id),
-      r.listarAtencoes(data.id),
-    ]);
+    const [tarefas, vinculos, riscos, atualizacoes, atencoes, baselines, planejado] =
+      await Promise.all([
+        r.listarTarefas(data.id),
+        r.listarVinculosTarefas(data.id),
+        r.listarRiscos(data.id),
+        r.listarAtualizacoes(data.id),
+        r.listarAtencoes(data.id),
+        r.listarBaselines(data.id),
+        r.baselineOriginal(data.id),
+      ]);
 
-    return { projeto, tarefas, vinculos, riscos, atualizacoes, atencoes };
+    // Rollup e CPM calculados no servidor: a tela recebe pronto e não
+    // precisa reimplementar ponderação nem topologia do grafo.
+    const calculadas = r.calcularRollup(tarefas);
+    const cpm = r.calcularCpm(calculadas, vinculos.predecessoras);
+
+    return {
+      projeto,
+      tarefas: calculadas,
+      // Map não sobrevive à serialização: vai como objeto simples.
+      cpm: Object.fromEntries(cpm),
+      vinculos,
+      riscos,
+      atualizacoes,
+      atencoes,
+      baselines,
+      planejado,
+    };
   });
 
 const ProjetoSchema = z.object({
@@ -118,6 +144,49 @@ export const excluirTarefaFn = createServerFn({ method: "POST" })
     await excluirTarefa(await ctx(), data.id);
     return { ok: true };
   });
+
+// ------------------------------------------------------- edição inline
+
+const CampoSchema = z.object({
+  id: z.string(),
+  nome: z.string().min(1).max(300).optional(),
+  progresso: z.number().int().min(0).max(100).optional(),
+  inicio: z.coerce.date().optional(),
+  fim: z.coerce.date().optional(),
+});
+
+export type CampoTarefaInput = z.infer<typeof CampoSchema>;
+
+export const atualizarCampoTarefaFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => CampoSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { atualizarCampoTarefa } = await import("@/repositories/projetos.repo");
+    const { id, ...campos } = data;
+    await atualizarCampoTarefa(await ctx(), id, campos);
+    return { ok: true };
+  });
+
+export const inserirAbaixoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) =>
+    z.object({ referenciaId: z.string(), comoFilha: z.boolean() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { inserirAbaixo } = await import("@/repositories/projetos.repo");
+    return { id: await inserirAbaixo(await ctx(), data.referenciaId, data.comoFilha) };
+  });
+
+// ---------------------------------------------------------------- baseline
+
+export const salvarBaselineFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) =>
+    z.object({ projetoId: z.string(), descricao: z.string().nullable().optional() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { salvarBaseline } = await import("@/repositories/projetos.repo");
+    return { id: await salvarBaseline(await ctx(), data.projetoId, data.descricao) };
+  });
+
+// ------------------------------------------------- riscos e acompanhamento
 
 const RiscoSchema = z.object({
   projetoId: z.string(),

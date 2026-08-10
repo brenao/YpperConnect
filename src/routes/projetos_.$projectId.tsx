@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   CalendarClock,
   ChevronRight,
+  CornerDownRight,
   Loader2,
   MessageSquarePlus,
   Plus,
@@ -40,19 +41,23 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
-import type { Tarefa } from "@/repositories/projetos.repo";
+import type { DadosCpm, Tarefa, TarefaCalculada } from "@/repositories/projetos.repo";
 import {
   detalheProjetoFn,
   criarRiscoFn,
   criarAtualizacaoFn,
   criarAtencaoFn,
   resolverAtencaoFn,
+  atualizarCampoTarefaFn,
+  inserirAbaixoFn,
+  salvarBaselineFn,
   type RiscoInput,
   type AtualizacaoInput,
   type AtencaoInput,
+  type CampoTarefaInput,
 } from "@/services/projetos.functions";
 import { listarRecursosFn } from "@/services/recursos.functions";
-import { usuarioAtualFn } from "@/services/cadastros.functions";
+import { usuarioAtualFn, listarUsuariosFn } from "@/services/cadastros.functions";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/projetos_/$projectId")({
@@ -77,6 +82,7 @@ const nivelStyle: Record<string, string> = {
 };
 
 const SEM = "__nenhum__";
+const UM_DIA = 86_400_000;
 
 function fmt(v: Date | string | null | undefined): string {
   if (!v) return "—";
@@ -96,15 +102,21 @@ function doInput(v: string): Date {
   return new Date(a ?? 1970, (m ?? 1) - 1, d ?? 1);
 }
 
+function diasEntre(inicio: Date | string, fim: Date | string): number {
+  const a = new Date(inicio).setHours(0, 0, 0, 0);
+  const b = new Date(fim).setHours(0, 0, 0, 0);
+  return Math.max(1, Math.round((b - a) / UM_DIA) + 1);
+}
+
 /** Ordena a WBS: filhas logo abaixo da mãe, com nível para indentar. */
-function achatarWbs(tarefas: Tarefa[]): { tarefa: Tarefa; nivel: number }[] {
-  const porPai = new Map<string | null, Tarefa[]>();
+function achatarWbs(tarefas: TarefaCalculada[]): { tarefa: TarefaCalculada; nivel: number }[] {
+  const porPai = new Map<string | null, TarefaCalculada[]>();
   for (const t of tarefas) {
     const chave = t.paiId ?? null;
     porPai.set(chave, [...(porPai.get(chave) ?? []), t]);
   }
 
-  const saida: { tarefa: Tarefa; nivel: number }[] = [];
+  const saida: { tarefa: TarefaCalculada; nivel: number }[] = [];
   // Guarda contra ciclo em pai_id, que o banco não impede além do self.
   const visitados = new Set<string>();
 
@@ -211,12 +223,32 @@ function DetalheProjeto() {
     );
   }
 
-  const { projeto, tarefas, vinculos, riscos, atualizacoes, atencoes } = q.data;
+  const { projeto, tarefas, cpm, vinculos, riscos, atualizacoes, atencoes, baselines, planejado } =
+    q.data;
+
   const wbs = achatarWbs(tarefas);
-  const concluidas = tarefas.filter((t) => t.quadro === "done").length;
-  const progresso = tarefas.length
-    ? Math.round(tarefas.reduce((s, t) => s + t.progresso, 0) / tarefas.length)
+
+  // Índice de exibição por tarefa: o rótulo "após 3. Nome" precisa do
+  // número que o usuário vê na grade, não do UUID.
+  const indicePorId = new Map<string, number>();
+  wbs.forEach(({ tarefa }, i) => indicePorId.set(tarefa.id, i + 1));
+
+  const criticas = Object.values(cpm).filter((c) => c.critica).length;
+
+  // Baseline indexada por tarefa: usada para marcar desvio de data.
+  const planejadoPorTarefa = new Map<string, { inicio: Date; fim: Date }>();
+  for (const p of planejado) {
+    planejadoPorTarefa.set(p.tarefaId, { inicio: new Date(p.inicio), fim: new Date(p.fim) });
+  }
+
+  // Progresso do projeto: só as folhas contam. Incluir os pais somaria o
+  // mesmo trabalho duas vezes.
+  const folhas = tarefas.filter((t) => !t.ehPai);
+  const concluidas = folhas.filter((t) => t.quadro === "done").length;
+  const progresso = folhas.length
+    ? Math.round(folhas.reduce((s, t) => s + t.progressoEfetivo, 0) / folhas.length)
     : 0;
+
   const atencoesAbertas = atencoes.filter((a) => a.status === "aberto");
   const riscosAbertos = riscos.filter((r) => r.status !== "mitigado");
   const atrasado = new Date(projeto.fim) < new Date() && projeto.status === "execucao";
@@ -280,7 +312,7 @@ function DetalheProjeto() {
             <p className="mt-1 font-mono text-2xl font-semibold">{progresso}%</p>
             <Progress value={progresso} className="mt-2" />
             <p className="mt-1 text-xs text-muted-foreground">
-              {concluidas} de {tarefas.length} tarefa(s)
+              {concluidas} de {folhas.length} tarefa(s)
             </p>
           </div>
           <div className="panel p-4">
@@ -318,13 +350,103 @@ function DetalheProjeto() {
           </section>
         ) : null}
 
-        <Tabs defaultValue="kanban">
+        <Tabs defaultValue="cronograma">
           <TabsList>
-            <TabsTrigger value="kanban">Quadro</TabsTrigger>
             <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
+            <TabsTrigger value="kanban">Quadro</TabsTrigger>
             <TabsTrigger value="riscos">Riscos e atenções</TabsTrigger>
             <TabsTrigger value="acompanhamento">Acompanhamento</TabsTrigger>
           </TabsList>
+
+          {/* -------------------------------------------------- cronograma */}
+          <TabsContent value="cronograma" className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Clique em nome, datas e percentual para editar. Linhas com subtarefas mostram o
+                consolidado e não são editáveis.
+                {criticas > 0 ? (
+                  <>
+                    {" "}
+                    <span className="text-destructive">
+                      {criticas} tarefa(s) no caminho crítico
+                    </span>{" "}
+                    — atraso nelas empurra a entrega.
+                  </>
+                ) : null}
+              </p>
+              {editavel ? (
+                <BaselineBar
+                  projetoId={projectId}
+                  baselines={baselines}
+                  onSalvar={() => invalidar()}
+                />
+              ) : null}
+            </div>
+
+            <div className="panel overflow-x-auto">
+              <table className="w-full min-w-[56rem] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="w-10 px-2 py-2 font-medium">#</th>
+                    <th className="px-4 py-2 font-medium">Tarefa</th>
+                    <th className="w-20 px-3 py-2 font-medium">Duração</th>
+                    <th className="w-40 px-3 py-2 font-medium">Responsáveis</th>
+                    <th className="w-32 px-3 py-2 font-medium">Início</th>
+                    <th className="w-32 px-3 py-2 font-medium">Término</th>
+                    <th className="w-28 px-3 py-2 font-medium">%</th>
+                    <th className="w-20 px-2 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Linha 0: o projeto. Consolida tudo e dá referência de
+                      escala para quem lê o cronograma de cima. */}
+                  <tr className="border-b border-border bg-secondary/40 font-medium">
+                    <td className="px-2 py-2 font-mono text-xs text-muted-foreground">0</td>
+                    <td className="px-4 py-2">{projeto.nome}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                      {diasEntre(projeto.inicio, projeto.fim)} d
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {projeto.gerenteNome ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">{fmt(projeto.inicio)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{fmt(projeto.fim)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{progresso}%</td>
+                    <td />
+                  </tr>
+
+                  {wbs.map(({ tarefa: t, nivel }, i) => (
+                    <LinhaCronograma
+                      key={t.id}
+                      indice={i + 1}
+                      tarefa={t}
+                      nivel={nivel}
+                      cpm={cpm[t.id]}
+                      predecessoras={(vinculos.predecessoras[t.id] ?? []).map((p) => ({
+                        indice: indicePorId.get(p) ?? 0,
+                        nome: tarefas.find((x) => x.id === p)?.nome ?? "",
+                      }))}
+                      responsaveis={(vinculos.responsaveis[t.id] ?? []).map(nomeRecurso)}
+                      planejado={planejadoPorTarefa.get(t.id)}
+                      editavel={editavel}
+                      onDetalhe={() => {
+                        setEditando(t);
+                        setTarefaAberta(true);
+                      }}
+                    />
+                  ))}
+
+                  {tarefas.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                        Nenhuma tarefa. Use <strong>Nova tarefa</strong> para começar o cronograma.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </TabsContent>
 
           {/* ------------------------------------------------------ kanban */}
           <TabsContent value="kanban" className="mt-4">
@@ -336,7 +458,7 @@ function DetalheProjeto() {
             ) : (
               <ProjectKanban
                 projetoId={projectId}
-                tarefas={tarefas}
+                tarefas={tarefas.filter((t) => !t.ehPai)}
                 responsaveis={vinculos.responsaveis}
                 nomeRecurso={nomeRecurso}
                 editavel={editavel}
@@ -346,96 +468,6 @@ function DetalheProjeto() {
                 }}
               />
             )}
-          </TabsContent>
-
-          {/* -------------------------------------------------- cronograma */}
-          <TabsContent value="cronograma" className="mt-4">
-            <div className="panel overflow-x-auto">
-              <table className="w-full min-w-[44rem] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-2 font-medium">Tarefa</th>
-                    <th className="px-4 py-2 font-medium">Responsáveis</th>
-                    <th className="px-4 py-2 font-medium">Início</th>
-                    <th className="px-4 py-2 font-medium">Término</th>
-                    <th className="px-4 py-2 font-medium">Progresso</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {wbs.map(({ tarefa: t, nivel }) => {
-                    const preds = vinculos.predecessoras[t.id] ?? [];
-                    return (
-                      <tr
-                        key={t.id}
-                        className={cn(
-                          "border-b border-border/60",
-                          editavel ? "cursor-pointer hover:bg-secondary/40" : "",
-                        )}
-                        onClick={() => {
-                          if (!editavel) return;
-                          setEditando(t);
-                          setTarefaAberta(true);
-                        }}
-                      >
-                        <td className="px-4 py-2">
-                          <span
-                            className="flex items-center gap-1"
-                            style={{ paddingLeft: `${nivel * 16}px` }}
-                          >
-                            {nivel > 0 ? (
-                              <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-                            ) : null}
-                            <span
-                              className={cn(t.quadro === "done" ? "line-through opacity-70" : "")}
-                            >
-                              {t.nome}
-                            </span>
-                            {t.marco ? (
-                              <Badge variant="outline" className="ml-1 text-[10px]">
-                                marco
-                              </Badge>
-                            ) : null}
-                          </span>
-                          {t.atividade || preds.length ? (
-                            <span
-                              className="mt-0.5 block text-[11px] text-muted-foreground"
-                              style={{ paddingLeft: `${nivel * 16 + 16}px` }}
-                            >
-                              {t.atividade ?? ""}
-                              {preds.length
-                                ? `${t.atividade ? " · " : ""}depende de ${preds.length} tarefa(s)`
-                                : ""}
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground">
-                          {(vinculos.responsaveis[t.id] ?? []).map(nomeRecurso).join(", ") || "—"}
-                        </td>
-                        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
-                          {fmt(t.inicio)}
-                        </td>
-                        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
-                          {fmt(t.fim)}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span className="flex items-center gap-2">
-                            <Progress value={t.progresso} className="w-20" />
-                            <span className="font-mono text-xs">{t.progresso}%</span>
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {tarefas.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                        Nenhuma tarefa cadastrada.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
           </TabsContent>
 
           {/* ------------------------------------------------------ riscos */}
@@ -618,6 +650,354 @@ function DetalheProjeto() {
   );
 }
 
+// ------------------------------------------------------ campos editáveis
+
+/**
+ * Campo que salva ao sair (onBlur), não a cada tecla.
+ *
+ * Salvar por tecla geraria uma requisição por dígito e, num campo de
+ * data, tentaria gravar "10/0" no meio da digitação. O rascunho local
+ * volta ao valor do servidor quando a gravação falha.
+ */
+function CampoInline({
+  valor,
+  tipo,
+  editavel,
+  alerta,
+  onSalvar,
+}: {
+  valor: string;
+  tipo: "date" | "number";
+  editavel: boolean;
+  alerta?: string | undefined;
+  onSalvar: (v: string) => void;
+}) {
+  const [rascunho, setRascunho] = useState(valor);
+
+  // Se o servidor devolveu outro valor (rollup, rejeição), acompanha.
+  useEffect(() => setRascunho(valor), [valor]);
+
+  if (!editavel) {
+    return (
+      <span className={cn("font-mono text-xs", alerta ? "text-warning" : "text-muted-foreground")}>
+        {tipo === "date" ? valor.split("-").reverse().join("/") : `${valor}%`}
+      </span>
+    );
+  }
+
+  return (
+    <Input
+      type={tipo}
+      value={rascunho}
+      min={tipo === "number" ? 0 : undefined}
+      max={tipo === "number" ? 100 : undefined}
+      title={alerta}
+      onChange={(e) => setRascunho(e.target.value)}
+      onBlur={() => {
+        if (rascunho !== valor && rascunho !== "") onSalvar(rascunho);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setRascunho(valor);
+          e.currentTarget.blur();
+        }
+      }}
+      className={cn(
+        "h-7 border-transparent bg-transparent px-1 font-mono text-xs hover:border-border focus:border-primary",
+        alerta ? "text-warning" : "",
+      )}
+    />
+  );
+}
+
+/**
+ * Nome editável em linha. Diferente dos campos numéricos, precisa de
+ * largura flexível e de um caminho para abrir o detalhe — daí o ícone
+ * separado em vez de clique no texto, que conflitaria com o foco.
+ */
+function NomeInline({
+  valor,
+  negrito,
+  riscado,
+  onSalvar,
+  onDetalhe,
+}: {
+  valor: string;
+  negrito: boolean;
+  riscado: boolean;
+  onSalvar: (v: string) => void;
+  onDetalhe: () => void;
+}) {
+  const [rascunho, setRascunho] = useState(valor);
+  useEffect(() => setRascunho(valor), [valor]);
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1">
+      <Input
+        value={rascunho}
+        maxLength={300}
+        onChange={(e) => setRascunho(e.target.value)}
+        onBlur={() => {
+          const v = rascunho.trim();
+          if (v && v !== valor) onSalvar(v);
+          else if (!v) setRascunho(valor);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            setRascunho(valor);
+            e.currentTarget.blur();
+          }
+        }}
+        className={cn(
+          "h-7 min-w-0 flex-1 border-transparent bg-transparent px-1 text-sm hover:border-border focus:border-primary",
+          negrito ? "font-medium" : "",
+          riscado ? "line-through opacity-70" : "",
+        )}
+      />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-6 shrink-0"
+        title="Abrir detalhes"
+        onClick={onDetalhe}
+      >
+        <ChevronRight className="size-3.5" />
+      </Button>
+    </span>
+  );
+}
+
+function LinhaCronograma({
+  indice,
+  tarefa: t,
+  nivel,
+  cpm,
+  predecessoras,
+  responsaveis,
+  planejado,
+  editavel,
+  onDetalhe,
+}: {
+  indice: number;
+  tarefa: TarefaCalculada;
+  nivel: number;
+  cpm: DadosCpm | undefined;
+  predecessoras: { indice: number; nome: string }[];
+  responsaveis: string[];
+  planejado: { inicio: Date; fim: Date } | undefined;
+  editavel: boolean;
+  onDetalhe: () => void;
+}) {
+  const qc = useQueryClient();
+
+  const salvarCampo = useMutation({
+    mutationFn: (v: CampoTarefaInput) => atualizarCampoTarefaFn({ data: v }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projeto", t.projetoId] });
+      qc.invalidateQueries({ queryKey: ["projetos"] });
+    },
+    onError: (e: Error) => toast.error("Não foi possível salvar", { description: e.message }),
+  });
+
+  const inserir = useMutation({
+    mutationFn: (v: { referenciaId: string; comoFilha: boolean }) => inserirAbaixoFn({ data: v }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projeto", t.projetoId] }),
+    onError: (e: Error) => toast.error("Não foi possível inserir", { description: e.message }),
+  });
+
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const desvioFim =
+    planejado && t.fimEfetivo.getTime() > planejado.fim.getTime()
+      ? `Planejado para ${fmt(planejado.fim)}`
+      : undefined;
+
+  // Pai não é editável: seus valores vêm do rollup das filhas.
+  const podeEditar = editavel && !t.ehPai;
+  const critica = cpm?.critica ?? false;
+  const temSecundaria = !!t.atividade || predecessoras.length > 0 || (!!cpm && !t.ehPai);
+
+  return (
+    <tr className={cn("border-b border-border/60", t.ehPai ? "bg-secondary/20" : "")}>
+      <td className="px-2 py-1 font-mono text-xs text-muted-foreground">{indice}</td>
+      <td className="px-4 py-1">
+        <span className="flex items-center gap-1.5" style={{ paddingLeft: `${nivel * 16}px` }}>
+          {t.ehPai ? <ChevronRight className="size-3 shrink-0 text-muted-foreground" /> : null}
+          {/* Marcador do caminho crítico: folga zero. */}
+          {critica ? (
+            <span
+              className="size-1.5 shrink-0 rounded-full bg-destructive"
+              title="Caminho crítico — atraso aqui empurra a entrega"
+              aria-label="Caminho crítico"
+            />
+          ) : null}
+          {editavel ? (
+            <NomeInline
+              valor={t.nome}
+              negrito={t.ehPai}
+              riscado={t.quadro === "done"}
+              onSalvar={(v) => salvarCampo.mutate({ id: t.id, nome: v })}
+              onDetalhe={onDetalhe}
+            />
+          ) : (
+            <span
+              className={cn(
+                "truncate",
+                t.ehPai ? "font-medium" : "",
+                t.quadro === "done" ? "line-through opacity-70" : "",
+              )}
+            >
+              {t.nome}
+            </span>
+          )}
+          {t.marco ? (
+            <Badge variant="outline" className="shrink-0 text-[10px]">
+              marco
+            </Badge>
+          ) : null}
+          {t.ehPai ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              ({t.totalFolhas} subtarefa{t.totalFolhas > 1 ? "s" : ""})
+            </span>
+          ) : null}
+        </span>
+
+        {/* Linha secundária: atividade, folga e dependências. */}
+        {temSecundaria ? (
+          <span
+            className="mt-0.5 block text-[11px] text-muted-foreground"
+            style={{ paddingLeft: `${nivel * 16 + 14}px` }}
+          >
+            {t.atividade ? <span>{t.atividade}</span> : null}
+            {critica ? (
+              <span className="text-destructive">{t.atividade ? " · " : ""}caminho crítico</span>
+            ) : cpm && !t.ehPai && cpm.folgaDias > 0 ? (
+              <span>
+                {t.atividade ? " · " : ""}folga de {cpm.folgaDias}d
+              </span>
+            ) : null}
+            {predecessoras.length > 0 ? (
+              <span>
+                {t.atividade || critica || cpm ? " · " : ""}após{" "}
+                {predecessoras.map((p) => `${p.indice}. ${p.nome}`).join(", ")}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+      </td>
+      <td className="px-3 py-1 font-mono text-xs text-muted-foreground">
+        {cpm ? `${cpm.duracaoDias} d` : "—"}
+      </td>
+      <td className="truncate px-3 py-1 text-xs text-muted-foreground">
+        {t.ehPai ? "—" : responsaveis.join(", ") || "—"}
+      </td>
+      <td className="px-3 py-1">
+        <CampoInline
+          valor={iso(t.inicioEfetivo)}
+          tipo="date"
+          editavel={podeEditar}
+          onSalvar={(v) => salvarCampo.mutate({ id: t.id, inicio: new Date(`${v}T12:00:00`) })}
+        />
+      </td>
+      <td className="px-3 py-1">
+        <CampoInline
+          valor={iso(t.fimEfetivo)}
+          tipo="date"
+          editavel={podeEditar}
+          alerta={desvioFim}
+          onSalvar={(v) => salvarCampo.mutate({ id: t.id, fim: new Date(`${v}T12:00:00`) })}
+        />
+      </td>
+      <td className="px-3 py-1">
+        <span className="flex items-center gap-2">
+          <CampoInline
+            valor={String(t.progressoEfetivo)}
+            tipo="number"
+            editavel={podeEditar}
+            onSalvar={(v) => salvarCampo.mutate({ id: t.id, progresso: Number(v) })}
+          />
+          <Progress value={t.progressoEfetivo} className="h-1 w-10" />
+        </span>
+      </td>
+      <td className="px-2 py-1">
+        {editavel ? (
+          <span className="flex justify-end gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              title="Inserir tarefa abaixo"
+              disabled={inserir.isPending}
+              onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: false })}
+            >
+              <Plus className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              title="Inserir subtarefa"
+              disabled={inserir.isPending}
+              onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: true })}
+            >
+              <CornerDownRight className="size-3.5" />
+            </Button>
+          </span>
+        ) : null}
+      </td>
+    </tr>
+  );
+}
+
+/** Estado da baseline e botão de salvar nova versão. */
+function BaselineBar({
+  projetoId,
+  baselines,
+  onSalvar,
+}: {
+  projetoId: string;
+  baselines: { id: string; versao: number; criadoEm: Date | string }[];
+  onSalvar: () => void;
+}) {
+  const salvar = useMutation({
+    mutationFn: () => salvarBaselineFn({ data: { projetoId } }),
+    onSuccess: () => {
+      onSalvar();
+      toast.success("Baseline registrada", {
+        description: "As datas atuais viraram a referência de comparação.",
+      });
+    },
+    onError: (e: Error) => toast.error("Não foi possível salvar", { description: e.message }),
+  });
+
+  const atual = baselines[0];
+
+  return (
+    <span className="flex items-center gap-3">
+      {atual ? (
+        <span className="text-xs text-muted-foreground">
+          Baseline v{atual.versao} · {fmt(atual.criadoEm)}
+        </span>
+      ) : (
+        <span className="text-xs text-warning">
+          Sem baseline — não há como medir desvio de prazo
+        </span>
+      )}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={salvar.isPending}
+        onClick={() => salvar.mutate()}
+      >
+        {atual ? "Nova baseline" : "Salvar baseline"}
+      </Button>
+    </span>
+  );
+}
+
 // ------------------------------------------------------------ subdiálogos
 
 function RiscoDialog({
@@ -744,7 +1124,7 @@ function AtencaoDialog({
 
   const usuarios = useQuery({
     queryKey: ["usuarios"],
-    queryFn: () => import("@/services/cadastros.functions").then((m) => m.listarUsuariosFn()),
+    queryFn: () => listarUsuariosFn(),
     enabled: open,
   });
 

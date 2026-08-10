@@ -15,7 +15,6 @@ import { Route as AssistenteRouteImport } from './routes/assistente'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
 import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
-import { Route as DiagnosticoRouteImport } from './routes/diagnostico'
 import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
 import { Route as PermissoesRouteImport } from './routes/permissoes'
@@ -52,11 +51,6 @@ const ChamadosRoute = ChamadosRouteImport.update({
 const ConhecimentoRoute = ConhecimentoRouteImport.update({
   id: '/conhecimento',
   path: '/conhecimento',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DiagnosticoRoute = DiagnosticoRouteImport.update({
-  id: '/diagnostico',
-  path: '/diagnostico',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DiretoriaRoute = DiretoriaRouteImport.update({
@@ -102,7 +96,6 @@ export interface FileRoutesByFullPath {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
-  '/diagnostico': typeof DiagnosticoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/permissoes': typeof PermissoesRoute
@@ -118,7 +111,6 @@ export interface FileRoutesByTo {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
-  '/diagnostico': typeof DiagnosticoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/permissoes': typeof PermissoesRoute
@@ -135,7 +127,6 @@ export interface FileRoutesById {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
-  '/diagnostico': typeof DiagnosticoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/permissoes': typeof PermissoesRoute
@@ -153,7 +144,6 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
-    | '/diagnostico'
     | '/diretoria'
     | '/governanca'
     | '/permissoes'
@@ -169,7 +159,6 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
-    | '/diagnostico'
     | '/diretoria'
     | '/governanca'
     | '/permissoes'
@@ -185,7 +174,6 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
-    | '/diagnostico'
     | '/diretoria'
     | '/governanca'
     | '/permissoes'
@@ -202,7 +190,6 @@ export interface RootRouteChildren {
   CatalogoRoute: typeof CatalogoRoute
   ChamadosRoute: typeof ChamadosRoute
   ConhecimentoRoute: typeof ConhecimentoRoute
-  DiagnosticoRoute: typeof DiagnosticoRoute
   DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
   PermissoesRoute: typeof PermissoesRoute
@@ -254,13 +241,6 @@ declare module '@tanstack/react-router' {
       path: '/conhecimento'
       fullPath: '/conhecimento'
       preLoaderRoute: typeof ConhecimentoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/diagnostico': {
-      id: '/diagnostico'
-      path: '/diagnostico'
-      fullPath: '/diagnostico'
-      preLoaderRoute: typeof DiagnosticoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/diretoria': {
@@ -322,7 +302,6 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogoRoute: CatalogoRoute,
   ChamadosRoute: ChamadosRoute,
   ConhecimentoRoute: ConhecimentoRoute,
-  DiagnosticoRoute: DiagnosticoRoute,
   DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
   PermissoesRoute: PermissoesRoute,
