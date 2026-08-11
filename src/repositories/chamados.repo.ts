@@ -1,4 +1,5 @@
 import { db, checar, linhas, paraData, data as paraDataObrigatoria, agora as agoraIso } from "@/integrations/db/client.server";
+import type { Database } from "@/integrations/supabase/types";
 import { calcularPrazo } from "@/integrations/db/sla.server";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
 import type { Impact, Priority, RecordType, TicketStatus, Urgency } from "@/models/itsm-types";
@@ -425,10 +426,15 @@ export async function atualizarChamado(
 
   const agora = new Date();
   const agoraIsoLocal = agora.toISOString();
-  const updates: Record<string, unknown> = { atualizado_em: agoraIsoLocal };
+  const updates: Database["public"]["Tables"]["chamados"]["Update"] = { atualizado_em: agoraIsoLocal };
   const eventos: Array<{ campo: string; de: string | null; para: string | null }> = [];
 
-  function aplicar(campo: string, coluna: string, valorNovo: unknown, valorAtual: unknown) {
+  function aplicar<C extends keyof Database["public"]["Tables"]["chamados"]["Update"]>(
+    campo: string,
+    coluna: C,
+    valorNovo: Database["public"]["Tables"]["chamados"]["Update"][C],
+    valorAtual: unknown,
+  ) {
     if (valorNovo === undefined) return;
     const de = valorAtual == null ? null : String(valorAtual);
     const para = valorNovo == null ? null : String(valorNovo);
