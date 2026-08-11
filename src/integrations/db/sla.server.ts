@@ -61,18 +61,17 @@ async function carregarCalendario(): Promise<Calendario> {
   const agora = Date.now();
   if (cache && cache.expiraEm > agora) return cache.dados;
 
-  const [expedienteResp, feriadosResp] = await Promise.all([
-    db
-      .from("expediente")
-      .select("dia_semana, minuto_ini, minuto_fim")
-      .eq("ativo", true)
-      .order("dia_semana", { ascending: true })
-      .order("minuto_ini", { ascending: true }),
-    db.from("feriados").select("data_feriado, recorrente").eq("ativo", true),
+  const [expediente, feriados] = await Promise.all([
+    linhas(
+      db
+        .from("expediente")
+        .select("dia_semana, minuto_ini, minuto_fim")
+        .eq("ativo", true)
+        .order("dia_semana")
+        .order("minuto_ini"),
+    ),
+    linhas(db.from("feriados").select("data_feriado, recorrente").eq("ativo", true)),
   ]);
-
-  const expediente = linhas(expedienteResp);
-  const feriados = linhas(feriadosResp);
 
   const faixasPorDia = new Map<number, Faixa[]>();
   for (const e of expediente) {
@@ -84,7 +83,10 @@ async function carregarCalendario(): Promise<Calendario> {
   const recorrentes = new Set<string>();
   const especificos = new Set<string>();
   for (const f of feriados) {
-    const d = new Date(f.data_feriado);
+    // Coluna DATE volta como 'yyyy-mm-dd'; montar a data no fuso local
+    // evita o feriado "andar" um dia por causa de UTC.
+    const [ano, mes, dia] = f.data_feriado.slice(0, 10).split("-").map(Number);
+    const d = new Date(ano ?? 1970, (mes ?? 1) - 1, dia ?? 1);
     if (f.recorrente) recorrentes.add(chaveMesDia(d));
     else especificos.add(chaveData(d));
   }
