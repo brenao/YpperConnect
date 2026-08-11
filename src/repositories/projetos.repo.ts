@@ -1,5 +1,5 @@
-import { consultar, consultarUm, executar, emTransacao } from "@/integrations/oracle/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { db, checar, linhas, data, paraDataPura, comoDataPura, agora } from "@/integrations/db/client.server";
+import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
 /**
@@ -95,14 +95,40 @@ export interface Atencao {
   resolvidoEm: Date | null;
 }
 
-const SELECT_PROJETO = `
-  SELECT p.id, p.nome, p.objetivo,
-         p.sponsor_id, us.nome AS sponsor_nome,
-         p.gerente_id, ug.nome AS gerente_nome,
-         p.status, p.inicio, p.fim, p.criado_em, p.atualizado_em
-    FROM projetos p
-    LEFT JOIN usuarios us ON us.id = p.sponsor_id
-    LEFT JOIN usuarios ug ON ug.id = p.gerente_id`;
+/** Embed de projeto com sponsor e gerente, ambos apontando para `usuarios`. */
+const SELECT_PROJETO = "*, sponsor:usuarios!projetos_sponsor_id_fkey(nome), gerente:usuarios!projetos_gerente_id_fkey(nome)";
+
+interface LinhaProjeto {
+  id: string;
+  nome: string;
+  objetivo: string | null;
+  sponsor_id: string | null;
+  sponsor: { nome: string } | null;
+  gerente_id: string | null;
+  gerente: { nome: string } | null;
+  status: string;
+  inicio: string;
+  fim: string;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+function mapearProjeto(l: LinhaProjeto): Projeto {
+  return {
+    id: l.id,
+    nome: l.nome,
+    objetivo: l.objetivo,
+    sponsorId: l.sponsor_id,
+    sponsorNome: l.sponsor?.nome ?? null,
+    gerenteId: l.gerente_id,
+    gerenteNome: l.gerente?.nome ?? null,
+    status: l.status as ProjectStatus,
+    inicio: paraDataPura(l.inicio)!,
+    fim: paraDataPura(l.fim)!,
+    criadoEm: data(l.criado_em),
+    atualizadoEm: data(l.atualizado_em),
+  };
+}
 
 function novoId(): string {
   return crypto.randomUUID();
@@ -119,60 +145,123 @@ function exigirTi(ctx: ContextoUsuario, acao: string): void {
 /**
  * Lista com progresso agregado.
  *
- * O progresso vem da média das tarefas, calculada em SQL: carregar todas
- * as tarefas de todos os projetos para somar no cliente não escala.
- * Projeto sem tarefa fica com 0, não com "indefinido".
+ * O progresso vem da média das tarefas. Sem PostgREST para agregação em
+ * SQL, busca-se só as colunas necessárias das tabelas relacionadas e
+ * agrega-se em TypeScript — projeto sem tarefa fica com 0, não com
+ * "indefinido".
  */
 export async function listarProjetos(): Promise<ProjetoComProgresso[]> {
-  return consultar<ProjetoComProgresso>(
-    `SELECT p.id, p.nome, p.objetivo,
-            p.sponsor_id, us.nome AS sponsor_nome,
-            p.gerente_id, ug.nome AS gerente_nome,
-            p.status, p.inicio, p.fim, p.criado_em, p.atualizado_em,
-            NVL(t.total, 0) AS total_tarefas,
-            NVL(t.concluidas, 0) AS tarefas_concluidas,
-            NVL(ROUND(t.media), 0) AS progresso,
-            NVL(r.abertos, 0) AS riscos_abertos,
-            NVL(a.abertas, 0) AS atencoes_abertas,
-            u.ultima AS ultima_atualizacao
-       FROM projetos p
-       LEFT JOIN usuarios us ON us.id = p.sponsor_id
-       LEFT JOIN usuarios ug ON ug.id = p.gerente_id
-       LEFT JOIN (SELECT projeto_id,
-                         COUNT(*) AS total,
-                         COUNT(CASE WHEN quadro = 'done' THEN 1 END) AS concluidas,
-                         AVG(progresso) AS media
-                    FROM projeto_tarefas GROUP BY projeto_id) t
-              ON t.projeto_id = p.id
-       LEFT JOIN (SELECT projeto_id, COUNT(*) AS abertos
-                    FROM projeto_riscos WHERE status <> 'mitigado'
-                   GROUP BY projeto_id) r
-              ON r.projeto_id = p.id
-       LEFT JOIN (SELECT projeto_id, COUNT(*) AS abertas
-                    FROM projeto_atencoes WHERE status = 'aberto'
-                   GROUP BY projeto_id) a
-              ON a.projeto_id = p.id
-       LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
-                    FROM projeto_atualizacoes GROUP BY projeto_id) u
-              ON u.projeto_id = p.id
-      ORDER BY p.status, p.fim`,
-  );
+  const [projetosRes, tarefasRes, riscosRes, atencoesRes, atualizacoesRes] = await Promise.all([
+    db.from("projetos").select(SELECT_PROJETO),
+    db.from("projeto_tarefas").select("projeto_id, quadro, progresso"),
+    db.from("projeto_riscos").select("projeto_id, status"),
+    db.from("projeto_atencoes").select("projeto_id, status"),
+    db.from("projeto_atualizacoes").select("projeto_id, data_ref"),
+  ]);
+
+  const projetos = linhas(projetosRes as never) as LinhaProjeto[];
+  const tarefas = linhas(tarefasRes as never) as { projeto_id: string; quadro: string; progresso: number }[];
+  const riscos = linhas(riscosRes as never) as { projeto_id: string; status: string }[];
+  const atencoes = linhas(atencoesRes as never) as { projeto_id: string; status: string }[];
+  const atualizacoes = linhas(atualizacoesRes as never) as { projeto_id: string; data_ref: string }[];
+
+  const porProjetoTarefas = new Map<string, { total: number; concluidas: number; somaProgresso: number }>();
+  for (const t of tarefas) {
+    const agg = porProjetoTarefas.get(t.projeto_id) ?? { total: 0, concluidas: 0, somaProgresso: 0 };
+    agg.total += 1;
+    agg.somaProgresso += t.progresso;
+    if (t.quadro === "done") agg.concluidas += 1;
+    porProjetoTarefas.set(t.projeto_id, agg);
+  }
+
+  const riscosAbertosPorProjeto = new Map<string, number>();
+  for (const r of riscos) {
+    if (r.status === "mitigado") continue;
+    riscosAbertosPorProjeto.set(r.projeto_id, (riscosAbertosPorProjeto.get(r.projeto_id) ?? 0) + 1);
+  }
+
+  const atencoesAbertasPorProjeto = new Map<string, number>();
+  for (const a of atencoes) {
+    if (a.status !== "aberto") continue;
+    atencoesAbertasPorProjeto.set(a.projeto_id, (atencoesAbertasPorProjeto.get(a.projeto_id) ?? 0) + 1);
+  }
+
+  const ultimaAtualizacaoPorProjeto = new Map<string, string>();
+  for (const a of atualizacoes) {
+    const atual = ultimaAtualizacaoPorProjeto.get(a.projeto_id);
+    if (!atual || a.data_ref > atual) ultimaAtualizacaoPorProjeto.set(a.projeto_id, a.data_ref);
+  }
+
+  const resultado = projetos.map((p): ProjetoComProgresso => {
+    const agg = porProjetoTarefas.get(p.id);
+    const ultima = ultimaAtualizacaoPorProjeto.get(p.id);
+    return {
+      ...mapearProjeto(p),
+      totalTarefas: agg?.total ?? 0,
+      tarefasConcluidas: agg?.concluidas ?? 0,
+      progresso: agg && agg.total > 0 ? Math.round(agg.somaProgresso / agg.total) : 0,
+      riscosAbertos: riscosAbertosPorProjeto.get(p.id) ?? 0,
+      atencoesAbertas: atencoesAbertasPorProjeto.get(p.id) ?? 0,
+      ultimaAtualizacao: ultima ? paraDataPura(ultima) : null,
+    };
+  });
+
+  resultado.sort((a, b) => a.status.localeCompare(b.status) || a.fim.getTime() - b.fim.getTime());
+  return resultado;
 }
 
 export async function buscarProjeto(id: string): Promise<Projeto | null> {
-  return consultarUm<Projeto>(`${SELECT_PROJETO} WHERE p.id = :id`, { id });
+  const r = await db.from("projetos").select(SELECT_PROJETO).eq("id", id).maybeSingle();
+  const l = checar(r as never) as LinhaProjeto | null;
+  return l ? mapearProjeto(l) : null;
+}
+
+interface LinhaTarefa {
+  id: string;
+  projeto_id: string;
+  pai_id: string | null;
+  nome: string;
+  atividade: string | null;
+  inicio: string;
+  fim: string;
+  progresso: number;
+  quadro: string;
+  marco: boolean;
+  duracao: number | null;
+  duracao_unidade: string | null;
+  alocacao_pct: number | null;
+  ordem: number;
+  concluido_em: string | null;
+}
+
+function mapearTarefa(l: LinhaTarefa): Tarefa {
+  return {
+    id: l.id,
+    projetoId: l.projeto_id,
+    paiId: l.pai_id,
+    nome: l.nome,
+    atividade: l.atividade,
+    inicio: paraDataPura(l.inicio)!,
+    fim: paraDataPura(l.fim)!,
+    progresso: l.progresso,
+    quadro: l.quadro as QuadroTarefa,
+    marco: l.marco,
+    duracao: l.duracao,
+    duracaoUnidade: l.duracao_unidade,
+    alocacaoPct: l.alocacao_pct,
+    ordem: l.ordem,
+    concluidoEm: paraDataPura(l.concluido_em),
+  };
 }
 
 export async function listarTarefas(projetoId: string): Promise<Tarefa[]> {
-  const linhas = await consultar<Omit<Tarefa, "marco"> & { marco: number }>(
-    `SELECT id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
-            quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem, concluido_em
-       FROM projeto_tarefas
-      WHERE projeto_id = :projetoId
-      ORDER BY ordem, inicio`,
-    { projetoId },
-  );
-  return linhas.map((l) => ({ ...l, marco: paraBool(l.marco) }));
+  const r = await db
+    .from("projeto_tarefas")
+    .select("id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso, quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem, concluido_em")
+    .eq("projeto_id", projetoId)
+    .order("ordem", { ascending: true })
+    .order("inicio", { ascending: true });
+  return (linhas(r as never) as LinhaTarefa[]).map(mapearTarefa);
 }
 
 /** Predecessoras e responsáveis, indexados por tarefa. */
@@ -180,65 +269,124 @@ export async function listarVinculosTarefas(projetoId: string): Promise<{
   predecessoras: Record<string, string[]>;
   responsaveis: Record<string, string[]>;
 }> {
-  const [pred, resp] = await Promise.all([
-    consultar<{ tarefaId: string; predecessoraId: string }>(
-      `SELECT tp.tarefa_id, tp.predecessora_id
-         FROM tarefa_predecessoras tp
-         JOIN projeto_tarefas t ON t.id = tp.tarefa_id
-        WHERE t.projeto_id = :projetoId`,
-      { projetoId },
-    ),
-    consultar<{ tarefaId: string; recursoId: string }>(
-      `SELECT tr.tarefa_id, tr.recurso_id
-         FROM tarefa_responsaveis tr
-         JOIN projeto_tarefas t ON t.id = tr.tarefa_id
-        WHERE t.projeto_id = :projetoId`,
-      { projetoId },
-    ),
+  const tarefasIdsRes = await db.from("projeto_tarefas").select("id").eq("projeto_id", projetoId);
+  const ids = (linhas(tarefasIdsRes as never) as { id: string }[]).map((t) => t.id);
+
+  if (ids.length === 0) return { predecessoras: {}, responsaveis: {} };
+
+  const [predRes, respRes] = await Promise.all([
+    db.from("tarefa_predecessoras").select("tarefa_id, predecessora_id").in("tarefa_id", ids),
+    db.from("tarefa_responsaveis").select("tarefa_id, recurso_id").in("tarefa_id", ids),
   ]);
+
+  const pred = linhas(predRes as never) as { tarefa_id: string; predecessora_id: string }[];
+  const resp = linhas(respRes as never) as { tarefa_id: string; recurso_id: string }[];
 
   const predecessoras: Record<string, string[]> = {};
   for (const p of pred) {
-    (predecessoras[p.tarefaId] ??= []).push(p.predecessoraId);
+    (predecessoras[p.tarefa_id] ??= []).push(p.predecessora_id);
   }
   const responsaveis: Record<string, string[]> = {};
   for (const r of resp) {
-    (responsaveis[r.tarefaId] ??= []).push(r.recursoId);
+    (responsaveis[r.tarefa_id] ??= []).push(r.recurso_id);
   }
   return { predecessoras, responsaveis };
 }
 
 export async function listarRiscos(projetoId: string): Promise<Risco[]> {
-  return consultar<Risco>(
-    `SELECT id, projeto_id, descricao, probabilidade, impacto, mitigacao, status, criado_em
-       FROM projeto_riscos WHERE projeto_id = :projetoId ORDER BY criado_em DESC`,
-    { projetoId },
-  );
+  const r = await db
+    .from("projeto_riscos")
+    .select("id, projeto_id, descricao, probabilidade, impacto, mitigacao, status, criado_em")
+    .eq("projeto_id", projetoId)
+    .order("criado_em", { ascending: false });
+  return (
+    linhas(r as never) as {
+      id: string;
+      projeto_id: string;
+      descricao: string;
+      probabilidade: string;
+      impacto: string;
+      mitigacao: string | null;
+      status: string;
+      criado_em: string;
+    }[]
+  ).map((l) => ({
+    id: l.id,
+    projetoId: l.projeto_id,
+    descricao: l.descricao,
+    probabilidade: l.probabilidade as NivelRisco,
+    impacto: l.impacto as NivelImpacto,
+    mitigacao: l.mitigacao,
+    status: l.status as Risco["status"],
+    criadoEm: data(l.criado_em),
+  }));
 }
 
 export async function listarAtualizacoes(projetoId: string): Promise<Atualizacao[]> {
-  return consultar<Atualizacao>(
-    `SELECT a.id, a.projeto_id, a.autor_id, u.nome AS autor_nome, a.data_ref,
-            a.descricao, a.ultimas_entregas, a.proximas_entregas, a.criado_em
-       FROM projeto_atualizacoes a
-       LEFT JOIN usuarios u ON u.id = a.autor_id
-      WHERE a.projeto_id = :projetoId
-      ORDER BY a.data_ref DESC`,
-    { projetoId },
-  );
+  const r = await db
+    .from("projeto_atualizacoes")
+    .select("id, projeto_id, autor_id, data_ref, descricao, ultimas_entregas, proximas_entregas, criado_em, autor:usuarios(nome)")
+    .eq("projeto_id", projetoId)
+    .order("data_ref", { ascending: false });
+  return (
+    linhas(r as never) as {
+      id: string;
+      projeto_id: string;
+      autor_id: string | null;
+      autor: { nome: string } | null;
+      data_ref: string;
+      descricao: string | null;
+      ultimas_entregas: string | null;
+      proximas_entregas: string | null;
+      criado_em: string;
+    }[]
+  ).map((l) => ({
+    id: l.id,
+    projetoId: l.projeto_id,
+    autorId: l.autor_id,
+    autorNome: l.autor?.nome ?? null,
+    dataRef: paraDataPura(l.data_ref)!,
+    descricao: l.descricao,
+    ultimasEntregas: l.ultimas_entregas,
+    proximasEntregas: l.proximas_entregas,
+    criadoEm: data(l.criado_em),
+  }));
 }
 
 export async function listarAtencoes(projetoId: string): Promise<Atencao[]> {
-  return consultar<Atencao>(
-    `SELECT a.id, a.projeto_id, a.titulo, a.descricao, a.decisao_necessaria,
-            a.responsavel_decisao_id, u.nome AS responsavel_decisao_nome,
-            a.status, a.criado_em, a.resolvido_em
-       FROM projeto_atencoes a
-       LEFT JOIN usuarios u ON u.id = a.responsavel_decisao_id
-      WHERE a.projeto_id = :projetoId
-      ORDER BY a.status, a.criado_em DESC`,
-    { projetoId },
-  );
+  const r = await db
+    .from("projeto_atencoes")
+    .select(
+      "id, projeto_id, titulo, descricao, decisao_necessaria, responsavel_decisao_id, status, criado_em, resolvido_em, responsavel:usuarios(nome)",
+    )
+    .eq("projeto_id", projetoId)
+    .order("status", { ascending: true })
+    .order("criado_em", { ascending: false });
+  return (
+    linhas(r as never) as {
+      id: string;
+      projeto_id: string;
+      titulo: string;
+      descricao: string | null;
+      decisao_necessaria: string | null;
+      responsavel_decisao_id: string | null;
+      responsavel: { nome: string } | null;
+      status: string;
+      criado_em: string;
+      resolvido_em: string | null;
+    }[]
+  ).map((l) => ({
+    id: l.id,
+    projetoId: l.projeto_id,
+    titulo: l.titulo,
+    descricao: l.descricao,
+    decisaoNecessaria: l.decisao_necessaria,
+    responsavelDecisaoId: l.responsavel_decisao_id,
+    responsavelDecisaoNome: l.responsavel?.nome ?? null,
+    status: l.status as Atencao["status"],
+    criadoEm: data(l.criado_em),
+    resolvidoEm: paraDataPura(l.resolvido_em),
+  }));
 }
 
 // ---------------------------------------------------------------- escrita
@@ -263,25 +411,22 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
   validarProjeto(d);
 
   const id = novoId();
-  await executar(
-    `INSERT INTO projetos
-       (id, nome, objetivo, sponsor_id, gerente_id, status, inicio, fim,
-        criado_em, atualizado_em)
-     VALUES
-       (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status, :inicio, :fim,
-        SYSTIMESTAMP, SYSTIMESTAMP)`,
-    {
+  const agr = agora();
+  checar(
+    await db.from("projetos").insert({
       id,
       nome: d.nome.trim(),
       objetivo: d.objetivo?.trim() ?? null,
-      sponsorId: d.sponsorId ?? null,
+      sponsor_id: d.sponsorId ?? null,
       // Sem gerente informado, assume quem criou: projeto órfão não tem
       // quem responda por ele na visão de diretoria.
-      gerenteId: d.gerenteId ?? ctx.id,
+      gerente_id: d.gerenteId ?? ctx.id,
       status: d.status ?? "planejamento",
-      inicio: d.inicio,
-      fim: d.fim,
-    },
+      inicio: comoDataPura(d.inicio),
+      fim: comoDataPura(d.fim),
+      criado_em: agr,
+      atualizado_em: agr,
+    } as never),
   );
   return id;
 }
@@ -294,24 +439,25 @@ export async function atualizarProjeto(
   exigirTi(ctx, "alterar projetos");
   validarProjeto(d);
 
-  const n = await executar(
-    `UPDATE projetos
-        SET nome = :nome, objetivo = :objetivo, sponsor_id = :sponsorId,
-            gerente_id = :gerenteId, status = NVL(:status, status),
-            inicio = :inicio, fim = :fim, atualizado_em = SYSTIMESTAMP
-      WHERE id = :id`,
-    {
-      id,
-      nome: d.nome.trim(),
-      objetivo: d.objetivo?.trim() ?? null,
-      sponsorId: d.sponsorId ?? null,
-      gerenteId: d.gerenteId ?? null,
-      status: d.status ?? null,
-      inicio: d.inicio,
-      fim: d.fim,
-    },
+  const atual = await db.from("projetos").select("status").eq("id", id).maybeSingle();
+  const atualLinha = checar(atual as never) as { status: string } | null;
+  if (!atualLinha) throw new ErroDominio(`Projeto ${id} não encontrado`);
+
+  checar(
+    await db
+      .from("projetos")
+      .update({
+        nome: d.nome.trim(),
+        objetivo: d.objetivo?.trim() ?? null,
+        sponsor_id: d.sponsorId ?? null,
+        gerente_id: d.gerenteId ?? null,
+        status: d.status ?? atualLinha.status,
+        inicio: comoDataPura(d.inicio),
+        fim: comoDataPura(d.fim),
+        atualizado_em: agora(),
+      } as never)
+      .eq("id", id),
   );
-  if (n === 0) throw new ErroDominio(`Projeto ${id} não encontrado`);
 }
 
 export interface DadosTarefa {
@@ -331,8 +477,10 @@ export interface DadosTarefa {
 }
 
 /**
- * Cria tarefa com seus vínculos em transação: tarefa sem responsável
- * por falha parcial desmonta o cálculo de capacidade.
+ * Cria tarefa com seus vínculos em sequência: sem transação no
+ * PostgREST, uma falha nos vínculos deixa a tarefa órfã de
+ * responsável/predecessora — aceitável aqui porque a tela permite
+ * reeditar os vínculos depois.
  */
 export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise<string> {
   exigirTi(ctx, "criar tarefas");
@@ -341,44 +489,39 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
 
   const id = novoId();
 
-  await emTransacao(async (tx) => {
-    await tx.executar(
-      `INSERT INTO projeto_tarefas
-         (id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
-          quadro, marco, alocacao_pct, ordem)
-       VALUES
-         (:id, :projetoId, :paiId, :nome, :atividade, :inicio, :fim, :progresso,
-          :quadro, :marco, :alocacaoPct, :ordem)`,
-      {
-        id,
-        projetoId: d.projetoId,
-        paiId: d.paiId ?? null,
-        nome: d.nome.trim(),
-        atividade: d.atividade?.trim() ?? null,
-        inicio: d.inicio,
-        fim: d.fim,
-        progresso: d.progresso ?? 0,
-        quadro: d.quadro ?? "backlog",
-        marco: deBool(d.marco),
-        alocacaoPct: d.alocacaoPct ?? null,
-        ordem: d.ordem ?? 0,
-      },
-    );
+  checar(
+    await db.from("projeto_tarefas").insert({
+      id,
+      projeto_id: d.projetoId,
+      pai_id: d.paiId ?? null,
+      nome: d.nome.trim(),
+      atividade: d.atividade?.trim() ?? null,
+      inicio: comoDataPura(d.inicio),
+      fim: comoDataPura(d.fim),
+      progresso: d.progresso ?? 0,
+      quadro: d.quadro ?? "backlog",
+      marco: d.marco ?? false,
+      alocacao_pct: d.alocacaoPct ?? null,
+      ordem: d.ordem ?? 0,
+    } as never),
+  );
 
-    for (const r of new Set(d.responsaveis ?? [])) {
-      await tx.executar(`INSERT INTO tarefa_responsaveis (tarefa_id, recurso_id) VALUES (:t, :r)`, {
-        t: id,
-        r,
-      });
-    }
-    for (const p of new Set(d.predecessoras ?? [])) {
-      if (p === id) continue;
-      await tx.executar(
-        `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id) VALUES (:t, :p)`,
-        { t: id, p },
-      );
-    }
-  });
+  const responsaveis = [...new Set(d.responsaveis ?? [])];
+  if (responsaveis.length) {
+    checar(
+      await db
+        .from("tarefa_responsaveis")
+        .insert(responsaveis.map((r) => ({ tarefa_id: id, recurso_id: r })) as never),
+    );
+  }
+  const predecessoras = [...new Set(d.predecessoras ?? [])].filter((p) => p !== id);
+  if (predecessoras.length) {
+    checar(
+      await db
+        .from("tarefa_predecessoras")
+        .insert(predecessoras.map((p) => ({ tarefa_id: id, predecessora_id: p })) as never),
+    );
+  }
 
   return id;
 }
@@ -391,57 +534,55 @@ export async function atualizarTarefa(
   exigirTi(ctx, "alterar tarefas");
   if (d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
 
-  await emTransacao(async (tx) => {
-    // quadro 'done' e progresso 100 andam juntos: deixar divergir
-    // produz kanban que não bate com o percentual do cronograma.
-    const concluida = d.quadro === "done" || d.progresso === 100;
+  const atualRes = await db.from("projeto_tarefas").select("concluido_em").eq("id", id).maybeSingle();
+  const atual = checar(atualRes as never) as { concluido_em: string | null } | null;
+  if (!atual) throw new ErroDominio(`Tarefa ${id} não encontrada`);
 
-    const n = await tx.executar(
-      `UPDATE projeto_tarefas
-          SET pai_id = :paiId, nome = NVL(:nome, nome), atividade = :atividade,
-              inicio = :inicio, fim = :fim,
-              progresso = :progresso, quadro = :quadro, marco = :marco,
-              alocacao_pct = :alocacaoPct, ordem = NVL(:ordem, ordem),
-              concluido_em = CASE WHEN :concluida = 1
-                                  THEN NVL(concluido_em, SYSTIMESTAMP) ELSE NULL END
-        WHERE id = :id`,
-      {
-        id,
-        paiId: d.paiId ?? null,
-        nome: d.nome?.trim() ?? null,
+  // quadro 'done' e progresso 100 andam juntos: deixar divergir
+  // produz kanban que não bate com o percentual do cronograma.
+  const concluida = d.quadro === "done" || d.progresso === 100;
+
+  checar(
+    await db
+      .from("projeto_tarefas")
+      .update({
+        pai_id: d.paiId ?? null,
+        nome: d.nome?.trim(),
         atividade: d.atividade?.trim() ?? null,
-        inicio: d.inicio,
-        fim: d.fim,
+        inicio: comoDataPura(d.inicio),
+        fim: comoDataPura(d.fim),
         progresso: concluida ? 100 : (d.progresso ?? 0),
         quadro: concluida ? "done" : (d.quadro ?? "backlog"),
-        marco: deBool(d.marco),
-        alocacaoPct: d.alocacaoPct ?? null,
-        ordem: d.ordem ?? null,
-        concluida: deBool(concluida),
-      },
-    );
-    if (n === 0) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+        marco: d.marco ?? false,
+        alocacao_pct: d.alocacaoPct ?? null,
+        ordem: d.ordem,
+        concluido_em: concluida ? (atual.concluido_em ?? agora()) : null,
+      } as never)
+      .eq("id", id),
+  );
 
-    if (d.responsaveis) {
-      await tx.executar(`DELETE FROM tarefa_responsaveis WHERE tarefa_id = :id`, { id });
-      for (const r of new Set(d.responsaveis)) {
-        await tx.executar(
-          `INSERT INTO tarefa_responsaveis (tarefa_id, recurso_id) VALUES (:t, :r)`,
-          { t: id, r },
-        );
-      }
+  if (d.responsaveis) {
+    checar(await db.from("tarefa_responsaveis").delete().eq("tarefa_id", id));
+    const responsaveis = [...new Set(d.responsaveis)];
+    if (responsaveis.length) {
+      checar(
+        await db
+          .from("tarefa_responsaveis")
+          .insert(responsaveis.map((r) => ({ tarefa_id: id, recurso_id: r })) as never),
+      );
     }
-    if (d.predecessoras) {
-      await tx.executar(`DELETE FROM tarefa_predecessoras WHERE tarefa_id = :id`, { id });
-      for (const p of new Set(d.predecessoras)) {
-        if (p === id) continue;
-        await tx.executar(
-          `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id) VALUES (:t, :p)`,
-          { t: id, p },
-        );
-      }
+  }
+  if (d.predecessoras) {
+    checar(await db.from("tarefa_predecessoras").delete().eq("tarefa_id", id));
+    const predecessoras = [...new Set(d.predecessoras)].filter((p) => p !== id);
+    if (predecessoras.length) {
+      checar(
+        await db
+          .from("tarefa_predecessoras")
+          .insert(predecessoras.map((p) => ({ tarefa_id: id, predecessora_id: p })) as never),
+      );
     }
-  });
+  }
 }
 
 /** Move a tarefa no kanban. Atalho para o arrastar-e-soltar. */
@@ -452,31 +593,38 @@ export async function moverTarefa(
 ): Promise<void> {
   exigirTi(ctx, "mover tarefas");
   const concluida = quadro === "done";
-  await executar(
-    `UPDATE projeto_tarefas
-        SET quadro = :quadro,
-            progresso = CASE WHEN :concluida = 1 THEN 100 ELSE progresso END,
-            concluido_em = CASE WHEN :concluida = 1
-                                THEN NVL(concluido_em, SYSTIMESTAMP) ELSE NULL END
-      WHERE id = :id`,
-    { id, quadro, concluida: deBool(concluida) },
+
+  const atualRes = await db
+    .from("projeto_tarefas")
+    .select("progresso, concluido_em")
+    .eq("id", id)
+    .maybeSingle();
+  const atual = checar(atualRes as never) as { progresso: number; concluido_em: string | null } | null;
+  if (!atual) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+
+  checar(
+    await db
+      .from("projeto_tarefas")
+      .update({
+        quadro,
+        progresso: concluida ? 100 : atual.progresso,
+        concluido_em: concluida ? (atual.concluido_em ?? agora()) : null,
+      } as never)
+      .eq("id", id),
   );
 }
 
-/** Exclusão em cascata na aplicação: o Oracle não faz cascade em auto-FK. */
+/** Exclusão em cascata na aplicação: o banco não faz cascade em auto-FK. */
 export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirTi(ctx, "excluir tarefas");
-  await emTransacao(async (tx) => {
-    const filhas = await tx.consultar<{ id: string }>(
-      `SELECT id FROM projeto_tarefas WHERE pai_id = :id`,
-      { id },
-    );
-    for (const f of filhas) {
-      await tx.executar(`DELETE FROM projeto_tarefas WHERE id = :id`, { id: f.id });
-    }
-    await tx.executar(`DELETE FROM tarefa_predecessoras WHERE predecessora_id = :id`, { id });
-    await tx.executar(`DELETE FROM projeto_tarefas WHERE id = :id`, { id });
-  });
+
+  const filhasRes = await db.from("projeto_tarefas").select("id").eq("pai_id", id);
+  const filhas = linhas(filhasRes as never) as { id: string }[];
+  for (const f of filhas) {
+    checar(await db.from("projeto_tarefas").delete().eq("id", f.id));
+  }
+  checar(await db.from("tarefa_predecessoras").delete().eq("predecessora_id", id));
+  checar(await db.from("projeto_tarefas").delete().eq("id", id));
 }
 
 /**
@@ -496,20 +644,17 @@ export interface DadosRisco {
 export async function criarRisco(ctx: ContextoUsuario, d: DadosRisco): Promise<string> {
   exigirTi(ctx, "registrar riscos");
   const id = novoId();
-  await executar(
-    `INSERT INTO projeto_riscos
-       (id, projeto_id, descricao, probabilidade, impacto, mitigacao, status, criado_em)
-     VALUES (:id, :projetoId, :descricao, :probabilidade, :impacto, :mitigacao,
-             :status, SYSTIMESTAMP)`,
-    {
+  checar(
+    await db.from("projeto_riscos").insert({
       id,
-      projetoId: d.projetoId,
+      projeto_id: d.projetoId,
       descricao: d.descricao.trim(),
       probabilidade: d.probabilidade,
       impacto: d.impacto,
       mitigacao: d.mitigacao?.trim() ?? null,
       status: d.status ?? "aberto",
-    },
+      criado_em: agora(),
+    } as never),
   );
   return id;
 }
@@ -525,21 +670,17 @@ export interface DadosAtualizacao {
 export async function criarAtualizacao(ctx: ContextoUsuario, d: DadosAtualizacao): Promise<string> {
   exigirTi(ctx, "registrar atualizações");
   const id = novoId();
-  await executar(
-    `INSERT INTO projeto_atualizacoes
-       (id, projeto_id, autor_id, data_ref, descricao, ultimas_entregas,
-        proximas_entregas, criado_em)
-     VALUES (:id, :projetoId, :autorId, :dataRef, :descricao, :ultimas,
-             :proximas, SYSTIMESTAMP)`,
-    {
+  checar(
+    await db.from("projeto_atualizacoes").insert({
       id,
-      projetoId: d.projetoId,
-      autorId: ctx.id,
-      dataRef: d.dataRef,
+      projeto_id: d.projetoId,
+      autor_id: ctx.id,
+      data_ref: comoDataPura(d.dataRef),
       descricao: d.descricao?.trim() ?? null,
-      ultimas: d.ultimasEntregas?.trim() ?? null,
-      proximas: d.proximasEntregas?.trim() ?? null,
-    },
+      ultimas_entregas: d.ultimasEntregas?.trim() ?? null,
+      proximas_entregas: d.proximasEntregas?.trim() ?? null,
+      criado_em: agora(),
+    } as never),
   );
   return id;
 }
@@ -555,30 +696,28 @@ export interface DadosAtencao {
 export async function criarAtencao(ctx: ContextoUsuario, d: DadosAtencao): Promise<string> {
   exigirTi(ctx, "registrar pontos de atenção");
   const id = novoId();
-  await executar(
-    `INSERT INTO projeto_atencoes
-       (id, projeto_id, titulo, descricao, decisao_necessaria,
-        responsavel_decisao_id, status, criado_em)
-     VALUES (:id, :projetoId, :titulo, :descricao, :decisao, :responsavelId,
-             'aberto', SYSTIMESTAMP)`,
-    {
+  checar(
+    await db.from("projeto_atencoes").insert({
       id,
-      projetoId: d.projetoId,
+      projeto_id: d.projetoId,
       titulo: d.titulo.trim(),
       descricao: d.descricao?.trim() ?? null,
-      decisao: d.decisaoNecessaria?.trim() ?? null,
-      responsavelId: d.responsavelDecisaoId ?? null,
-    },
+      decisao_necessaria: d.decisaoNecessaria?.trim() ?? null,
+      responsavel_decisao_id: d.responsavelDecisaoId ?? null,
+      status: "aberto",
+      criado_em: agora(),
+    } as never),
   );
   return id;
 }
 
 export async function resolverAtencao(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirTi(ctx, "resolver pontos de atenção");
-  await executar(
-    `UPDATE projeto_atencoes SET status = 'resolvido', resolvido_em = SYSTIMESTAMP
-      WHERE id = :id`,
-    { id },
+  checar(
+    await db
+      .from("projeto_atencoes")
+      .update({ status: "resolvido", resolvido_em: agora() } as never)
+      .eq("id", id),
   );
 }
 
@@ -688,45 +827,40 @@ export async function atualizarCampoTarefa(
 ): Promise<void> {
   exigirTi(ctx, "alterar tarefas");
 
-  const filhas = await consultarUm<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id`,
-    { id },
-  );
-  if ((filhas?.total ?? 0) > 0) {
+  const filhasRes = await db.from("projeto_tarefas").select("id", { count: "exact", head: true }).eq("pai_id", id);
+  checar(filhasRes as never);
+  if ((filhasRes.count ?? 0) > 0) {
     throw new ErroDominio("Tarefa com subtarefas tem datas e progresso calculados a partir delas.");
   }
 
-  const atual = await consultarUm<{ inicio: Date; fim: Date }>(
-    `SELECT inicio, fim FROM projeto_tarefas WHERE id = :id`,
-    { id },
-  );
+  const atualRes = await db
+    .from("projeto_tarefas")
+    .select("inicio, fim, quadro, concluido_em")
+    .eq("id", id)
+    .maybeSingle();
+  const atual = checar(atualRes as never) as
+    | { inicio: string; fim: string; quadro: string; concluido_em: string | null }
+    | null;
   if (!atual) throw new ErroDominio(`Tarefa ${id} não encontrada`);
 
-  const inicio = d.inicio ?? new Date(atual.inicio);
-  const fim = d.fim ?? new Date(atual.fim);
+  const inicio = d.inicio ?? paraDataPura(atual.inicio)!;
+  const fim = d.fim ?? paraDataPura(atual.fim)!;
   if (fim < inicio) throw new ErroDominio("Data de término anterior ao início");
 
   const concluida = d.progresso === 100;
 
-  await executar(
-    `UPDATE projeto_tarefas
-        SET nome = NVL(:nome, nome),
-            progresso = NVL(:progresso, progresso),
-            inicio = :inicio,
-            fim = :fim,
-            quadro = CASE WHEN :concluida = 1 THEN 'done'
-                          WHEN quadro = 'done' THEN 'doing' ELSE quadro END,
-            concluido_em = CASE WHEN :concluida = 1
-                                THEN NVL(concluido_em, SYSTIMESTAMP) ELSE NULL END
-      WHERE id = :id`,
-    {
-      id,
-      nome: d.nome?.trim() ?? null,
-      progresso: d.progresso ?? null,
-      inicio,
-      fim,
-      concluida: deBool(concluida),
-    },
+  checar(
+    await db
+      .from("projeto_tarefas")
+      .update({
+        nome: d.nome?.trim(),
+        progresso: d.progresso,
+        inicio: comoDataPura(inicio),
+        fim: comoDataPura(fim),
+        quadro: concluida ? "done" : atual.quadro === "done" ? "doing" : atual.quadro,
+        concluido_em: concluida ? (atual.concluido_em ?? agora()) : null,
+      } as never)
+      .eq("id", id),
   );
 }
 
@@ -741,40 +875,45 @@ export async function inserirAbaixo(
 ): Promise<string> {
   exigirTi(ctx, "criar tarefas");
 
-  const ref = await consultarUm<{
-    projetoId: string;
-    paiId: string | null;
-    ordem: number;
-    inicio: Date;
-    fim: Date;
-  }>(`SELECT projeto_id, pai_id, ordem, inicio, fim FROM projeto_tarefas WHERE id = :id`, {
-    id: referenciaId,
-  });
+  const refRes = await db
+    .from("projeto_tarefas")
+    .select("projeto_id, pai_id, ordem, inicio, fim")
+    .eq("id", referenciaId)
+    .maybeSingle();
+  const ref = checar(refRes as never) as
+    | { projeto_id: string; pai_id: string | null; ordem: number; inicio: string; fim: string }
+    | null;
   if (!ref) throw new ErroDominio("Tarefa de referência não encontrada");
 
   const id = novoId();
-  const paiId = comoFilha ? referenciaId : ref.paiId;
+  const paiId = comoFilha ? referenciaId : ref.pai_id;
 
-  await emTransacao(async (tx) => {
-    await tx.executar(
-      `UPDATE projeto_tarefas SET ordem = ordem + 1
-        WHERE projeto_id = :projetoId AND ordem > :ordem`,
-      { projetoId: ref.projetoId, ordem: ref.ordem },
-    );
-    await tx.executar(
-      `INSERT INTO projeto_tarefas
-         (id, projeto_id, pai_id, nome, inicio, fim, progresso, quadro, marco, ordem)
-       VALUES (:id, :projetoId, :paiId, 'Nova tarefa', :inicio, :fim, 0, 'backlog', 0, :ordem)`,
-      {
-        id,
-        projetoId: ref.projetoId,
-        paiId,
-        inicio: ref.inicio,
-        fim: ref.fim,
-        ordem: ref.ordem + 1,
-      },
-    );
-  });
+  // Abre espaço na ordenação: todas as tarefas do projeto com ordem
+  // maior que a referência avançam uma posição.
+  const posterioresRes = await db
+    .from("projeto_tarefas")
+    .select("id, ordem")
+    .eq("projeto_id", ref.projeto_id)
+    .gt("ordem", ref.ordem);
+  const posteriores = linhas(posterioresRes as never) as { id: string; ordem: number }[];
+  for (const p of posteriores) {
+    checar(await db.from("projeto_tarefas").update({ ordem: p.ordem + 1 } as never).eq("id", p.id));
+  }
+
+  checar(
+    await db.from("projeto_tarefas").insert({
+      id,
+      projeto_id: ref.projeto_id,
+      pai_id: paiId,
+      nome: "Nova tarefa",
+      inicio: ref.inicio,
+      fim: ref.fim,
+      progresso: 0,
+      quadro: "backlog",
+      marco: false,
+      ordem: ref.ordem + 1,
+    } as never),
+  );
 
   return id;
 }
@@ -799,27 +938,50 @@ export interface BaselineTarefa {
 }
 
 export async function listarBaselines(projetoId: string): Promise<Baseline[]> {
-  return consultar<Baseline>(
-    `SELECT b.id, b.projeto_id, b.versao, b.descricao, b.autor_id,
-            u.nome AS autor_nome, b.criado_em
-       FROM projeto_baselines b
-       LEFT JOIN usuarios u ON u.id = b.autor_id
-      WHERE b.projeto_id = :projetoId
-      ORDER BY b.versao DESC`,
-    { projetoId },
-  );
+  const r = await db
+    .from("projeto_baselines")
+    .select("id, projeto_id, versao, descricao, autor_id, criado_em, autor:usuarios(nome)")
+    .eq("projeto_id", projetoId)
+    .order("versao", { ascending: false });
+  return (
+    linhas(r as never) as {
+      id: string;
+      projeto_id: string;
+      versao: number;
+      descricao: string | null;
+      autor_id: string | null;
+      autor: { nome: string } | null;
+      criado_em: string;
+    }[]
+  ).map((l) => ({
+    id: l.id,
+    projetoId: l.projeto_id,
+    versao: l.versao,
+    descricao: l.descricao,
+    autorId: l.autor_id,
+    autorNome: l.autor?.nome ?? null,
+    criadoEm: data(l.criado_em),
+  }));
 }
 
 /** Tarefas da baseline mais antiga: é contra o plano original que se mede. */
 export async function baselineOriginal(projetoId: string): Promise<BaselineTarefa[]> {
-  return consultar<BaselineTarefa>(
-    `SELECT bt.tarefa_id, bt.nome, bt.inicio, bt.fim
-       FROM baseline_tarefas bt
-       JOIN projeto_baselines b ON b.id = bt.baseline_id
-      WHERE b.projeto_id = :projetoId
-        AND b.versao = (SELECT MIN(versao) FROM projeto_baselines WHERE projeto_id = :projetoId)`,
-    { projetoId },
-  );
+  const baselinesRes = await db.from("projeto_baselines").select("id, versao").eq("projeto_id", projetoId);
+  const baselines = linhas(baselinesRes as never) as { id: string; versao: number }[];
+  if (baselines.length === 0) return [];
+
+  const maisAntiga = baselines.reduce((min, b) => (b.versao < min.versao ? b : min));
+
+  const r = await db
+    .from("baseline_tarefas")
+    .select("tarefa_id, nome, inicio, fim")
+    .eq("baseline_id", maisAntiga.id);
+  return (linhas(r as never) as { tarefa_id: string; nome: string; inicio: string; fim: string }[]).map((l) => ({
+    tarefaId: l.tarefa_id,
+    nome: l.nome,
+    inicio: paraDataPura(l.inicio)!,
+    fim: paraDataPura(l.fim)!,
+  }));
 }
 
 export async function salvarBaseline(
@@ -830,26 +992,39 @@ export async function salvarBaseline(
   exigirTi(ctx, "salvar baseline");
 
   const id = novoId();
-  await emTransacao(async (tx) => {
-    const v = await tx.consultar<{ prox: number }>(
-      `SELECT NVL(MAX(versao), 0) + 1 AS prox FROM projeto_baselines WHERE projeto_id = :p`,
-      { p: projetoId },
-    );
-    const versao = v[0]?.prox ?? 1;
 
-    await tx.executar(
-      `INSERT INTO projeto_baselines (id, projeto_id, versao, descricao, autor_id, criado_em)
-       VALUES (:id, :projetoId, :versao, :descricao, :autorId, SYSTIMESTAMP)`,
-      { id, projetoId, versao, descricao: descricao?.trim() ?? null, autorId: ctx.id },
-    );
+  const versoesRes = await db.from("projeto_baselines").select("versao").eq("projeto_id", projetoId);
+  const versoes = linhas(versoesRes as never) as { versao: number }[];
+  const versao = versoes.length ? Math.max(...versoes.map((v) => v.versao)) + 1 : 1;
 
-    // INSERT SELECT: copia o cronograma inteiro numa ida só.
-    await tx.executar(
-      `INSERT INTO baseline_tarefas (baseline_id, tarefa_id, nome, inicio, fim)
-       SELECT :id, id, nome, inicio, fim FROM projeto_tarefas WHERE projeto_id = :projetoId`,
-      { id, projetoId },
+  checar(
+    await db.from("projeto_baselines").insert({
+      id,
+      projeto_id: projetoId,
+      versao,
+      descricao: descricao?.trim() ?? null,
+      autor_id: ctx.id,
+      criado_em: agora(),
+    } as never),
+  );
+
+  // Copia o cronograma inteiro: sem INSERT SELECT no PostgREST, busca
+  // as tarefas e regrava como linhas da baseline.
+  const tarefasRes = await db.from("projeto_tarefas").select("id, nome, inicio, fim").eq("projeto_id", projetoId);
+  const tarefas = linhas(tarefasRes as never) as { id: string; nome: string; inicio: string; fim: string }[];
+  if (tarefas.length) {
+    checar(
+      await db.from("baseline_tarefas").insert(
+        tarefas.map((t) => ({
+          baseline_id: id,
+          tarefa_id: t.id,
+          nome: t.nome,
+          inicio: t.inicio,
+          fim: t.fim,
+        })) as never,
+      ),
     );
-  });
+  }
 
   return id;
 }
