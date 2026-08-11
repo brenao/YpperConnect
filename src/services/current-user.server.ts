@@ -28,13 +28,13 @@ interface LinhaUsuario {
   id: string;
   nome: string;
   email: string;
-  admin: number;
-  perfilId: string | null;
-  equipeId: string | null;
+  admin: boolean;
+  perfil_id: string | null;
+  equipe_id: string | null;
 }
 
 export async function getUsuarioAtual(): Promise<ContextoUsuario> {
-  const linha = checar(
+  const linha = checar<LinhaUsuario | null>(
     await db
       .from("usuarios")
       .select("id, nome, email, admin, perfil_id, equipe_id")

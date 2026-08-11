@@ -63,14 +63,14 @@ async function carregarCalendario(): Promise<Calendario> {
 
   const [expediente, feriados] = await Promise.all([
     linhas(
-      db
+      await db
         .from("expediente")
         .select("dia_semana, minuto_ini, minuto_fim")
         .eq("ativo", true)
         .order("dia_semana")
         .order("minuto_ini"),
     ),
-    linhas(db.from("feriados").select("data_feriado, recorrente").eq("ativo", true)),
+    linhas(await db.from("feriados").select("data_feriado, recorrente").eq("ativo", true)),
   ]);
 
   const faixasPorDia = new Map<number, Faixa[]>();
