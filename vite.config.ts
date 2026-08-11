@@ -31,8 +31,7 @@ export default defineConfig({
     dedupe: ["react", "react-dom", "@tanstack/react-router"],
   },
   ssr: {
-    // oracledb tem binário nativo — o Vite não consegue empacotar.
-    external: ["oracledb", "nodemailer"],
+    external: ["nodemailer"],
   },
   server: {
     port: 8080,

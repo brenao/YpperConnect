@@ -6,7 +6,7 @@ import { z } from "zod";
  * ao cliente — sem regra de negócio aqui.
  *
  * Os repositórios são importados dinamicamente dentro do handler para
- * o oracledb nunca entrar no bundle do navegador.
+ * o driver do banco nunca entrar no bundle do navegador.
  *
  * Os tipos inferidos do Zod são exportados porque as telas precisam
  * tipar as mutations: Parameters<typeof fn>[0]["data"] não funciona,
@@ -129,13 +129,16 @@ export const atualizarChamadoFn = createServerFn({ method: "POST" })
     if (mudancas.status) {
       try {
         const { enfileirar } = await import("@/repositories/notificacoes.repo");
-        const { consultarUm } = await import("@/integrations/oracle/client.server");
+        const { db, checar } = await import("@/integrations/db/client.server");
         const chamado = await buscarChamado(id);
 
         if (chamado) {
-          const dest = await consultarUm<{ email: string }>(
-            `SELECT email FROM usuarios WHERE id = :id`,
-            { id: chamado.solicitanteId },
+          const dest = checar<{ email: string } | null>(
+            await db
+              .from("usuarios")
+              .select("email")
+              .eq("id", chamado.solicitanteId)
+              .maybeSingle(),
           );
           if (dest) {
             await enfileirar({
