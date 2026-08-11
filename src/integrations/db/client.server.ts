@@ -14,15 +14,22 @@ export interface RespostaPostgrest<T> {
   error: { message: string } | null;
 }
 
-/** Desembrulha a resposta do PostgREST, transformando erro em exceção. */
-export function checar<T>(r: RespostaPostgrest<T>): T {
-  if (r.error) throw new Error(`Erro no banco: ${r.error.message}`);
-  return r.data as T;
+type Aguardavel<T> = RespostaPostgrest<T> | PromiseLike<RespostaPostgrest<T>>;
+
+/**
+ * Desembrulha a resposta do PostgREST, transformando erro em exceção.
+ * Aceita tanto o builder do supabase-js (que é "thenable") quanto o
+ * resultado já aguardado.
+ */
+export async function checar<T>(r: Aguardavel<T>): Promise<T> {
+  const resposta = await r;
+  if (resposta.error) throw new Error(`Erro no banco: ${resposta.error.message}`);
+  return resposta.data as T;
 }
 
 /** Lista (nunca null). */
-export function linhas<T>(r: RespostaPostgrest<T[]>): T[] {
-  return checar(r) ?? [];
+export async function linhas<T>(r: Aguardavel<T[]>): Promise<T[]> {
+  return (await checar(r)) ?? [];
 }
 
 /** Timestamp do banco (ISO string) para Date. */

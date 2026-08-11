@@ -1,5 +1,5 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { checar, db, linhas } from "@/integrations/db/client.server";
+import { ErroDominio } from "./tipos";
 import type { RecordType } from "@/models/itsm-types";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -8,7 +8,7 @@ import type { ContextoUsuario } from "@/services/current-user.server";
  *
  * Regra transversal: nada é excluído de verdade. Chamados históricos
  * apontam para serviço e sistema por chave estrangeira, e DELETE
- * quebraria o histórico. Tudo desativa com ativo = 0.
+ * quebraria o histórico. Tudo desativa com ativo = false.
  */
 
 export type Criticidade = "alta" | "media" | "baixa";
@@ -63,18 +63,15 @@ function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
 // ------------------------------------------------------------- categorias
 
 export async function listarCategorias(escopo?: EscopoCategoria): Promise<Categoria[]> {
-  const linhas = await consultar<{
-    id: string;
-    nome: string;
-    escopo: EscopoCategoria;
-    ativo: number;
-  }>(
-    `SELECT id, nome, escopo, ativo FROM categorias
-      ${escopo ? "WHERE escopo = :escopo" : ""}
-      ORDER BY escopo, nome`,
-    escopo ? { escopo } : {},
-  );
-  return linhas.map((l) => ({ ...l, ativo: paraBool(l.ativo) }));
+  let consulta = db.from("categorias").select("id, nome, escopo, ativo").order("escopo").order("nome");
+  if (escopo) consulta = consulta.eq("escopo", escopo);
+  const dados = linhas(await consulta);
+  return dados.map((l) => ({
+    id: l.id,
+    nome: l.nome,
+    escopo: l.escopo as EscopoCategoria,
+    ativo: l.ativo,
+  }));
 }
 
 export async function criarCategoria(
@@ -85,61 +82,77 @@ export async function criarCategoria(
   if (dados.nome.trim().length < 2) throw new ErroDominio("Informe o nome da categoria");
 
   const id = novoId();
-  await executar(
-    `INSERT INTO categorias (id, nome, escopo, ativo) VALUES (:id, :nome, :escopo, 1)`,
-    { id, nome: dados.nome.trim(), escopo: dados.escopo },
+  checar(
+    await db.from("categorias").insert({
+      id,
+      nome: dados.nome.trim(),
+      escopo: dados.escopo,
+      ativo: true,
+    }),
   );
   return id;
 }
 
 export async function renomearCategoria(ctx: ContextoUsuario, id: string, nome: string) {
   exigirAdmin(ctx, "alterar categorias");
-  const n = await executar(`UPDATE categorias SET nome = :nome WHERE id = :id`, {
-    id,
-    nome: nome.trim(),
-  });
-  if (n === 0) throw new ErroDominio(`Categoria ${id} não encontrada`);
+  const { data: atualizadas, error } = await db
+    .from("categorias")
+    .update({ nome: nome.trim() })
+    .eq("id", id)
+    .select("id");
+  if (error) throw new Error(`Erro no banco: ${error.message}`);
+  if (!atualizadas || atualizadas.length === 0) throw new ErroDominio(`Categoria ${id} não encontrada`);
 }
 
 export async function definirCategoriaAtiva(ctx: ContextoUsuario, id: string, ativo: boolean) {
   exigirAdmin(ctx, "alterar categorias");
-  await executar(`UPDATE categorias SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
+  checar(await db.from("categorias").update({ ativo }).eq("id", id));
 }
 
 // --------------------------------------------------------------- serviços
 
-const SELECT_SERVICO = `
-  SELECT s.id, s.nome, s.categoria_id, ct.nome AS categoria_nome,
-         s.descricao, s.tipo_padrao, s.sla_horas,
-         s.equipe_id, eq.nome AS equipe_nome, s.gerado_por_ia, s.ativo
-    FROM servicos s
-    LEFT JOIN categorias ct ON ct.id = s.categoria_id
-    LEFT JOIN equipes eq ON eq.id = s.equipe_id`;
+const SELECT_SERVICO =
+  "id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, gerado_por_ia, ativo, categorias(nome), equipes(nome)";
 
-interface LinhaServico extends Omit<Servico, "ativo" | "geradoPorIa"> {
-  ativo: number;
-  geradoPorIa: number;
+interface LinhaServico {
+  id: string;
+  nome: string;
+  categoria_id: string | null;
+  descricao: string | null;
+  tipo_padrao: string;
+  sla_horas: number;
+  equipe_id: string | null;
+  gerado_por_ia: boolean;
+  ativo: boolean;
+  categorias: { nome: string } | null;
+  equipes: { nome: string } | null;
 }
 
 const mapServico = (l: LinhaServico): Servico => ({
-  ...l,
-  ativo: paraBool(l.ativo),
-  geradoPorIa: paraBool(l.geradoPorIa),
+  id: l.id,
+  nome: l.nome,
+  categoriaId: l.categoria_id,
+  categoriaNome: l.categorias?.nome ?? null,
+  descricao: l.descricao,
+  tipoPadrao: l.tipo_padrao as RecordType,
+  slaHoras: l.sla_horas,
+  equipeId: l.equipe_id,
+  equipeNome: l.equipes?.nome ?? null,
+  geradoPorIa: l.gerado_por_ia,
+  ativo: l.ativo,
 });
 
 export async function listarServicos(apenasAtivos = true): Promise<Servico[]> {
-  const linhas = await consultar<LinhaServico>(
-    `${SELECT_SERVICO} ${apenasAtivos ? "WHERE s.ativo = 1" : ""} ORDER BY s.nome`,
-  );
-  return linhas.map(mapServico);
+  let consulta = db.from("servicos").select(SELECT_SERVICO).order("nome");
+  if (apenasAtivos) consulta = consulta.eq("ativo", true);
+  const dados = linhas(await consulta);
+  return (dados as unknown as LinhaServico[]).map(mapServico);
 }
 
 export async function buscarServico(id: string): Promise<Servico | null> {
-  const l = await consultarUm<LinhaServico>(`${SELECT_SERVICO} WHERE s.id = :id`, { id });
-  return l ? mapServico(l) : null;
+  const { data, error } = await db.from("servicos").select(SELECT_SERVICO).eq("id", id).maybeSingle();
+  if (error) throw new Error(`Erro no banco: ${error.message}`);
+  return data ? mapServico(data as unknown as LinhaServico) : null;
 }
 
 export interface DadosServico {
@@ -164,23 +177,21 @@ export async function criarServico(ctx: ContextoUsuario, d: DadosServico): Promi
   validarServico(d);
 
   const id = novoId();
-  await executar(
-    `INSERT INTO servicos
-       (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id,
-        gerado_por_ia, ativo, criado_em, atualizado_em)
-     VALUES
-       (:id, :nome, :categoriaId, :descricao, :tipoPadrao, :slaHoras, :equipeId,
-        :geradoPorIa, 1, SYSTIMESTAMP, SYSTIMESTAMP)`,
-    {
+  const agoraIso = new Date().toISOString();
+  checar(
+    await db.from("servicos").insert({
       id,
       nome: d.nome.trim(),
-      categoriaId: d.categoriaId ?? null,
+      categoria_id: d.categoriaId ?? null,
       descricao: d.descricao?.trim() ?? null,
-      tipoPadrao: d.tipoPadrao,
-      slaHoras: d.slaHoras,
-      equipeId: d.equipeId ?? null,
-      geradoPorIa: deBool(d.geradoPorIa),
-    },
+      tipo_padrao: d.tipoPadrao,
+      sla_horas: d.slaHoras,
+      equipe_id: d.equipeId ?? null,
+      gerado_por_ia: d.geradoPorIa ?? false,
+      ativo: true,
+      criado_em: agoraIso,
+      atualizado_em: agoraIso,
+    }),
   );
   return id;
 }
@@ -193,27 +204,21 @@ export async function atualizarServico(
   exigirAdmin(ctx, "alterar serviços");
   validarServico(d);
 
-  const n = await executar(
-    `UPDATE servicos
-        SET nome = :nome,
-            categoria_id = :categoriaId,
-            descricao = :descricao,
-            tipo_padrao = :tipoPadrao,
-            sla_horas = :slaHoras,
-            equipe_id = :equipeId,
-            atualizado_em = SYSTIMESTAMP
-      WHERE id = :id`,
-    {
-      id,
+  const { data: atualizados, error } = await db
+    .from("servicos")
+    .update({
       nome: d.nome.trim(),
-      categoriaId: d.categoriaId ?? null,
+      categoria_id: d.categoriaId ?? null,
       descricao: d.descricao?.trim() ?? null,
-      tipoPadrao: d.tipoPadrao,
-      slaHoras: d.slaHoras,
-      equipeId: d.equipeId ?? null,
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Serviço ${id} não encontrado`);
+      tipo_padrao: d.tipoPadrao,
+      sla_horas: d.slaHoras,
+      equipe_id: d.equipeId ?? null,
+      atualizado_em: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select("id");
+  if (error) throw new Error(`Erro no banco: ${error.message}`);
+  if (!atualizados || atualizados.length === 0) throw new ErroDominio(`Serviço ${id} não encontrado`);
 }
 
 /**
@@ -223,36 +228,56 @@ export async function atualizarServico(
  */
 export async function definirServicoAtivo(ctx: ContextoUsuario, id: string, ativo: boolean) {
   exigirAdmin(ctx, "alterar serviços");
-  await executar(
-    `UPDATE servicos SET ativo = :ativo, atualizado_em = SYSTIMESTAMP WHERE id = :id`,
-    { id, ativo: deBool(ativo) },
+  checar(
+    await db
+      .from("servicos")
+      .update({ ativo, atualizado_em: new Date().toISOString() })
+      .eq("id", id),
   );
 }
 
 // --------------------------------------------------------------- sistemas
 
-const SELECT_SISTEMA = `
-  SELECT s.id, s.nome, s.descricao, s.categoria_id, ct.nome AS categoria_nome,
-         s.criticidade, s.equipe_id, eq.nome AS equipe_nome,
-         s.responsavel_id, ur.nome AS responsavel_nome,
-         s.atribuicao_id, ua.nome AS atribuicao_nome, s.ativo
-    FROM sistemas s
-    LEFT JOIN categorias ct ON ct.id = s.categoria_id
-    LEFT JOIN equipes eq ON eq.id = s.equipe_id
-    LEFT JOIN usuarios ur ON ur.id = s.responsavel_id
-    LEFT JOIN usuarios ua ON ua.id = s.atribuicao_id`;
+const SELECT_SISTEMA =
+  "id, nome, descricao, categoria_id, criticidade, equipe_id, responsavel_id, atribuicao_id, ativo, categorias(nome), equipes(nome), responsavel:usuarios!sistemas_responsavel_id_fkey(nome), atribuicao:usuarios!sistemas_atribuicao_id_fkey(nome)";
 
-interface LinhaSistema extends Omit<Sistema, "ativo"> {
-  ativo: number;
+interface LinhaSistema {
+  id: string;
+  nome: string;
+  descricao: string | null;
+  categoria_id: string | null;
+  criticidade: string;
+  equipe_id: string | null;
+  responsavel_id: string | null;
+  atribuicao_id: string | null;
+  ativo: boolean;
+  categorias: { nome: string } | null;
+  equipes: { nome: string } | null;
+  responsavel: { nome: string } | null;
+  atribuicao: { nome: string } | null;
 }
 
-const mapSistema = (l: LinhaSistema): Sistema => ({ ...l, ativo: paraBool(l.ativo) });
+const mapSistema = (l: LinhaSistema): Sistema => ({
+  id: l.id,
+  nome: l.nome,
+  descricao: l.descricao,
+  categoriaId: l.categoria_id,
+  categoriaNome: l.categorias?.nome ?? null,
+  criticidade: l.criticidade as Criticidade,
+  equipeId: l.equipe_id,
+  equipeNome: l.equipes?.nome ?? null,
+  responsavelId: l.responsavel_id,
+  responsavelNome: l.responsavel?.nome ?? null,
+  atribuicaoId: l.atribuicao_id,
+  atribuicaoNome: l.atribuicao?.nome ?? null,
+  ativo: l.ativo,
+});
 
 export async function listarSistemas(apenasAtivos = true): Promise<Sistema[]> {
-  const linhas = await consultar<LinhaSistema>(
-    `${SELECT_SISTEMA} ${apenasAtivos ? "WHERE s.ativo = 1" : ""} ORDER BY s.nome`,
-  );
-  return linhas.map(mapSistema);
+  let consulta = db.from("sistemas").select(SELECT_SISTEMA).order("nome");
+  if (apenasAtivos) consulta = consulta.eq("ativo", true);
+  const dados = linhas(await consulta);
+  return (dados as unknown as LinhaSistema[]).map(mapSistema);
 }
 
 export interface DadosSistema {
@@ -270,23 +295,18 @@ export async function criarSistema(ctx: ContextoUsuario, d: DadosSistema): Promi
   if (d.nome.trim().length < 2) throw new ErroDominio("Informe o nome do sistema");
 
   const id = novoId();
-  await executar(
-    `INSERT INTO sistemas
-       (id, nome, descricao, categoria_id, responsavel_id, atribuicao_id,
-        equipe_id, criticidade, ativo)
-     VALUES
-       (:id, :nome, :descricao, :categoriaId, :responsavelId, :atribuicaoId,
-        :equipeId, :criticidade, 1)`,
-    {
+  checar(
+    await db.from("sistemas").insert({
       id,
       nome: d.nome.trim(),
       descricao: d.descricao?.trim() ?? null,
-      categoriaId: d.categoriaId ?? null,
-      responsavelId: d.responsavelId ?? null,
-      atribuicaoId: d.atribuicaoId ?? null,
-      equipeId: d.equipeId ?? null,
+      categoria_id: d.categoriaId ?? null,
+      responsavel_id: d.responsavelId ?? null,
+      atribuicao_id: d.atribuicaoId ?? null,
+      equipe_id: d.equipeId ?? null,
       criticidade: d.criticidade,
-    },
+      ativo: true,
+    }),
   );
   return id;
 }
@@ -299,34 +319,24 @@ export async function atualizarSistema(
   exigirAdmin(ctx, "alterar sistemas");
   if (d.nome.trim().length < 2) throw new ErroDominio("Informe o nome do sistema");
 
-  const n = await executar(
-    `UPDATE sistemas
-        SET nome = :nome,
-            descricao = :descricao,
-            categoria_id = :categoriaId,
-            responsavel_id = :responsavelId,
-            atribuicao_id = :atribuicaoId,
-            equipe_id = :equipeId,
-            criticidade = :criticidade
-      WHERE id = :id`,
-    {
-      id,
+  const { data: atualizados, error } = await db
+    .from("sistemas")
+    .update({
       nome: d.nome.trim(),
       descricao: d.descricao?.trim() ?? null,
-      categoriaId: d.categoriaId ?? null,
-      responsavelId: d.responsavelId ?? null,
-      atribuicaoId: d.atribuicaoId ?? null,
-      equipeId: d.equipeId ?? null,
+      categoria_id: d.categoriaId ?? null,
+      responsavel_id: d.responsavelId ?? null,
+      atribuicao_id: d.atribuicaoId ?? null,
+      equipe_id: d.equipeId ?? null,
       criticidade: d.criticidade,
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Sistema ${id} não encontrado`);
+    })
+    .eq("id", id)
+    .select("id");
+  if (error) throw new Error(`Erro no banco: ${error.message}`);
+  if (!atualizados || atualizados.length === 0) throw new ErroDominio(`Sistema ${id} não encontrado`);
 }
 
 export async function definirSistemaAtivo(ctx: ContextoUsuario, id: string, ativo: boolean) {
   exigirAdmin(ctx, "alterar sistemas");
-  await executar(`UPDATE sistemas SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
+  checar(await db.from("sistemas").update({ ativo }).eq("id", id));
 }
