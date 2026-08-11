@@ -1,11 +1,11 @@
-import { consultar, consultarUm } from "@/integrations/oracle/client.server";
+import { db, checar, linhas } from "@/integrations/db/client.server";
 
 /**
  * Indicadores agregados do painel.
  *
- * As contagens são feitas em SQL, não no cliente: puxar centenas de
- * chamados para contar no navegador desperdiça banda e fica lento
- * quando a base crescer.
+ * As agregações eram feitas em SQL no Oracle; agora buscamos só as
+ * colunas necessárias via PostgREST e calculamos contagens, séries e
+ * médias em TypeScript.
  */
 
 export interface ResumoPainel {
@@ -38,89 +38,113 @@ export interface VolumeDia {
   outros: number;
 }
 
-const ABERTOS = `c.status NOT IN ('resolvido','fechado')`;
+function ehAberto(status: string): boolean {
+  return status !== "resolvido" && status !== "fechado";
+}
+
+/** Formata uma data local no padrão dd/MM usado nas séries do painel. */
+function formatarDiaMes(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}`;
+}
+
+/** Início do dia (local) de uma data, para comparar por dia. */
+function inicioDoDia(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
 
 export async function resumoPainel(): Promise<ResumoPainel> {
-  const [chamados, conhecimento, projetos] = await Promise.all([
-    consultarUm<{
-      total: number;
-      abertos: number;
-      criticos: number;
-      vencidos: number;
-      comProblema: number;
-    }>(
-      `SELECT COUNT(*) AS total,
-              COUNT(CASE WHEN ${ABERTOS} THEN 1 END) AS abertos,
-              COUNT(CASE WHEN ${ABERTOS} AND c.prioridade = 'P1' THEN 1 END) AS criticos,
-              COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < SYSTIMESTAMP THEN 1 END) AS vencidos,
-              COUNT(CASE WHEN c.problema_vinculado_id IS NOT NULL THEN 1 END) AS com_problema
-         FROM chamados c`,
-    ),
-    consultarUm<{ total: number; pendentes: number }>(
-      `SELECT COUNT(*) AS total,
-              COUNT(CASE WHEN status <> 'publicado' THEN 1 END) AS pendentes
-         FROM artigos`,
-    ),
-    consultarUm<{ emExecucao: number }>(
-      `SELECT COUNT(CASE WHEN status = 'execucao' THEN 1 END) AS em_execucao FROM projetos`,
-    ),
+  const [chamadosResp, artigosResp, projetosResp] = await Promise.all([
+    db
+      .from("chamados")
+      .select("status, prioridade, prazo_sla, problema_vinculado_id"),
+    db.from("artigos").select("status"),
+    db.from("projetos").select("status"),
   ]);
 
-  const abertos = chamados?.abertos ?? 0;
-  const vencidos = chamados?.vencidos ?? 0;
+  const chamados = linhas(chamadosResp);
+  const artigos = linhas(artigosResp);
+  const projetos = linhas(projetosResp);
+
+  const agora = Date.now();
+
+  let abertos = 0;
+  let criticos = 0;
+  let vencidos = 0;
+  let comProblema = 0;
+  for (const c of chamados) {
+    const aberto = ehAberto(c.status);
+    if (aberto) {
+      abertos++;
+      if (c.prioridade === "P1") criticos++;
+      if (new Date(c.prazo_sla).getTime() < agora) vencidos++;
+    }
+    if (c.problema_vinculado_id !== null) comProblema++;
+  }
+
+  const artigosPendentes = artigos.filter((a) => a.status !== "publicado").length;
+  const projetosEmExecucao = projetos.filter((p) => p.status === "execucao").length;
 
   return {
-    totalChamados: chamados?.total ?? 0,
+    totalChamados: chamados.length,
     abertos,
-    criticos: chamados?.criticos ?? 0,
+    criticos,
     vencidos,
     // Sem chamado aberto, a aderência é 100% por definição — não 0%.
     aderenciaSla: abertos === 0 ? 100 : Math.round(((abertos - vencidos) / abertos) * 100),
-    artigos: conhecimento?.total ?? 0,
-    artigosPendentes: conhecimento?.pendentes ?? 0,
-    projetosEmExecucao: projetos?.emExecucao ?? 0,
-    comProblemaVinculado: chamados?.comProblema ?? 0,
+    artigos: artigos.length,
+    artigosPendentes,
+    projetosEmExecucao,
+    comProblemaVinculado: comProblema,
   };
 }
 
 /** Chamados abertos por prioridade. Prioridade sem nenhum não some. */
 export async function abertosPorPrioridade(): Promise<ContagemPrioridade[]> {
-  const linhas = await consultar<ContagemPrioridade>(
-    `SELECT c.prioridade, COUNT(*) AS total
-       FROM chamados c
-      WHERE ${ABERTOS}
-      GROUP BY c.prioridade`,
-  );
-  const mapa = new Map(linhas.map((l) => [l.prioridade, l.total]));
+  const chamados = linhas(await db.from("chamados").select("status, prioridade"));
+  const mapa = new Map<string, number>();
+  for (const c of chamados) {
+    if (!ehAberto(c.status)) continue;
+    mapa.set(c.prioridade, (mapa.get(c.prioridade) ?? 0) + 1);
+  }
   return ["P1", "P2", "P3", "P4"].map((p) => ({ prioridade: p, total: mapa.get(p) ?? 0 }));
 }
 
 export async function totalPorTipo(): Promise<ContagemTipo[]> {
-  return consultar<ContagemTipo>(
-    `SELECT c.tipo, COUNT(*) AS total FROM chamados c GROUP BY c.tipo ORDER BY COUNT(*) DESC`,
-  );
+  const chamados = linhas(await db.from("chamados").select("tipo"));
+  const mapa = new Map<string, number>();
+  for (const c of chamados) {
+    mapa.set(c.tipo, (mapa.get(c.tipo) ?? 0) + 1);
+  }
+  return [...mapa.entries()]
+    .map(([tipo, total]) => ({ tipo, total }))
+    .sort((a, b) => b.total - a.total);
 }
 
 /**
- * Volume dos últimos 7 dias. O CONNECT BY gera a série de datas para que
- * dias sem chamado apareçam como zero — sem isso o gráfico "pula" dias e
- * dá impressão errada de continuidade.
+ * Volume dos últimos 7 dias. Geramos a série de datas em TypeScript para
+ * que dias sem chamado apareçam como zero — sem isso o gráfico "pula"
+ * dias e dá impressão errada de continuidade.
  */
 export async function volumeUltimos7Dias(): Promise<VolumeDia[]> {
-  return consultar<VolumeDia>(
-    `WITH dias AS (
-       SELECT TRUNC(SYSDATE) - LEVEL + 1 AS d
-         FROM dual CONNECT BY LEVEL <= 7
-     )
-     SELECT TO_CHAR(dias.d, 'DD/MM') AS dia,
-            COUNT(CASE WHEN c.tipo = 'incidente' THEN 1 END) AS incidentes,
-            COUNT(CASE WHEN c.tipo = 'requisicao' THEN 1 END) AS requisicoes,
-            COUNT(CASE WHEN c.tipo NOT IN ('incidente','requisicao') THEN 1 END) AS outros
-       FROM dias
-       LEFT JOIN chamados c ON TRUNC(c.criado_em) = dias.d
-      GROUP BY dias.d
-      ORDER BY dias.d`,
-  );
+  const chamados = linhas(await db.from("chamados").select("tipo, criado_em"));
+
+  const hoje = new Date();
+  const dias: Date[] = [];
+  for (let i = 6; i >= 0; i--) {
+    dias.push(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - i));
+  }
+
+  return dias.map((d) => {
+    const chave = inicioDoDia(d);
+    const doDia = chamados.filter((c) => inicioDoDia(new Date(c.criado_em)) === chave);
+    return {
+      dia: formatarDiaMes(d),
+      incidentes: doDia.filter((c) => c.tipo === "incidente").length,
+      requisicoes: doDia.filter((c) => c.tipo === "requisicao").length,
+      outros: doDia.filter((c) => c.tipo !== "incidente" && c.tipo !== "requisicao").length,
+    };
+  });
 }
 
 export interface ChamadoResumido {
@@ -137,16 +161,32 @@ export interface ChamadoResumido {
 
 /** Fila prioritária: os mais críticos e mais antigos primeiro. */
 export async function filaPrioritaria(limite = 5): Promise<ChamadoResumido[]> {
-  return consultar<ChamadoResumido>(
-    `SELECT c.id, c.codigo, c.titulo, c.tipo, c.prioridade, c.status,
-            c.prazo_sla, c.criado_em, u.nome AS responsavel_nome
-       FROM chamados c
-       LEFT JOIN usuarios u ON u.id = c.responsavel_id
-      WHERE ${ABERTOS}
-      ORDER BY c.prioridade, c.prazo_sla
-      FETCH FIRST :limite ROWS ONLY`,
-    { limite },
+  const chamados = linhas(
+    await db
+      .from("chamados")
+      .select(
+        "id, codigo, titulo, tipo, prioridade, status, prazo_sla, criado_em, responsavel_id, usuarios:responsavel_id(nome)",
+      ),
   );
+
+  return chamados
+    .filter((c) => ehAberto(c.status))
+    .sort((a, b) => {
+      if (a.prioridade !== b.prioridade) return a.prioridade < b.prioridade ? -1 : 1;
+      return new Date(a.prazo_sla).getTime() - new Date(b.prazo_sla).getTime();
+    })
+    .slice(0, limite)
+    .map((c) => ({
+      id: c.id,
+      codigo: c.codigo ?? "",
+      titulo: c.titulo,
+      tipo: c.tipo,
+      prioridade: c.prioridade,
+      status: c.status,
+      prazoSla: new Date(c.prazo_sla),
+      criadoEm: new Date(c.criado_em),
+      responsavelNome: (c.usuarios as { nome: string } | null)?.nome ?? null,
+    }));
 }
 
 export interface Recorrencia {
@@ -156,18 +196,28 @@ export interface Recorrencia {
 
 /**
  * Sistemas com 3+ incidentes abertos — candidatos a análise de causa
- * raiz. Substituiu o texto fixo que citava um "PRB-018" inexistente.
+ * raiz.
  */
 export async function sistemasRecorrentes(): Promise<Recorrencia[]> {
-  return consultar<Recorrencia>(
-    `SELECT s.nome AS sistema_nome, COUNT(*) AS total
-       FROM chamados c
-       JOIN sistemas s ON s.id = c.sistema_id
-      WHERE c.tipo = 'incidente' AND ${ABERTOS}
-      GROUP BY s.nome
-     HAVING COUNT(*) >= 3
-      ORDER BY COUNT(*) DESC`,
+  const chamados = linhas(
+    await db
+      .from("chamados")
+      .select("tipo, status, sistema_id, sistemas:sistema_id(nome)")
+      .eq("tipo", "incidente"),
   );
+
+  const mapa = new Map<string, number>();
+  for (const c of chamados) {
+    if (!ehAberto(c.status) || !c.sistema_id) continue;
+    const nome = (c.sistemas as { nome: string } | null)?.nome;
+    if (!nome) continue;
+    mapa.set(nome, (mapa.get(nome) ?? 0) + 1);
+  }
+
+  return [...mapa.entries()]
+    .filter(([, total]) => total >= 3)
+    .map(([sistemaNome, total]) => ({ sistemaNome, total }))
+    .sort((a, b) => b.total - a.total);
 }
 
 // ------------------------------------------------------------- diretoria
@@ -202,6 +252,18 @@ export interface ContagemChave {
   atendidos: number;
 }
 
+interface ChamadoIndicador {
+  id: string;
+  status: string;
+  prioridade: string;
+  tipo: string;
+  criado_em: string;
+  prazo_sla: string;
+  respondido_em: string | null;
+  resolvido_em: string | null;
+  equipe_id: string | null;
+}
+
 /**
  * Recorte de período. Sem datas, considera tudo.
  *
@@ -209,59 +271,66 @@ export interface ContagemChave {
  * abertos no período, não encerrados nele. Misturar os dois critérios
  * produz indicador que ninguém consegue reconciliar.
  */
-function condPeriodo(p: PeriodoFiltro): { sql: string; binds: Record<string, unknown> } {
-  const binds: Record<string, unknown> = {};
-  const partes: string[] = [];
-  if (p.de) {
-    partes.push(`c.criado_em >= :de`);
-    binds["de"] = p.de;
-  }
-  if (p.ate) {
-    partes.push(`c.criado_em <= :ate`);
-    binds["ate"] = p.ate;
-  }
-  return { sql: partes.length ? `AND ${partes.join(" AND ")}` : "", binds };
+function aplicarPeriodo<T extends { criado_em: string }>(linhasList: T[], p: PeriodoFiltro): T[] {
+  return linhasList.filter((l) => {
+    const criado = new Date(l.criado_em).getTime();
+    if (p.de && criado < p.de.getTime()) return false;
+    if (p.ate && criado > p.ate.getTime()) return false;
+    return true;
+  });
+}
+
+async function buscarChamadosIndicador(): Promise<ChamadoIndicador[]> {
+  return linhas(
+    await db
+      .from("chamados")
+      .select(
+        "id, status, prioridade, tipo, criado_em, prazo_sla, respondido_em, resolvido_em, equipe_id",
+      ),
+  );
+}
+
+function ehAtendido(status: string): boolean {
+  return status === "resolvido" || status === "fechado";
 }
 
 export async function metricasChamados(p: PeriodoFiltro = {}): Promise<MetricasChamados> {
-  const { sql, binds } = condPeriodo(p);
+  const todos = aplicarPeriodo(await buscarChamadosIndicador(), p);
 
-  const r = await consultarUm<{
-    criados: number;
-    atendidos: number;
-    backlog: number;
-    vencidos: number;
-    comRetorno: number;
-    dentroSla: number;
-    mediaHoras: number | null;
-  }>(
-    `SELECT COUNT(*) AS criados,
-            COUNT(CASE WHEN c.status IN ('resolvido','fechado') THEN 1 END) AS atendidos,
-            COUNT(CASE WHEN ${ABERTOS} THEN 1 END) AS backlog,
-            COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < SYSTIMESTAMP THEN 1 END) AS vencidos,
-            COUNT(CASE WHEN c.respondido_em IS NOT NULL THEN 1 END) AS com_retorno,
-            COUNT(CASE WHEN c.resolvido_em IS NOT NULL
-                        AND c.resolvido_em <= c.prazo_sla THEN 1 END) AS dentro_sla,
-            AVG(CASE WHEN c.resolvido_em IS NOT NULL
-                     THEN (CAST(c.resolvido_em AS DATE) - CAST(c.criado_em AS DATE)) * 24 END)
-              AS media_horas
-       FROM chamados c
-      WHERE 1 = 1 ${sql}`,
-    binds,
-  );
+  const agoraMs = Date.now();
+  let atendidos = 0;
+  let backlog = 0;
+  let vencidos = 0;
+  let comRetorno = 0;
+  let dentroSla = 0;
+  let somaHoras = 0;
+  let comHoras = 0;
 
-  const atendidos = r?.atendidos ?? 0;
-  const dentroSla = r?.dentroSla ?? 0;
+  for (const c of todos) {
+    if (ehAtendido(c.status)) atendidos++;
+    if (ehAberto(c.status)) {
+      backlog++;
+      if (new Date(c.prazo_sla).getTime() < agoraMs) vencidos++;
+    }
+    if (c.respondido_em !== null) comRetorno++;
+    if (c.resolvido_em !== null) {
+      if (new Date(c.resolvido_em).getTime() <= new Date(c.prazo_sla).getTime()) dentroSla++;
+      const horas =
+        (new Date(c.resolvido_em).getTime() - new Date(c.criado_em).getTime()) / 3_600_000;
+      somaHoras += horas;
+      comHoras++;
+    }
+  }
 
   return {
-    criados: r?.criados ?? 0,
+    criados: todos.length,
     atendidos,
-    backlog: r?.backlog ?? 0,
-    vencidos: r?.vencidos ?? 0,
-    comPrimeiroRetorno: r?.comRetorno ?? 0,
+    backlog,
+    vencidos,
+    comPrimeiroRetorno: comRetorno,
     dentroSla,
     aderencia: atendidos === 0 ? 100 : Math.round((dentroSla / atendidos) * 100),
-    tempoMedioSolucaoH: Math.round((r?.mediaHoras ?? 0) * 10) / 10,
+    tempoMedioSolucaoH: Math.round((comHoras === 0 ? 0 : somaHoras / comHoras) * 10) / 10,
   };
 }
 
@@ -269,48 +338,68 @@ export async function metricasChamados(p: PeriodoFiltro = {}): Promise<MetricasC
 export async function serieCriadosAtendidos(p: PeriodoFiltro = {}): Promise<SerieDia[]> {
   const de = p.de ?? new Date(Date.now() - 29 * 86_400_000);
   const ate = p.ate ?? new Date();
-  const dias = Math.min(
+  const qtdDias = Math.min(
     90,
     Math.max(1, Math.ceil((ate.getTime() - de.getTime()) / 86_400_000) + 1),
   );
 
-  return consultar<SerieDia>(
-    `WITH dias AS (
-       SELECT TRUNC(:de) + LEVEL - 1 AS d FROM dual CONNECT BY LEVEL <= :qtd
-     )
-     SELECT TO_CHAR(dias.d, 'DD/MM') AS dia,
-            COUNT(cr.id) AS criados,
-            COUNT(at.id) AS atendidos
-       FROM dias
-       LEFT JOIN chamados cr ON TRUNC(cr.criado_em) = dias.d
-       LEFT JOIN chamados at ON TRUNC(at.resolvido_em) = dias.d
-      GROUP BY dias.d
-      ORDER BY dias.d`,
-    { de, qtd: dias },
-  );
+  const chamados = linhas(await db.from("chamados").select("criado_em, resolvido_em"));
+
+  const inicio = new Date(de.getFullYear(), de.getMonth(), de.getDate());
+  const dias: Date[] = [];
+  for (let i = 0; i < qtdDias; i++) {
+    dias.push(new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate() + i));
+  }
+
+  return dias.map((d) => {
+    const chave = inicioDoDia(d);
+    const criados = chamados.filter((c) => inicioDoDia(new Date(c.criado_em)) === chave).length;
+    const atendidos = chamados.filter(
+      (c) => c.resolvido_em !== null && inicioDoDia(new Date(c.resolvido_em)) === chave,
+    ).length;
+    return { dia: formatarDiaMes(d), criados, atendidos };
+  });
 }
 
-/** Agrupa por uma coluna do chamado, com criados e atendidos. */
-async function agrupar(colunaSql: string, p: PeriodoFiltro): Promise<ContagemChave[]> {
-  const { sql, binds } = condPeriodo(p);
-  return consultar<ContagemChave>(
-    `SELECT ${colunaSql} AS chave,
-            COUNT(*) AS total,
-            COUNT(CASE WHEN c.status IN ('resolvido','fechado') THEN 1 END) AS atendidos
-       FROM chamados c
-       LEFT JOIN equipes eq ON eq.id = c.equipe_id
-      WHERE 1 = 1 ${sql}
-      GROUP BY ${colunaSql}
-      ORDER BY COUNT(*) DESC`,
-    binds,
-  );
+/** Agrupa por uma chave derivada do chamado, com criados e atendidos. */
+function agrupar(
+  todos: ChamadoIndicador[],
+  chaveDe: (c: ChamadoIndicador) => string,
+): ContagemChave[] {
+  const mapa = new Map<string, { total: number; atendidos: number }>();
+  for (const c of todos) {
+    const chave = chaveDe(c);
+    const atual = mapa.get(chave) ?? { total: 0, atendidos: 0 };
+    atual.total++;
+    if (ehAtendido(c.status)) atual.atendidos++;
+    mapa.set(chave, atual);
+  }
+  return [...mapa.entries()]
+    .map(([chave, v]) => ({ chave, total: v.total, atendidos: v.atendidos }))
+    .sort((a, b) => b.total - a.total);
 }
 
-export const chamadosPorPrioridade = (p: PeriodoFiltro = {}) => agrupar("c.prioridade", p);
-export const chamadosPorTipo = (p: PeriodoFiltro = {}) => agrupar("c.tipo", p);
-export const chamadosPorStatus = (p: PeriodoFiltro = {}) => agrupar("c.status", p);
-export const chamadosPorEquipe = (p: PeriodoFiltro = {}) =>
-  agrupar("NVL(eq.nome, 'Sem equipe')", p);
+export async function chamadosPorPrioridade(p: PeriodoFiltro = {}): Promise<ContagemChave[]> {
+  const todos = aplicarPeriodo(await buscarChamadosIndicador(), p);
+  return agrupar(todos, (c) => c.prioridade);
+}
+
+export async function chamadosPorTipo(p: PeriodoFiltro = {}): Promise<ContagemChave[]> {
+  const todos = aplicarPeriodo(await buscarChamadosIndicador(), p);
+  return agrupar(todos, (c) => c.tipo);
+}
+
+export async function chamadosPorStatus(p: PeriodoFiltro = {}): Promise<ContagemChave[]> {
+  const todos = aplicarPeriodo(await buscarChamadosIndicador(), p);
+  return agrupar(todos, (c) => c.status);
+}
+
+export async function chamadosPorEquipe(p: PeriodoFiltro = {}): Promise<ContagemChave[]> {
+  const todos = aplicarPeriodo(await buscarChamadosIndicador(), p);
+  const equipes = linhas(await db.from("equipes").select("id, nome"));
+  const nomeDe = new Map(equipes.map((e) => [e.id, e.nome]));
+  return agrupar(todos, (c) => (c.equipe_id ? (nomeDe.get(c.equipe_id) ?? "Sem equipe") : "Sem equipe"));
+}
 
 export interface MetricasProjetos {
   total: number;
@@ -322,24 +411,34 @@ export interface MetricasProjetos {
 }
 
 export async function metricasProjetos(): Promise<MetricasProjetos> {
-  const r = await consultarUm<MetricasProjetos>(
-    `SELECT COUNT(*) AS total,
-            COUNT(CASE WHEN status = 'execucao' THEN 1 END) AS em_execucao,
-            COUNT(CASE WHEN status = 'planejamento' THEN 1 END) AS planejamento,
-            COUNT(CASE WHEN status IN ('paralisado','cancelado') THEN 1 END) AS parados,
-            COUNT(CASE WHEN status = 'concluido' THEN 1 END) AS concluidos,
-            COUNT(CASE WHEN status IN ('execucao','planejamento')
-                        AND fim < TRUNC(SYSDATE) THEN 1 END) AS atrasados
-       FROM projetos`,
-  );
-  return (
-    r ?? {
-      total: 0,
-      emExecucao: 0,
-      planejamento: 0,
-      parados: 0,
-      concluidos: 0,
-      atrasados: 0,
+  const projetos = linhas(await db.from("projetos").select("status, fim"));
+
+  const hoje = inicioDoDia(new Date());
+  let emExecucao = 0;
+  let planejamento = 0;
+  let parados = 0;
+  let concluidos = 0;
+  let atrasados = 0;
+
+  for (const p of projetos) {
+    if (p.status === "execucao") emExecucao++;
+    if (p.status === "planejamento") planejamento++;
+    if (p.status === "paralisado" || p.status === "cancelado") parados++;
+    if (p.status === "concluido") concluidos++;
+    if (
+      (p.status === "execucao" || p.status === "planejamento") &&
+      inicioDoDia(new Date(p.fim)) < hoje
+    ) {
+      atrasados++;
     }
-  );
+  }
+
+  return {
+    total: projetos.length,
+    emExecucao,
+    planejamento,
+    parados,
+    concluidos,
+    atrasados,
+  };
 }

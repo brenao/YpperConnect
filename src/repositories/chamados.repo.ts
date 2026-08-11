@@ -1,5 +1,6 @@
-import { consultar, consultarUm, emTransacao } from "@/integrations/oracle/client.server";
-import { calcularPrazo } from "@/integrations/oracle/sla.server";
+import { db, checar, linhas, paraData, data as paraDataObrigatoria, agora as agoraIso } from "@/integrations/db/client.server";
+import type { Database } from "@/integrations/supabase/types";
+import { calcularPrazo } from "@/integrations/db/sla.server";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
 import type { Impact, Priority, RecordType, TicketStatus, Urgency } from "@/models/itsm-types";
 import { PREFIXO_TIPO } from "@/models/chamado-codigo";
@@ -12,7 +13,7 @@ export type TipoInteracao = "comentario" | "nota_interna" | "email";
 export interface Chamado {
   id: string;
   numero: number;
-  /** Código legível e imutável: INC-1000, REQ-1001... Coluna virtual no banco. */
+  /** Código legível e imutável: INC-1000, REQ-1001... Coluna gerada no banco. */
   codigo: string;
   titulo: string;
   descricao: string;
@@ -63,23 +64,53 @@ export interface EventoHistorico {
   criadoEm: Date;
 }
 
+/** Forma da linha vinda do PostgREST, com os embeds de FK já resolvidos. */
+interface LinhaChamado {
+  id: string;
+  numero: number;
+  codigo: string | null;
+  titulo: string;
+  descricao: string;
+  tipo: string;
+  categoria_id: string | null;
+  servico_id: string | null;
+  servicos: { nome: string } | null;
+  sistema_id: string | null;
+  sistemas: { nome: string } | null;
+  impacto: string;
+  urgencia: string;
+  prioridade: string;
+  status: string;
+  solicitante_id: string;
+  solicitante: { nome: string } | null;
+  responsavel_id: string | null;
+  responsavel: { nome: string } | null;
+  equipe_id: string | null;
+  equipes: { nome: string } | null;
+  origem: string;
+  problema_vinculado_id: string | null;
+  descricao_encerramento: string | null;
+  criado_em: string;
+  prazo_resposta: string | null;
+  prazo_sla: string;
+  respondido_em: string | null;
+  resolvido_em: string | null;
+  fechado_em: string | null;
+}
+
+/** Seleção base com os embeds equivalentes aos LEFT JOINs do Oracle. */
 const SELECT_BASE = `
-  SELECT c.id, c.numero, c.codigo, c.titulo, c.descricao, c.tipo, c.categoria_id,
-         c.servico_id, sv.nome AS servico_nome,
-         c.sistema_id, si.nome AS sistema_nome,
-         c.impacto, c.urgencia, c.prioridade, c.status,
-         c.solicitante_id, us.nome AS solicitante_nome,
-         c.responsavel_id, ur.nome AS responsavel_nome,
-         c.equipe_id, eq.nome AS equipe_nome,
-         c.origem, c.problema_vinculado_id, c.descricao_encerramento,
-         c.criado_em, c.prazo_resposta, c.prazo_sla,
-         c.respondido_em, c.resolvido_em, c.fechado_em
-    FROM chamados c
-    LEFT JOIN servicos sv ON sv.id = c.servico_id
-    LEFT JOIN sistemas si ON si.id = c.sistema_id
-    LEFT JOIN usuarios us ON us.id = c.solicitante_id
-    LEFT JOIN usuarios ur ON ur.id = c.responsavel_id
-    LEFT JOIN equipes  eq ON eq.id = c.equipe_id`;
+  id, numero, codigo, titulo, descricao, tipo, categoria_id,
+  servico_id, servicos(nome),
+  sistema_id, sistemas(nome),
+  impacto, urgencia, prioridade, status,
+  solicitante_id, solicitante:usuarios!chamados_solicitante_id_fkey(nome),
+  responsavel_id, responsavel:usuarios!chamados_responsavel_id_fkey(nome),
+  equipe_id, equipes(nome),
+  origem, problema_vinculado_id, descricao_encerramento,
+  criado_em, prazo_resposta, prazo_sla,
+  respondido_em, resolvido_em, fechado_em
+`;
 
 /** Status a partir dos quais o chamado é considerado encerrado. */
 const STATUS_ENCERRADOS: TicketStatus[] = ["resolvido", "fechado"];
@@ -87,6 +118,41 @@ const STATUS_ENCERRADOS: TicketStatus[] = ["resolvido", "fechado"];
 /** UUID puro: 36 caracteres, exatamente o tamanho da coluna. */
 function novoId(): string {
   return crypto.randomUUID();
+}
+
+function mapChamado(row: LinhaChamado): Chamado {
+  return {
+    id: row.id,
+    numero: row.numero,
+    codigo: row.codigo ?? "",
+    titulo: row.titulo,
+    descricao: row.descricao,
+    tipo: row.tipo as RecordType,
+    categoriaId: row.categoria_id,
+    servicoId: row.servico_id,
+    servicoNome: row.servicos?.nome ?? null,
+    sistemaId: row.sistema_id,
+    sistemaNome: row.sistemas?.nome ?? null,
+    impacto: row.impacto as Impact,
+    urgencia: row.urgencia as Urgency,
+    prioridade: row.prioridade as Priority,
+    status: row.status as TicketStatus,
+    solicitanteId: row.solicitante_id,
+    solicitanteNome: row.solicitante?.nome ?? "",
+    responsavelId: row.responsavel_id,
+    responsavelNome: row.responsavel?.nome ?? null,
+    equipeId: row.equipe_id,
+    equipeNome: row.equipes?.nome ?? null,
+    origem: row.origem as OrigemChamado,
+    problemaVinculadoId: row.problema_vinculado_id,
+    descricaoEncerramento: row.descricao_encerramento,
+    criadoEm: paraDataObrigatoria(row.criado_em),
+    prazoResposta: paraData(row.prazo_resposta),
+    prazoSla: paraDataObrigatoria(row.prazo_sla),
+    respondidoEm: paraData(row.respondido_em),
+    resolvidoEm: paraData(row.resolvido_em),
+    fechadoEm: paraData(row.fechado_em),
+  };
 }
 
 // ---------------------------------------------------------------- leitura
@@ -108,53 +174,48 @@ export interface FiltroChamados {
 }
 
 export async function listarChamados(f: FiltroChamados = {}): Promise<Chamado[]> {
-  const cond: string[] = [];
-  const binds: Record<string, unknown> = {};
+  let query = db.from("chamados").select(SELECT_BASE);
 
-  // Listas viram :s0, :s1... porque Oracle não aceita array em IN.
   if (f.status?.length) {
-    const chaves = f.status.map((s, i) => {
-      binds[`s${i}`] = s;
-      return `:s${i}`;
-    });
-    cond.push(`c.status IN (${chaves.join(",")})`);
+    query = query.in("status", f.status);
   }
   if (f.prioridade?.length) {
-    const chaves = f.prioridade.map((p, i) => {
-      binds[`p${i}`] = p;
-      return `:p${i}`;
-    });
-    cond.push(`c.prioridade IN (${chaves.join(",")})`);
+    query = query.in("prioridade", f.prioridade);
   }
   if (f.responsavelId) {
-    cond.push(`c.responsavel_id = :responsavelId`);
-    binds["responsavelId"] = f.responsavelId;
+    query = query.eq("responsavel_id", f.responsavelId);
   }
   if (f.solicitanteId) {
-    cond.push(`c.solicitante_id = :solicitanteId`);
-    binds["solicitanteId"] = f.solicitanteId;
+    query = query.eq("solicitante_id", f.solicitanteId);
   }
   if (f.equipeId) {
-    cond.push(`c.equipe_id = :equipeId`);
-    binds["equipeId"] = f.equipeId;
+    query = query.eq("equipe_id", f.equipeId);
   }
   if (f.vencidos) {
-    cond.push(`c.prazo_sla < SYSTIMESTAMP AND c.status NOT IN ('resolvido','fechado')`);
+    query = query
+      .lt("prazo_sla", agoraIso())
+      .not("status", "in", `(${STATUS_ENCERRADOS.join(",")})`);
   }
 
-  const where = cond.length ? `WHERE ${cond.join(" AND ")}` : "";
-  const limite = f.limite ? `FETCH FIRST :limite ROWS ONLY` : "";
-  if (f.limite) binds["limite"] = f.limite;
+  query = query.order("criado_em", { ascending: false });
+  if (f.limite) {
+    query = query.limit(f.limite);
+  }
 
-  return consultar<Chamado>(`${SELECT_BASE} ${where} ORDER BY c.criado_em DESC ${limite}`, binds);
+  const linhasChamados = linhas(await query) as unknown as LinhaChamado[];
+  return linhasChamados.map(mapChamado);
 }
 
 export async function buscarChamado(id: string): Promise<Chamado | null> {
-  return consultarUm<Chamado>(`${SELECT_BASE} WHERE c.id = :id`, { id });
+  const resp = await db.from("chamados").select(SELECT_BASE).eq("id", id).maybeSingle();
+  const row = checar(resp) as unknown as LinhaChamado | null;
+  return row ? mapChamado(row) : null;
 }
 
 export async function buscarChamadoPorCodigo(codigo: string): Promise<Chamado | null> {
-  return consultarUm<Chamado>(`${SELECT_BASE} WHERE c.codigo = :codigo`, { codigo });
+  const resp = await db.from("chamados").select(SELECT_BASE).eq("codigo", codigo).maybeSingle();
+  const row = checar(resp) as unknown as LinhaChamado | null;
+  return row ? mapChamado(row) : null;
 }
 
 /**
@@ -167,29 +228,65 @@ export async function listarInteracoes(
   chamadoId: string,
 ): Promise<Interacao[]> {
   const podeVerInterna = ctx.admin || ctx.equipeId !== null;
-  const filtroTipo = podeVerInterna ? "" : `AND i.tipo <> 'nota_interna'`;
 
-  return consultar<Interacao>(
-    `SELECT i.id, i.chamado_id, i.autor_id, u.nome AS autor_nome,
-            i.tipo, i.corpo, i.criado_em
-       FROM chamado_interacoes i
-       LEFT JOIN usuarios u ON u.id = i.autor_id
-      WHERE i.chamado_id = :chamadoId ${filtroTipo}
-      ORDER BY i.criado_em`,
-    { chamadoId },
-  );
+  let query = db
+    .from("chamado_interacoes")
+    .select("id, chamado_id, autor_id, tipo, corpo, criado_em, usuarios(nome)")
+    .eq("chamado_id", chamadoId);
+
+  if (!podeVerInterna) {
+    query = query.neq("tipo", "nota_interna");
+  }
+
+  query = query.order("criado_em", { ascending: true });
+
+  const linhasInteracoes = linhas(await query) as unknown as Array<{
+    id: string;
+    chamado_id: string;
+    autor_id: string | null;
+    tipo: string;
+    corpo: string;
+    criado_em: string;
+    usuarios: { nome: string } | null;
+  }>;
+
+  return linhasInteracoes.map((i) => ({
+    id: i.id,
+    chamadoId: i.chamado_id,
+    autorId: i.autor_id,
+    autorNome: i.usuarios?.nome ?? null,
+    tipo: i.tipo as TipoInteracao,
+    corpo: i.corpo,
+    criadoEm: paraDataObrigatoria(i.criado_em),
+  }));
 }
 
 export async function listarHistorico(chamadoId: string): Promise<EventoHistorico[]> {
-  return consultar<EventoHistorico>(
-    `SELECT h.id, h.autor_id, u.nome AS autor_nome,
-            h.campo, h.valor_anterior, h.valor_novo, h.criado_em
-       FROM chamado_historico h
-       LEFT JOIN usuarios u ON u.id = h.autor_id
-      WHERE h.chamado_id = :chamadoId
-      ORDER BY h.criado_em`,
-    { chamadoId },
-  );
+  const resp = await db
+    .from("chamado_historico")
+    .select("id, autor_id, campo, valor_anterior, valor_novo, criado_em, usuarios(nome)")
+    .eq("chamado_id", chamadoId)
+    .order("criado_em", { ascending: true });
+
+  const linhasHistorico = linhas(resp) as unknown as Array<{
+    id: string;
+    autor_id: string | null;
+    campo: string;
+    valor_anterior: string | null;
+    valor_novo: string | null;
+    criado_em: string;
+    usuarios: { nome: string } | null;
+  }>;
+
+  return linhasHistorico.map((h) => ({
+    id: h.id,
+    autorId: h.autor_id,
+    autorNome: h.usuarios?.nome ?? null,
+    campo: h.campo,
+    valorAnterior: h.valor_anterior,
+    valorNovo: h.valor_novo,
+    criadoEm: paraDataObrigatoria(h.criado_em),
+  }));
 }
 
 // ------------------------------------------------------------------ escrita
@@ -241,62 +338,50 @@ export async function criarChamado(
 
   const id = novoId();
   const solicitanteId = dados.solicitanteId ?? ctx.id;
+  const criadoEmIso = criadoEm.toISOString();
 
-  const resultado = await emTransacao(async (tx) => {
-    await tx.executar(
-      `INSERT INTO chamados
-         (id, prefixo, titulo, descricao, tipo, categoria_id, servico_id, sistema_id,
-          impacto, urgencia, prioridade, status, solicitante_id, equipe_id,
-          origem, criado_em, atualizado_em, prazo_resposta, prazo_sla)
-       VALUES
-         (:id, :prefixo, :titulo, :descricao, :tipo, :categoriaId, :servicoId, :sistemaId,
-          :impacto, :urgencia, :prioridade, 'novo', :solicitanteId, :equipeId,
-          :origem, :criadoEm, :criadoEm2, :prazoResposta, :prazoSla)`,
-      {
-        id,
-        prefixo: PREFIXO_TIPO[dados.tipo],
-        titulo: dados.titulo.trim(),
-        descricao: dados.descricao.trim(),
-        tipo: dados.tipo,
-        categoriaId: dados.categoriaId ?? null,
-        servicoId: dados.servicoId ?? null,
-        sistemaId: dados.sistemaId ?? null,
-        impacto: dados.impacto,
-        urgencia: dados.urgencia,
-        prioridade,
-        solicitanteId,
-        equipeId: dados.equipeId ?? null,
-        origem: dados.origem ?? "portal",
-        criadoEm,
-        criadoEm2: criadoEm,
-        prazoResposta,
-        prazoSla,
-      },
-    );
+  // Sem transações no PostgREST: as operações rodam em sequência.
+  const insertResp = await db
+    .from("chamados")
+    .insert({
+      id,
+      prefixo: PREFIXO_TIPO[dados.tipo],
+      titulo: dados.titulo.trim(),
+      descricao: dados.descricao.trim(),
+      tipo: dados.tipo,
+      categoria_id: dados.categoriaId ?? null,
+      servico_id: dados.servicoId ?? null,
+      sistema_id: dados.sistemaId ?? null,
+      impacto: dados.impacto,
+      urgencia: dados.urgencia,
+      prioridade,
+      status: "novo",
+      solicitante_id: solicitanteId,
+      equipe_id: dados.equipeId ?? null,
+      origem: dados.origem ?? "portal",
+      criado_em: criadoEmIso,
+      atualizado_em: criadoEmIso,
+      prazo_resposta: prazoResposta.toISOString(),
+      prazo_sla: prazoSla.toISOString(),
+    })
+    .select("numero, codigo")
+    .single();
 
-    await tx.executar(
-      `INSERT INTO chamado_historico
-         (id, chamado_id, autor_id, campo, valor_anterior, valor_novo, criado_em)
-       VALUES (:id, :chamadoId, :autorId, 'criacao', NULL, :valorNovo, :criadoEm)`,
-      {
-        id: novoId(),
-        chamadoId: id,
-        autorId: ctx.id,
-        valorNovo: `${dados.tipo} · ${prioridade}${regime.vinteQuatroSete ? " · 24x7" : ""}`,
-        criadoEm,
-      },
-    );
+  const inserido = checar(insertResp) as { numero: number; codigo: string | null };
 
-    // numero é IDENTITY e codigo é coluna virtual: ambos só existem
-    // depois do INSERT.
-    const r = await tx.consultar<{ numero: number; codigo: string }>(
-      `SELECT numero, codigo FROM chamados WHERE id = :id`,
-      { id },
-    );
-    return r[0]!;
-  });
+  checar(
+    await db.from("chamado_historico").insert({
+      id: novoId(),
+      chamado_id: id,
+      autor_id: ctx.id,
+      campo: "criacao",
+      valor_anterior: null,
+      valor_novo: `${dados.tipo} · ${prioridade}${regime.vinteQuatroSete ? " · 24x7" : ""}`,
+      criado_em: criadoEmIso,
+    }),
+  );
 
-  return { id, numero: resultado.numero, codigo: resultado.codigo };
+  return { id, numero: inserido.numero, codigo: inserido.codigo ?? "" };
 }
 
 export interface AlteracaoChamado {
@@ -340,17 +425,21 @@ export async function atualizarChamado(
   }
 
   const agora = new Date();
-  const sets: string[] = ["atualizado_em = :agoraUpd"];
-  const binds: Record<string, unknown> = { id, agoraUpd: agora };
+  const agoraIsoLocal = agora.toISOString();
+  const updates: Database["public"]["Tables"]["chamados"]["Update"] = { atualizado_em: agoraIsoLocal };
   const eventos: Array<{ campo: string; de: string | null; para: string | null }> = [];
 
-  function aplicar(campo: string, coluna: string, valorNovo: unknown, valorAtual: unknown) {
+  function aplicar<C extends keyof Database["public"]["Tables"]["chamados"]["Update"]>(
+    campo: string,
+    coluna: C,
+    valorNovo: Database["public"]["Tables"]["chamados"]["Update"][C],
+    valorAtual: unknown,
+  ) {
     if (valorNovo === undefined) return;
     const de = valorAtual == null ? null : String(valorAtual);
     const para = valorNovo == null ? null : String(valorNovo);
     if (de === para) return;
-    sets.push(`${coluna} = :${campo}`);
-    binds[campo] = valorNovo;
+    updates[coluna] = valorNovo;
     eventos.push({ campo, de, para });
   }
 
@@ -384,45 +473,37 @@ export async function atualizarChamado(
   // Marcos de tempo derivados da transição de status.
   if (mudancas.status && mudancas.status !== atual.status) {
     if (!atual.respondidoEm && mudancas.status !== "novo") {
-      sets.push(`respondido_em = :respondidoEm`);
-      binds["respondidoEm"] = agora;
+      updates["respondido_em"] = agoraIsoLocal;
     }
     if (mudancas.status === "resolvido" && !atual.resolvidoEm) {
-      sets.push(`resolvido_em = :resolvidoEm`);
-      binds["resolvidoEm"] = agora;
+      updates["resolvido_em"] = agoraIsoLocal;
     }
     if (mudancas.status === "fechado") {
-      sets.push(`fechado_em = :fechadoEm`);
-      binds["fechadoEm"] = agora;
+      updates["fechado_em"] = agoraIsoLocal;
       if (!atual.resolvidoEm) {
-        sets.push(`resolvido_em = :resolvidoEm2`);
-        binds["resolvidoEm2"] = agora;
+        updates["resolvido_em"] = agoraIsoLocal;
       }
     }
   }
 
   if (eventos.length === 0) return;
 
-  await emTransacao(async (tx) => {
-    await tx.executar(`UPDATE chamados SET ${sets.join(", ")} WHERE id = :id`, binds);
+  // Sem transações no PostgREST: update primeiro, histórico em seguida.
+  checar(await db.from("chamados").update(updates).eq("id", id));
 
-    for (const ev of eventos) {
-      await tx.executar(
-        `INSERT INTO chamado_historico
-           (id, chamado_id, autor_id, campo, valor_anterior, valor_novo, criado_em)
-         VALUES (:id, :chamadoId, :autorId, :campo, :de, :para, :criadoEm)`,
-        {
-          id: novoId(),
-          chamadoId: id,
-          autorId: ctx.id,
-          campo: ev.campo,
-          de: ev.de,
-          para: ev.para,
-          criadoEm: agora,
-        },
-      );
-    }
-  });
+  checar(
+    await db.from("chamado_historico").insert(
+      eventos.map((ev) => ({
+        id: novoId(),
+        chamado_id: id,
+        autor_id: ctx.id,
+        campo: ev.campo,
+        valor_anterior: ev.de,
+        valor_novo: ev.para,
+        criado_em: agoraIsoLocal,
+      })),
+    ),
+  );
 }
 
 export async function adicionarInteracao(
@@ -436,24 +517,32 @@ export async function adicionarInteracao(
     throw new ErroDominio("Somente a equipe de TI pode registrar notas internas");
   }
 
-  const existe = await consultarUm(`SELECT id FROM chamados WHERE id = :id`, { id: chamadoId });
+  const existeResp = await db.from("chamados").select("id").eq("id", chamadoId).maybeSingle();
+  const existe = checar(existeResp);
   if (!existe) throw new ErroDominio(`Chamado ${chamadoId} não encontrado`);
 
-  await emTransacao(async (tx) => {
-    const agora = new Date();
-    await tx.executar(
-      `INSERT INTO chamado_interacoes (id, chamado_id, autor_id, tipo, corpo, criado_em)
-       VALUES (:id, :chamadoId, :autorId, :tipo, :corpo, :criadoEm)`,
-      { id: novoId(), chamadoId, autorId: ctx.id, tipo, corpo: corpo.trim(), criadoEm: agora },
-    );
+  const agora = new Date();
+  const agoraIsoLocal = agora.toISOString();
 
-    // Primeira resposta pública marca o cumprimento do SLA de resposta.
-    if (tipo === "comentario") {
-      await tx.executar(
-        `UPDATE chamados SET respondido_em = :agora
-          WHERE id = :id AND respondido_em IS NULL`,
-        { id: chamadoId, agora },
-      );
-    }
-  });
+  checar(
+    await db.from("chamado_interacoes").insert({
+      id: novoId(),
+      chamado_id: chamadoId,
+      autor_id: ctx.id,
+      tipo,
+      corpo: corpo.trim(),
+      criado_em: agoraIsoLocal,
+    }),
+  );
+
+  // Primeira resposta pública marca o cumprimento do SLA de resposta.
+  if (tipo === "comentario") {
+    checar(
+      await db
+        .from("chamados")
+        .update({ respondido_em: agoraIsoLocal })
+        .eq("id", chamadoId)
+        .is("respondido_em", null),
+    );
+  }
 }

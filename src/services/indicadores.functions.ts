@@ -27,22 +27,42 @@ export const painelFn = createServerFn({ method: "GET" }).handler(async () => {
 
 /** Expediente e feriados vigentes, para a página de governança. */
 export const calendarioFn = createServerFn({ method: "GET" }).handler(async () => {
-  const { consultar } = await import("@/integrations/oracle/client.server");
+  const { db, linhas } = await import("@/integrations/db/client.server");
 
   const [expediente, feriados] = await Promise.all([
-    consultar<{ diaSemana: number; minutoIni: number; minutoFim: number }>(
-      `SELECT dia_semana, minuto_ini, minuto_fim
-         FROM expediente WHERE ativo = 1
-        ORDER BY dia_semana, minuto_ini`,
+    linhas<{ dia_semana: number; minuto_ini: number; minuto_fim: number }>(
+      await db
+        .from("expediente")
+        .select("dia_semana, minuto_ini, minuto_fim")
+        .eq("ativo", true)
+        .order("dia_semana")
+        .order("minuto_ini"),
     ),
-    consultar<{ dataFeriado: Date; descricao: string; recorrente: number }>(
-      `SELECT data_feriado, descricao, recorrente
-         FROM feriados WHERE ativo = 1
-        ORDER BY EXTRACT(MONTH FROM data_feriado), EXTRACT(DAY FROM data_feriado)`,
+    linhas<{ data_feriado: string; descricao: string; recorrente: boolean }>(
+      await db
+        .from("feriados")
+        .select("data_feriado, descricao, recorrente")
+        .eq("ativo", true)
+        .order("data_feriado"),
     ),
   ]);
 
-  return { expediente, feriados };
+  // A tela consome o formato antigo (camelCase, recorrente 0/1);
+  // a tradução fica aqui para não mexer na camada de apresentação.
+  return {
+    expediente: expediente.map((e) => ({
+      diaSemana: e.dia_semana,
+      minutoIni: e.minuto_ini,
+      minutoFim: e.minuto_fim,
+    })),
+    feriados: feriados
+      .map((f) => ({
+        dataFeriado: `${f.data_feriado.slice(0, 10)}T00:00:00`,
+        descricao: f.descricao,
+        recorrente: f.recorrente ? 1 : 0,
+      }))
+      .sort((a, b) => a.dataFeriado.slice(5).localeCompare(b.dataFeriado.slice(5))),
+  };
 });
 
 const Periodo = z.object({

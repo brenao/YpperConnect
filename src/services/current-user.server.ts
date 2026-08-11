@@ -1,4 +1,4 @@
-import { consultarUm } from "@/integrations/oracle/client.server";
+import { db, checar } from "@/integrations/db/client.server";
 
 /**
  * Contexto de identidade da aplicação.
@@ -28,22 +28,24 @@ interface LinhaUsuario {
   id: string;
   nome: string;
   email: string;
-  admin: number;
-  perfilId: string | null;
-  equipeId: string | null;
+  admin: boolean;
+  perfil_id: string | null;
+  equipe_id: string | null;
 }
 
 export async function getUsuarioAtual(): Promise<ContextoUsuario> {
-  const linha = await consultarUm<LinhaUsuario>(
-    `SELECT id, nome, email, admin, perfil_id, equipe_id
-       FROM usuarios
-      WHERE login = :login AND ativo = 1`,
-    { login: LOGIN_PROVISORIO },
+  const linha = checar<LinhaUsuario | null>(
+    await db
+      .from("usuarios")
+      .select("id, nome, email, admin, perfil_id, equipe_id")
+      .eq("login", LOGIN_PROVISORIO)
+      .eq("ativo", true)
+      .maybeSingle(),
   );
 
   if (!linha) {
     throw new Error(
-      `Usuário provisório '${LOGIN_PROVISORIO}' não encontrado. Rode db/oracle/05-seed-inicial.sql.`,
+      `Usuário provisório '${LOGIN_PROVISORIO}' não encontrado na tabela usuarios.`,
     );
   }
 
@@ -51,8 +53,8 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
     id: linha.id,
     nome: linha.nome,
     email: linha.email,
-    admin: linha.admin === 1,
-    perfilId: linha.perfilId,
-    equipeId: linha.equipeId,
+    admin: linha.admin,
+    perfilId: linha.perfil_id,
+    equipeId: linha.equipe_id,
   };
 }

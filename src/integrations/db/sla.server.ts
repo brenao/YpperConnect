@@ -1,4 +1,4 @@
-import { consultar } from "./client.server";
+import { db, linhas } from "./client.server";
 
 /**
  * Cálculo de prazo de SLA.
@@ -62,29 +62,32 @@ async function carregarCalendario(): Promise<Calendario> {
   if (cache && cache.expiraEm > agora) return cache.dados;
 
   const [expediente, feriados] = await Promise.all([
-    consultar<{ diaSemana: number; minutoIni: number; minutoFim: number }>(
-      `SELECT dia_semana, minuto_ini, minuto_fim
-         FROM expediente
-        WHERE ativo = 1
-        ORDER BY dia_semana, minuto_ini`,
+    linhas(
+      await db
+        .from("expediente")
+        .select("dia_semana, minuto_ini, minuto_fim")
+        .eq("ativo", true)
+        .order("dia_semana")
+        .order("minuto_ini"),
     ),
-    consultar<{ dataFeriado: Date; recorrente: number }>(
-      `SELECT data_feriado, recorrente FROM feriados WHERE ativo = 1`,
-    ),
+    linhas(await db.from("feriados").select("data_feriado, recorrente").eq("ativo", true)),
   ]);
 
   const faixasPorDia = new Map<number, Faixa[]>();
   for (const e of expediente) {
-    const lista = faixasPorDia.get(e.diaSemana) ?? [];
-    lista.push({ ini: e.minutoIni, fim: e.minutoFim });
-    faixasPorDia.set(e.diaSemana, lista);
+    const lista = faixasPorDia.get(e.dia_semana) ?? [];
+    lista.push({ ini: e.minuto_ini, fim: e.minuto_fim });
+    faixasPorDia.set(e.dia_semana, lista);
   }
 
   const recorrentes = new Set<string>();
   const especificos = new Set<string>();
   for (const f of feriados) {
-    const d = new Date(f.dataFeriado);
-    if (f.recorrente === 1) recorrentes.add(chaveMesDia(d));
+    // Coluna DATE volta como 'yyyy-mm-dd'; montar a data no fuso local
+    // evita o feriado "andar" um dia por causa de UTC.
+    const [ano, mes, dia] = f.data_feriado.slice(0, 10).split("-").map(Number);
+    const d = new Date(ano ?? 1970, (mes ?? 1) - 1, dia ?? 1);
+    if (f.recorrente) recorrentes.add(chaveMesDia(d));
     else especificos.add(chaveData(d));
   }
 

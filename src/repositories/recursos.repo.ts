@@ -1,5 +1,5 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { comoDataPura, checar, db, linhas } from "@/integrations/db/client.server";
+import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
 /**
@@ -30,19 +30,37 @@ export function capacidadeProjeto(r: Recurso): number {
   return Math.round(((r.horasDia * r.disponibilidadeProjetos) / 100) * 100) / 100;
 }
 
-interface Linha extends Omit<Recurso, "ativo"> {
-  ativo: number;
+interface LinhaRecurso {
+  id: string;
+  usuario_id: string | null;
+  nome: string;
+  papel: string | null;
+  equipe_id: string | null;
+  horas_dia: number;
+  disponibilidade_projetos: number;
+  ativo: boolean;
+  usuarios: { nome: string } | null;
+  equipes: { nome: string } | null;
 }
 
 const SELECT_BASE = `
-  SELECT r.id, r.usuario_id, u.nome AS usuario_nome, r.nome, r.papel,
-         r.equipe_id, e.nome AS equipe_nome,
-         r.horas_dia, r.disponibilidade_projetos, r.ativo
-    FROM recursos r
-    LEFT JOIN usuarios u ON u.id = r.usuario_id
-    LEFT JOIN equipes e ON e.id = r.equipe_id`;
+  id, usuario_id, nome, papel, equipe_id, horas_dia, disponibilidade_projetos, ativo,
+  usuarios ( nome ),
+  equipes ( nome )
+`;
 
-const mapear = (l: Linha): Recurso => ({ ...l, ativo: paraBool(l.ativo) });
+const mapear = (l: LinhaRecurso): Recurso => ({
+  id: l.id,
+  usuarioId: l.usuario_id,
+  usuarioNome: l.usuarios?.nome ?? null,
+  nome: l.nome,
+  papel: l.papel,
+  equipeId: l.equipe_id,
+  equipeNome: l.equipes?.nome ?? null,
+  horasDia: l.horas_dia,
+  disponibilidadeProjetos: l.disponibilidade_projetos,
+  ativo: l.ativo,
+});
 
 function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
   if (!ctx.admin && ctx.equipeId === null) {
@@ -51,15 +69,16 @@ function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
 }
 
 export async function listarRecursos(apenasAtivos = true): Promise<Recurso[]> {
-  const linhas = await consultar<Linha>(
-    `${SELECT_BASE} ${apenasAtivos ? "WHERE r.ativo = 1" : ""} ORDER BY r.nome`,
-  );
-  return linhas.map(mapear);
+  let query = db.from("recursos").select(SELECT_BASE).order("nome");
+  if (apenasAtivos) query = query.eq("ativo", true);
+  const l = linhas(await query);
+  return (l as unknown as LinhaRecurso[]).map(mapear);
 }
 
 export async function buscarRecurso(id: string): Promise<Recurso | null> {
-  const l = await consultarUm<Linha>(`${SELECT_BASE} WHERE r.id = :id`, { id });
-  return l ? mapear(l) : null;
+  const r = await db.from("recursos").select(SELECT_BASE).eq("id", id).maybeSingle();
+  const l = checar(r);
+  return l ? mapear(l as unknown as LinhaRecurso) : null;
 }
 
 export interface DadosRecurso {
@@ -86,22 +105,17 @@ export async function criarRecurso(ctx: ContextoUsuario, d: DadosRecurso): Promi
   validar(d);
 
   const id = crypto.randomUUID();
-  await executar(
-    `INSERT INTO recursos
-       (id, usuario_id, nome, papel, equipe_id, horas_dia,
-        disponibilidade_projetos, ativo)
-     VALUES
-       (:id, :usuarioId, :nome, :papel, :equipeId, :horasDia,
-        :disponibilidade, 1)`,
-    {
+  checar(
+    await db.from("recursos").insert({
       id,
-      usuarioId: d.usuarioId ?? null,
+      usuario_id: d.usuarioId ?? null,
       nome: d.nome.trim(),
       papel: d.papel?.trim() ?? null,
-      equipeId: d.equipeId ?? null,
-      horasDia: d.horasDia,
-      disponibilidade: d.disponibilidadeProjetos,
-    },
+      equipe_id: d.equipeId ?? null,
+      horas_dia: d.horasDia,
+      disponibilidade_projetos: d.disponibilidadeProjetos,
+      ativo: true,
+    }),
   );
   return id;
 }
@@ -114,26 +128,22 @@ export async function atualizarRecurso(
   exigirAdmin(ctx, "alterar recursos");
   validar(d);
 
-  const n = await executar(
-    `UPDATE recursos
-        SET usuario_id = :usuarioId,
-            nome = :nome,
-            papel = :papel,
-            equipe_id = :equipeId,
-            horas_dia = :horasDia,
-            disponibilidade_projetos = :disponibilidade
-      WHERE id = :id`,
-    {
-      id,
-      usuarioId: d.usuarioId ?? null,
-      nome: d.nome.trim(),
-      papel: d.papel?.trim() ?? null,
-      equipeId: d.equipeId ?? null,
-      horasDia: d.horasDia,
-      disponibilidade: d.disponibilidadeProjetos,
-    },
+  const atual = await buscarRecurso(id);
+  if (!atual) throw new ErroDominio(`Recurso ${id} não encontrado`);
+
+  checar(
+    await db
+      .from("recursos")
+      .update({
+        usuario_id: d.usuarioId ?? null,
+        nome: d.nome.trim(),
+        papel: d.papel?.trim() ?? null,
+        equipe_id: d.equipeId ?? null,
+        horas_dia: d.horasDia,
+        disponibilidade_projetos: d.disponibilidadeProjetos,
+      })
+      .eq("id", id),
   );
-  if (n === 0) throw new ErroDominio(`Recurso ${id} não encontrado`);
 }
 
 /**
@@ -147,10 +157,7 @@ export async function definirRecursoAtivo(
   ativo: boolean,
 ): Promise<void> {
   exigirAdmin(ctx, "alterar recursos");
-  await executar(`UPDATE recursos SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
+  checar(await db.from("recursos").update({ ativo }).eq("id", id));
 }
 
 export interface CargaRecurso {
@@ -160,25 +167,70 @@ export interface CargaRecurso {
   projetosAtivos: number;
 }
 
+interface LinhaTarefaResponsavel {
+  recurso_id: string;
+  recursos: { horas_dia: number; disponibilidade_projetos: number } | null;
+  projeto_tarefas: {
+    id: string;
+    quadro: string;
+    inicio: string;
+    fim: string;
+    alocacao_pct: number | null;
+    projeto_id: string;
+    projetos: { status: string } | null;
+  } | null;
+}
+
 /**
  * Carga por recurso, vinda das tarefas de projeto em andamento.
+ *
+ * O Oracle fazia isso com SUM/GROUP BY e
+ * `TRUNC(SYSDATE) BETWEEN t.inicio AND t.fim` no SQL. O PostgREST não
+ * agrega no banco: buscamos os responsáveis de tarefas em andamento
+ * hoje (com tarefa, projeto e recurso via embeds) e calculamos a
+ * alocação aqui em TypeScript.
  *
  * Enquanto a migração de projetos não acontece, a tabela está vazia e
  * todos aparecem com carga zero — número correto, não falha.
  */
 export async function cargaPorRecurso(): Promise<CargaRecurso[]> {
-  return consultar<CargaRecurso>(
-    `SELECT tr.recurso_id,
-            SUM(NVL(t.alocacao_pct, 100) / 100 * r.horas_dia
-                * r.disponibilidade_projetos / 100) AS horas_comprometidas,
-            COUNT(DISTINCT t.projeto_id) AS projetos_ativos
-       FROM tarefa_responsaveis tr
-       JOIN projeto_tarefas t ON t.id = tr.tarefa_id
-       JOIN projetos p ON p.id = t.projeto_id
-       JOIN recursos r ON r.id = tr.recurso_id
-      WHERE t.quadro <> 'done'
-        AND p.status IN ('planejamento','execucao')
-        AND TRUNC(SYSDATE) BETWEEN t.inicio AND t.fim
-      GROUP BY tr.recurso_id`,
+  const hoje = comoDataPura(new Date());
+
+  const l = linhas(
+    await db
+      .from("tarefa_responsaveis")
+      .select(
+        `recurso_id,
+         recursos ( horas_dia, disponibilidade_projetos ),
+         projeto_tarefas!inner (
+           id, quadro, inicio, fim, alocacao_pct, projeto_id,
+           projetos!inner ( status )
+         )`,
+      )
+      .neq("projeto_tarefas.quadro", "done")
+      .in("projeto_tarefas.projetos.status", ["planejamento", "execucao"])
+      .lte("projeto_tarefas.inicio", hoje)
+      .gte("projeto_tarefas.fim", hoje),
   );
+
+  const mapa = new Map<string, { horas: number; projetos: Set<string> }>();
+  for (const linha of l as unknown as LinhaTarefaResponsavel[]) {
+    const tarefa = linha.projeto_tarefas;
+    const recurso = linha.recursos;
+    if (!tarefa || !recurso) continue;
+
+    const alocacaoPct = tarefa.alocacao_pct ?? 100;
+    const horas = (alocacaoPct / 100) * recurso.horas_dia * (recurso.disponibilidade_projetos / 100);
+
+    const entrada = mapa.get(linha.recurso_id) ?? { horas: 0, projetos: new Set<string>() };
+    entrada.horas += horas;
+    entrada.projetos.add(tarefa.projeto_id);
+    mapa.set(linha.recurso_id, entrada);
+  }
+
+  return Array.from(mapa.entries()).map(([recursoId, v]) => ({
+    recursoId,
+    horasComprometidas: v.horas,
+    projetosAtivos: v.projetos.size,
+  }));
 }

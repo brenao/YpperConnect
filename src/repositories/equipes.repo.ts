@@ -1,5 +1,5 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { checar, db, linhas } from "@/integrations/db/client.server";
+import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
 export interface Equipe {
@@ -8,35 +8,27 @@ export interface Equipe {
   ativo: boolean;
 }
 
-interface Linha {
-  id: string;
-  nome: string;
-  ativo: number;
-}
-
-const mapear = (l: Linha): Equipe => ({ id: l.id, nome: l.nome, ativo: paraBool(l.ativo) });
-
 export async function listarEquipes(apenasAtivas = true): Promise<Equipe[]> {
-  const sql = apenasAtivas
-    ? `SELECT id, nome, ativo FROM equipes WHERE ativo = 1 ORDER BY nome`
-    : `SELECT id, nome, ativo FROM equipes ORDER BY nome`;
-  return (await consultar<Linha>(sql)).map(mapear);
+  let query = db.from("equipes").select("id, nome, ativo").order("nome");
+  if (apenasAtivas) query = query.eq("ativo", true);
+  return linhas(await query);
 }
 
 export async function buscarEquipe(id: string): Promise<Equipe | null> {
-  const l = await consultarUm<Linha>(`SELECT id, nome, ativo FROM equipes WHERE id = :id`, { id });
-  return l ? mapear(l) : null;
+  const r = await db.from("equipes").select("id, nome, ativo").eq("id", id).maybeSingle();
+  return checar(r);
 }
 
 export async function criarEquipe(ctx: ContextoUsuario, dados: { id: string; nome: string }) {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem criar equipes");
-  await executar(`INSERT INTO equipes (id, nome, ativo) VALUES (:id, :nome, 1)`, dados);
+  checar(await db.from("equipes").insert({ id: dados.id, nome: dados.nome, ativo: true }));
 }
 
 export async function renomearEquipe(ctx: ContextoUsuario, id: string, nome: string) {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem alterar equipes");
-  const n = await executar(`UPDATE equipes SET nome = :nome WHERE id = :id`, { id, nome });
-  if (n === 0) throw new ErroDominio(`Equipe ${id} não encontrada`);
+  const atual = await buscarEquipe(id);
+  if (!atual) throw new ErroDominio(`Equipe ${id} não encontrada`);
+  checar(await db.from("equipes").update({ nome }).eq("id", id));
 }
 
 /**
@@ -45,5 +37,5 @@ export async function renomearEquipe(ctx: ContextoUsuario, id: string, nome: str
  */
 export async function definirEquipeAtiva(ctx: ContextoUsuario, id: string, ativo: boolean) {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem alterar equipes");
-  await executar(`UPDATE equipes SET ativo = :ativo WHERE id = :id`, { id, ativo: deBool(ativo) });
+  checar(await db.from("equipes").update({ ativo }).eq("id", id));
 }

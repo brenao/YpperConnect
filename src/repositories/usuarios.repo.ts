@@ -1,5 +1,5 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { checar, db, linhas } from "@/integrations/db/client.server";
+import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
 export interface Usuario {
@@ -16,64 +16,68 @@ export interface Usuario {
   ativo: boolean;
 }
 
-interface Linha {
+interface LinhaUsuario {
   id: string;
   nome: string;
   email: string;
   login: string;
   departamento: string | null;
-  equipeId: string | null;
-  equipeNome: string | null;
-  perfilId: string | null;
-  origem: "ad" | "manual";
-  admin: number;
-  ativo: number;
+  equipe_id: string | null;
+  perfil_id: string | null;
+  origem: string;
+  admin: boolean;
+  ativo: boolean;
+  equipes: { nome: string } | null;
 }
 
 const SELECT_BASE = `
-  SELECT u.id, u.nome, u.email, u.login, u.departamento,
-         u.equipe_id, e.nome AS equipe_nome,
-         u.perfil_id, u.origem, u.admin, u.ativo
-    FROM usuarios u
-    LEFT JOIN equipes e ON e.id = u.equipe_id`;
+  id, nome, email, login, departamento, equipe_id, perfil_id, origem, admin, ativo,
+  equipes ( nome )
+`;
 
-const mapear = (l: Linha): Usuario => ({
+const mapear = (l: LinhaUsuario): Usuario => ({
   id: l.id,
   nome: l.nome,
   email: l.email,
   login: l.login,
   departamento: l.departamento,
-  equipeId: l.equipeId,
-  equipeNome: l.equipeNome,
-  perfilId: l.perfilId,
-  origem: l.origem,
-  admin: paraBool(l.admin),
-  ativo: paraBool(l.ativo),
+  equipeId: l.equipe_id,
+  equipeNome: l.equipes?.nome ?? null,
+  perfilId: l.perfil_id,
+  origem: l.origem === "ad" ? "ad" : "manual",
+  admin: l.admin,
+  ativo: l.ativo,
 });
 
 export async function listarUsuarios(apenasAtivos = true): Promise<Usuario[]> {
-  const sql = apenasAtivos
-    ? `${SELECT_BASE} WHERE u.ativo = 1 ORDER BY u.nome`
-    : `${SELECT_BASE} ORDER BY u.nome`;
-  return (await consultar<Linha>(sql)).map(mapear);
+  let query = db.from("usuarios").select(SELECT_BASE).order("nome");
+  if (apenasAtivos) query = query.eq("ativo", true);
+  const l = linhas(await query);
+  return (l as unknown as LinhaUsuario[]).map(mapear);
 }
 
 export async function buscarUsuario(id: string): Promise<Usuario | null> {
-  const l = await consultarUm<Linha>(`${SELECT_BASE} WHERE u.id = :id`, { id });
-  return l ? mapear(l) : null;
+  const r = await db.from("usuarios").select(SELECT_BASE).eq("id", id).maybeSingle();
+  const l = checar(r);
+  return l ? mapear(l as unknown as LinhaUsuario) : null;
 }
 
 /** Usado pela futura sincronização com o AD. */
 export async function buscarUsuarioPorLogin(login: string): Promise<Usuario | null> {
-  const l = await consultarUm<Linha>(`${SELECT_BASE} WHERE u.login = :login`, { login });
-  return l ? mapear(l) : null;
+  const r = await db.from("usuarios").select(SELECT_BASE).eq("login", login).maybeSingle();
+  const l = checar(r);
+  return l ? mapear(l as unknown as LinhaUsuario) : null;
 }
 
 export async function listarAtendentes(): Promise<Usuario[]> {
-  const l = await consultar<Linha>(
-    `${SELECT_BASE} WHERE u.ativo = 1 AND u.equipe_id IS NOT NULL ORDER BY u.nome`,
-  );
-  return l.map(mapear);
+  const r = await db
+    .from("usuarios")
+    .select(SELECT_BASE)
+    .eq("ativo", true)
+    .not("equipe_id", "is", null)
+    .order("nome");
+  const l = linhas(r);
+  return (l as unknown as LinhaUsuario[]).map(mapear);
 }
 
 export interface DadosUsuario {
@@ -107,23 +111,22 @@ export interface AlteracaoUsuario {
 export async function criarUsuario(ctx: ContextoUsuario, d: DadosUsuario): Promise<void> {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem criar usuários");
 
-  await executar(
-    `INSERT INTO usuarios
-       (id, nome, email, login, departamento, equipe_id, perfil_id,
-        origem, admin, ativo, criado_em, atualizado_em)
-     VALUES
-       (:id, :nome, :email, :login, :departamento, :equipeId, :perfilId,
-        'manual', :admin, 1, SYSTIMESTAMP, SYSTIMESTAMP)`,
-    {
+  const agoraIso = new Date().toISOString();
+  checar(
+    await db.from("usuarios").insert({
       id: d.id,
       nome: d.nome,
       email: d.email,
       login: d.login,
       departamento: d.departamento ?? null,
-      equipeId: d.equipeId ?? null,
-      perfilId: d.perfilId ?? null,
-      admin: deBool(d.admin),
-    },
+      equipe_id: d.equipeId ?? null,
+      perfil_id: d.perfilId ?? null,
+      origem: "manual",
+      admin: d.admin ?? false,
+      ativo: true,
+      criado_em: agoraIso,
+      atualizado_em: agoraIso,
+    }),
   );
 }
 
@@ -134,27 +137,23 @@ export async function atualizarUsuario(
 ): Promise<void> {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem alterar usuários");
 
-  const n = await executar(
-    `UPDATE usuarios
-        SET nome = NVL(:nome, nome),
-            email = NVL(:email, email),
-            departamento = :departamento,
-            equipe_id = :equipeId,
-            perfil_id = :perfilId,
-            admin = NVL(:admin, admin),
-            atualizado_em = SYSTIMESTAMP
-      WHERE id = :id`,
-    {
-      id,
-      nome: d.nome ?? null,
-      email: d.email ?? null,
-      departamento: d.departamento ?? null,
-      equipeId: d.equipeId ?? null,
-      perfilId: d.perfilId ?? null,
-      admin: d.admin === undefined ? null : deBool(d.admin),
-    },
+  const atual = await buscarUsuario(id);
+  if (!atual) throw new ErroDominio(`Usuário ${id} não encontrado`);
+
+  checar(
+    await db
+      .from("usuarios")
+      .update({
+        nome: d.nome ?? atual.nome,
+        email: d.email ?? atual.email,
+        departamento: d.departamento ?? null,
+        equipe_id: d.equipeId ?? null,
+        perfil_id: d.perfilId ?? null,
+        admin: d.admin ?? atual.admin,
+        atualizado_em: new Date().toISOString(),
+      })
+      .eq("id", id),
   );
-  if (n === 0) throw new ErroDominio(`Usuário ${id} não encontrado`);
 }
 
 /**
@@ -165,8 +164,10 @@ export async function definirUsuarioAtivo(ctx: ContextoUsuario, id: string, ativ
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem alterar usuários");
   if (id === ctx.id && !ativo) throw new ErroDominio("Você não pode desativar a si mesmo");
 
-  await executar(
-    `UPDATE usuarios SET ativo = :ativo, atualizado_em = SYSTIMESTAMP WHERE id = :id`,
-    { id, ativo: deBool(ativo) },
+  checar(
+    await db
+      .from("usuarios")
+      .update({ ativo, atualizado_em: new Date().toISOString() })
+      .eq("id", id),
   );
 }
