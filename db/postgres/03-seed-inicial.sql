@@ -1,3 +1,16 @@
+-- Seed minimo para a aplicacao subir (Postgres)
+--
+-- APLICAR:
+--   docker exec -i postgres-rosset psql -U postgres -d ypper \
+--     -v ON_ERROR_STOP=1 < 03-seed-inicial.sql
+--
+-- O BEGIN/COMMIT abaixo faz o arquivo ser tudo-ou-nada: se uma linha
+-- falhar, nada e gravado. Sem isso o seed ficaria pela metade e a
+-- segunda tentativa esbarraria em chave duplicada do que ja entrou.
+
+\set ON_ERROR_STOP on
+BEGIN;
+
 -- =====================================================================
 -- Seed minimo: so o necessario para a aplicacao subir.
 -- Sem dados de demonstracao.
@@ -141,6 +154,7 @@ VALUES
    'Tecnologia da Informação',          -- <-- seu departamento
    'EQP-SIS',
    'PRF-ADMIN',
-   'manual', 1, 1, SYSTIMESTAMP, SYSTIMESTAMP);
+   'manual', 1, 1, LOCALTIMESTAMP, LOCALTIMESTAMP);
+
 
 COMMIT;

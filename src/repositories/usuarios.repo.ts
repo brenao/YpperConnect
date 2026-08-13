@@ -1,4 +1,4 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
+import { consultar, consultarUm, executar } from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -113,7 +113,7 @@ export async function criarUsuario(ctx: ContextoUsuario, d: DadosUsuario): Promi
         origem, admin, ativo, criado_em, atualizado_em)
      VALUES
        (:id, :nome, :email, :login, :departamento, :equipeId, :perfilId,
-        'manual', :admin, 1, SYSTIMESTAMP, SYSTIMESTAMP)`,
+        'manual', :admin, 1, LOCALTIMESTAMP, LOCALTIMESTAMP)`,
     {
       id: d.id,
       nome: d.nome,
@@ -136,13 +136,13 @@ export async function atualizarUsuario(
 
   const n = await executar(
     `UPDATE usuarios
-        SET nome = NVL(:nome, nome),
-            email = NVL(:email, email),
+        SET nome = COALESCE(:nome, nome),
+            email = COALESCE(:email, email),
             departamento = :departamento,
             equipe_id = :equipeId,
             perfil_id = :perfilId,
-            admin = NVL(:admin, admin),
-            atualizado_em = SYSTIMESTAMP
+            admin = COALESCE(:admin, admin),
+            atualizado_em = LOCALTIMESTAMP
       WHERE id = :id`,
     {
       id,
@@ -166,7 +166,7 @@ export async function definirUsuarioAtivo(ctx: ContextoUsuario, id: string, ativ
   if (id === ctx.id && !ativo) throw new ErroDominio("Você não pode desativar a si mesmo");
 
   await executar(
-    `UPDATE usuarios SET ativo = :ativo, atualizado_em = SYSTIMESTAMP WHERE id = :id`,
+    `UPDATE usuarios SET ativo = :ativo, atualizado_em = LOCALTIMESTAMP WHERE id = :id`,
     { id, ativo: deBool(ativo) },
   );
 }

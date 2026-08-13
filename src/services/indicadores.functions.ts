@@ -27,7 +27,7 @@ export const painelFn = createServerFn({ method: "GET" }).handler(async () => {
 
 /** Expediente e feriados vigentes, para a página de governança. */
 export const calendarioFn = createServerFn({ method: "GET" }).handler(async () => {
-  const { consultar } = await import("@/integrations/oracle/client.server");
+  const { consultar } = await import("@/integrations/postgres/client.server");
 
   const [expediente, feriados] = await Promise.all([
     consultar<{ diaSemana: number; minutoIni: number; minutoFim: number }>(

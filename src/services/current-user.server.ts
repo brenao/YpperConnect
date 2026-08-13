@@ -1,4 +1,4 @@
-import { consultarUm } from "@/integrations/oracle/client.server";
+import { consultarUm } from "@/integrations/postgres/client.server";
 
 /**
  * Contexto de identidade da aplicação.
@@ -43,7 +43,7 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
 
   if (!linha) {
     throw new Error(
-      `Usuário provisório '${LOGIN_PROVISORIO}' não encontrado. Rode db/oracle/05-seed-inicial.sql.`,
+      `Usuário provisório '${LOGIN_PROVISORIO}' não encontrado. Rode db/postgres/03-seed-inicial.sql.`,
     );
   }
 

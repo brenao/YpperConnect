@@ -5,7 +5,7 @@ import { z } from "zod";
  * Server functions do portfólio de projetos.
  *
  * Os repositórios são importados dinamicamente dentro do handler para
- * o oracledb nunca entrar no bundle do navegador.
+ * o driver pg nunca entrar no bundle do navegador.
  */
 
 const STATUS = ["planejamento", "execucao", "paralisado", "cancelado", "concluido"] as const;

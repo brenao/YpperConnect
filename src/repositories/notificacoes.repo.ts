@@ -1,4 +1,4 @@
-import { consultar, executar } from "@/integrations/oracle/client.server";
+import { consultar, executar } from "@/integrations/postgres/client.server";
 
 /**
  * Fila de notificações por e-mail.
@@ -71,7 +71,7 @@ export async function enfileirar(n: NovaNotificacao): Promise<string> {
         referencia_tipo, referencia_id, status, tentativas, criado_em)
      VALUES
        (:id, :tipo, :destinatarioId, :destinatarioEmail, :assunto, :corpo,
-        :referenciaTipo, :referenciaId, 'pendente', 0, SYSTIMESTAMP)`,
+        :referenciaTipo, :referenciaId, 'pendente', 0, LOCALTIMESTAMP)`,
     {
       id,
       tipo: n.tipo,
@@ -107,7 +107,7 @@ export async function listarPendentes(limite = 25): Promise<Notificacao[]> {
 export async function marcarEnviada(id: string): Promise<void> {
   await executar(
     `UPDATE notificacoes
-        SET status = 'enviado', enviado_em = SYSTIMESTAMP,
+        SET status = 'enviado', enviado_em = LOCALTIMESTAMP,
             tentativas = tentativas + 1, erro = NULL
       WHERE id = :id`,
     { id },

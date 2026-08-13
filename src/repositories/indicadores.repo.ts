@@ -1,4 +1,4 @@
-import { consultar, consultarUm } from "@/integrations/oracle/client.server";
+import { consultar, consultarUm } from "@/integrations/postgres/client.server";
 
 /**
  * Indicadores agregados do painel.
@@ -52,7 +52,7 @@ export async function resumoPainel(): Promise<ResumoPainel> {
       `SELECT COUNT(*) AS total,
               COUNT(CASE WHEN ${ABERTOS} THEN 1 END) AS abertos,
               COUNT(CASE WHEN ${ABERTOS} AND c.prioridade = 'P1' THEN 1 END) AS criticos,
-              COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < SYSTIMESTAMP THEN 1 END) AS vencidos,
+              COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < LOCALTIMESTAMP THEN 1 END) AS vencidos,
               COUNT(CASE WHEN c.problema_vinculado_id IS NOT NULL THEN 1 END) AS com_problema
          FROM chamados c`,
     ),
@@ -102,22 +102,26 @@ export async function totalPorTipo(): Promise<ContagemTipo[]> {
 }
 
 /**
- * Volume dos últimos 7 dias. O CONNECT BY gera a série de datas para que
+ * Volume dos últimos 7 dias. A série de datas é gerada em SQL para que
  * dias sem chamado apareçam como zero — sem isso o gráfico "pula" dias e
  * dá impressão errada de continuidade.
+ *
+ * generate_series faz aqui o papel do CONNECT BY LEVEL do Oracle:
+ * devolve uma linha por dia. CURRENT_DATE respeita o fuso da sessão
+ * (America/Sao_Paulo), então "hoje" é hoje no Brasil.
  */
 export async function volumeUltimos7Dias(): Promise<VolumeDia[]> {
   return consultar<VolumeDia>(
     `WITH dias AS (
-       SELECT TRUNC(SYSDATE) - LEVEL + 1 AS d
-         FROM dual CONNECT BY LEVEL <= 7
+       SELECT CURRENT_DATE - 6 + g AS d
+         FROM generate_series(0, 6) AS g
      )
      SELECT TO_CHAR(dias.d, 'DD/MM') AS dia,
             COUNT(CASE WHEN c.tipo = 'incidente' THEN 1 END) AS incidentes,
             COUNT(CASE WHEN c.tipo = 'requisicao' THEN 1 END) AS requisicoes,
             COUNT(CASE WHEN c.tipo NOT IN ('incidente','requisicao') THEN 1 END) AS outros
        FROM dias
-       LEFT JOIN chamados c ON TRUNC(c.criado_em) = dias.d
+       LEFT JOIN chamados c ON c.criado_em::date = dias.d
       GROUP BY dias.d
       ORDER BY dias.d`,
   );
@@ -238,12 +242,18 @@ export async function metricasChamados(p: PeriodoFiltro = {}): Promise<MetricasC
     `SELECT COUNT(*) AS criados,
             COUNT(CASE WHEN c.status IN ('resolvido','fechado') THEN 1 END) AS atendidos,
             COUNT(CASE WHEN ${ABERTOS} THEN 1 END) AS backlog,
-            COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < SYSTIMESTAMP THEN 1 END) AS vencidos,
+            COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < LOCALTIMESTAMP THEN 1 END) AS vencidos,
             COUNT(CASE WHEN c.respondido_em IS NOT NULL THEN 1 END) AS com_retorno,
             COUNT(CASE WHEN c.resolvido_em IS NOT NULL
                         AND c.resolvido_em <= c.prazo_sla THEN 1 END) AS dentro_sla,
+            -- No Oracle, DATE menos DATE dava dias com fracao, e o *24
+            -- virava horas. No Postgres, date menos date da dias
+            -- INTEIROS: todo chamado resolvido no mesmo dia entraria
+            -- como 0 hora e a media desabaria, sem erro.
+            -- timestamp menos timestamp da um interval; EXTRACT(EPOCH)
+            -- transforma em segundos, e /3600 em horas com fracao.
             AVG(CASE WHEN c.resolvido_em IS NOT NULL
-                     THEN (CAST(c.resolvido_em AS DATE) - CAST(c.criado_em AS DATE)) * 24 END)
+                     THEN EXTRACT(EPOCH FROM (c.resolvido_em - c.criado_em)) / 3600 END)
               AS media_horas
        FROM chamados c
       WHERE 1 = 1 ${sql}`,
@@ -276,14 +286,15 @@ export async function serieCriadosAtendidos(p: PeriodoFiltro = {}): Promise<Seri
 
   return consultar<SerieDia>(
     `WITH dias AS (
-       SELECT TRUNC(:de) + LEVEL - 1 AS d FROM dual CONNECT BY LEVEL <= :qtd
+       SELECT :de::date + g AS d
+         FROM generate_series(0, :qtd::int - 1) AS g
      )
      SELECT TO_CHAR(dias.d, 'DD/MM') AS dia,
             COUNT(cr.id) AS criados,
             COUNT(at.id) AS atendidos
        FROM dias
-       LEFT JOIN chamados cr ON TRUNC(cr.criado_em) = dias.d
-       LEFT JOIN chamados at ON TRUNC(at.resolvido_em) = dias.d
+       LEFT JOIN chamados cr ON cr.criado_em::date = dias.d
+       LEFT JOIN chamados at ON at.resolvido_em::date = dias.d
       GROUP BY dias.d
       ORDER BY dias.d`,
     { de, qtd: dias },
@@ -310,7 +321,7 @@ export const chamadosPorPrioridade = (p: PeriodoFiltro = {}) => agrupar("c.prior
 export const chamadosPorTipo = (p: PeriodoFiltro = {}) => agrupar("c.tipo", p);
 export const chamadosPorStatus = (p: PeriodoFiltro = {}) => agrupar("c.status", p);
 export const chamadosPorEquipe = (p: PeriodoFiltro = {}) =>
-  agrupar("NVL(eq.nome, 'Sem equipe')", p);
+  agrupar("COALESCE(eq.nome, 'Sem equipe')", p);
 
 export interface MetricasProjetos {
   total: number;
@@ -329,7 +340,7 @@ export async function metricasProjetos(): Promise<MetricasProjetos> {
             COUNT(CASE WHEN status IN ('paralisado','cancelado') THEN 1 END) AS parados,
             COUNT(CASE WHEN status = 'concluido' THEN 1 END) AS concluidos,
             COUNT(CASE WHEN status IN ('execucao','planejamento')
-                        AND fim < TRUNC(SYSDATE) THEN 1 END) AS atrasados
+                        AND fim < CURRENT_DATE THEN 1 END) AS atrasados
        FROM projetos`,
   );
   return (

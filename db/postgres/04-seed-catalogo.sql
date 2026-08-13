@@ -1,3 +1,16 @@
+-- Catalogo inicial de servicos e sistemas (Postgres)
+--
+-- APLICAR:
+--   docker exec -i postgres-rosset psql -U postgres -d ypper \
+--     -v ON_ERROR_STOP=1 < 04-seed-catalogo.sql
+--
+-- O BEGIN/COMMIT abaixo faz o arquivo ser tudo-ou-nada: se uma linha
+-- falhar, nada e gravado. Sem isso o seed ficaria pela metade e a
+-- segunda tentativa esbarraria em chave duplicada do que ja entrou.
+
+\set ON_ERROR_STOP on
+BEGIN;
+
 -- =====================================================================
 -- Catalogo inicial de servicos e sistemas.
 --
@@ -11,27 +24,27 @@
 INSERT INTO servicos (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, criado_em, atualizado_em)
 VALUES ('SVC-01', 'Acesso a sistemas', 'CAT-SVC-01',
         'Criação, alteração e revogação de acessos a sistemas corporativos.',
-        'requisicao', 24, 'EQP-SDK', SYSTIMESTAMP, SYSTIMESTAMP);
+        'requisicao', 24, 'EQP-SDK', LOCALTIMESTAMP, LOCALTIMESTAMP);
 INSERT INTO servicos (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, criado_em, atualizado_em)
 VALUES ('SVC-02', 'Estação de trabalho', 'CAT-SVC-02',
         'Instalação, configuração e manutenção de computadores e periféricos.',
-        'requisicao', 24, 'EQP-SDK', SYSTIMESTAMP, SYSTIMESTAMP);
+        'requisicao', 24, 'EQP-SDK', LOCALTIMESTAMP, LOCALTIMESTAMP);
 INSERT INTO servicos (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, criado_em, atualizado_em)
 VALUES ('SVC-03', 'Rede e conectividade', 'CAT-SVC-02',
         'Links, switches, Wi-Fi e conectividade entre unidades.',
-        'incidente', 8, 'EQP-INF', SYSTIMESTAMP, SYSTIMESTAMP);
+        'incidente', 8, 'EQP-INF', LOCALTIMESTAMP, LOCALTIMESTAMP);
 INSERT INTO servicos (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, criado_em, atualizado_em)
 VALUES ('SVC-04', 'Sistemas corporativos', 'CAT-SVC-03',
         'Suporte funcional e técnico aos sistemas de negócio.',
-        'incidente', 4, 'EQP-SIS', SYSTIMESTAMP, SYSTIMESTAMP);
+        'incidente', 4, 'EQP-SIS', LOCALTIMESTAMP, LOCALTIMESTAMP);
 INSERT INTO servicos (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, criado_em, atualizado_em)
 VALUES ('SVC-05', 'E-mail e colaboração', 'CAT-SVC-03',
         'Caixas postais, listas de distribuição e ferramentas de colaboração.',
-        'requisicao', 24, 'EQP-SDK', SYSTIMESTAMP, SYSTIMESTAMP);
+        'requisicao', 24, 'EQP-SDK', LOCALTIMESTAMP, LOCALTIMESTAMP);
 INSERT INTO servicos (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, criado_em, atualizado_em)
 VALUES ('SVC-06', 'Relatórios e indicadores', 'CAT-SVC-03',
         'Extrações, painéis e relatórios gerenciais.',
-        'melhoria', 72, 'EQP-SIS', SYSTIMESTAMP, SYSTIMESTAMP);
+        'melhoria', 72, 'EQP-SIS', LOCALTIMESTAMP, LOCALTIMESTAMP);
 
 INSERT INTO sistemas (id, nome, categoria_id, equipe_id, criticidade)
 VALUES ('SYS-01', 'ERP', 'CAT-SIS-01', 'EQP-SIS', 'alta');
@@ -45,5 +58,6 @@ INSERT INTO sistemas (id, nome, categoria_id, equipe_id, criticidade)
 VALUES ('SYS-05', 'Rede e Wi-Fi', 'CAT-SIS-02', 'EQP-INF', 'alta');
 INSERT INTO sistemas (id, nome, categoria_id, equipe_id, criticidade)
 VALUES ('SYS-06', 'Estações de trabalho', 'CAT-SIS-02', 'EQP-SDK', 'media');
+
 
 COMMIT;

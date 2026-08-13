@@ -1,5 +1,5 @@
-import { consultar, consultarUm, emTransacao } from "@/integrations/oracle/client.server";
-import { calcularPrazo } from "@/integrations/oracle/sla.server";
+import { consultar, consultarUm, emTransacao } from "@/integrations/postgres/client.server";
+import { calcularPrazo } from "@/integrations/postgres/sla.server";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
 import type { Impact, Priority, RecordType, TicketStatus, Urgency } from "@/models/itsm-types";
 import { PREFIXO_TIPO } from "@/models/chamado-codigo";
@@ -139,7 +139,7 @@ export async function listarChamados(f: FiltroChamados = {}): Promise<Chamado[]>
     binds["equipeId"] = f.equipeId;
   }
   if (f.vencidos) {
-    cond.push(`c.prazo_sla < SYSTIMESTAMP AND c.status NOT IN ('resolvido','fechado')`);
+    cond.push(`c.prazo_sla < LOCALTIMESTAMP AND c.status NOT IN ('resolvido','fechado')`);
   }
 
   const where = cond.length ? `WHERE ${cond.join(" AND ")}` : "";

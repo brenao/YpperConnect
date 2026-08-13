@@ -6,7 +6,7 @@ import { z } from "zod";
  * sistemas, categorias, equipes, usuários e perfis.
  *
  * Os repositórios são importados dinamicamente dentro do handler para
- * o oracledb nunca entrar no bundle do navegador.
+ * o driver pg nunca entrar no bundle do navegador.
  */
 
 const ESCOPOS = ["chamado", "servico", "artigo", "sistema"] as const;

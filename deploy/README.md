@@ -7,18 +7,22 @@ o publica em `https://set-teste.rosset.com.br/ypper/`, atrás do login unificado
 navegador → rosset16 (OpenResty, TLS + check-token.lua)
               └─ location ^~ /ypper/ → http://rosset29.rosset.grp:8083
                                           └─ container ypper-app (Node, SSR)
-                                                └─ Oracle 10.8.0.2:1521/ROS11
+                                                └─ Postgres 18 (rosset96, banco ypper)
 ```
+
+O banco migrou do Oracle para o PostgreSQL em 2026-08-13. Teste é o
+**rosset96** (10.8.0.196); produção é o **rosset97**. Quem aponta para qual é
+o `.env` do rosset29 — nada disso é build-time.
 
 ## Por que Node e não nginx na imagem
 
 O app é TanStack Start com **SSR**: cada requisição é renderizada no servidor e
-as *server functions* falam com o Oracle. Não é site estático, então a imagem
+as *server functions* falam com o banco. Não é site estático, então a imagem
 final roda `node .output/server/index.mjs`. É diferente do `frontend-auth`, que
 é build estático servido por nginx.
 
-`node-oracledb` está em **modo thin** (JavaScript puro), então a imagem **não**
-precisa do Oracle Instant Client.
+O driver `pg` é JavaScript puro, então a imagem **não** precisa de nenhuma
+biblioteca de cliente do banco instalada.
 
 ## O prefixo `/ypper` é build-time
 
@@ -36,7 +40,9 @@ sudo mkdir -p /var/ypper
 sudo cp atualizar-ypper.sh /var/ypper/ && sudo chmod +x /var/ypper/atualizar-ypper.sh
 
 # Segredos — nenhum dos dois vai para dentro da imagem.
-sudo cp .env.example /var/ypper/.env      # preencher Oracle, SMTP e IA
+sudo cp .env.example /var/ypper/.env      # preencher Postgres, SMTP e IA
+                                          # PG_USER=ypper (conta da aplicação,
+                                          # nunca a conta pessoal do dev)
 sudo chmod 600 /var/ypper/.env
 printf 'GITHUB_PAT=ghp_xxx\n' | sudo tee /var/ypper/.deploy.env
 sudo chmod 600 /var/ypper/.deploy.env
@@ -83,6 +89,11 @@ Já apontadas pelo nginx do rosset16 ou publicadas pelos scripts de
 A 8083 foi escolhida por não aparecer em nenhuma configuração do rosset16 —
 mas isso **não prova** que está livre no host. Confirmar com `ss -ltnp`.
 
+> As duas seções "Provado" abaixo são de 2026-08-10, **antes da migração para
+> o Postgres**. Ficam como estão: descrevem o que foi verificado naquela data,
+> com o Oracle no lugar do banco. O que foi verificado depois da migração está
+> na seção seguinte a elas.
+
 ## Provado em 2026-08-10 (container rodando na máquina do dev)
 
 Imagem construída com `APP_BASE_PATH=/ypper/`, container em `8083:8080`,
@@ -111,6 +122,27 @@ container `ypper-app` publicando `8083:8080` na `network-rosset`:
 - Os quatro containers que já rodavam (`frontend` 8080, `backend` 3000,
   `frontend-auth` 8081, `backend-auth` 4000) não foram tocados.
 - Oracle 10.8.0.2:1521 alcançável a partir do servidor.
+
+## Provado em 2026-08-13 (migração para o Postgres, contra o rosset96)
+
+Rodado da máquina do dev, com o app apontando para o Postgres 18.4 do rosset96:
+
+- Schema, seeds e privilégios: 25 tabelas com dono `ypper`, acessíveis pela
+  aplicação. A primeira tentativa aplicou o schema como `postgres` e a app
+  levou `permission denied` em tudo — por isso o `01-schema.sql` agora começa
+  com `SET ROLE ypper`.
+- As 22 funções de leitura dos 11 repositórios executaram sem erro de SQL.
+- Escrita: abertura de chamado gerou `INC-1000` (identity a partir de 1000 mais
+  a coluna gerada `codigo`), com o histórico gravado na mesma transação.
+- Alteração de impacto e urgência recalculou a prioridade (P3 → P1) e auditou
+  as três mudanças; encerrar sem descrição continua sendo recusado.
+- Projeto, tarefa e baseline v1 gravados; coluna `DATE` não escorregou de dia.
+- Data gravada bate com o relógio local (sem os 3 h de desvio de fuso).
+- `npm run build` gera `.output/server/_libs/pg.mjs` — o driver entra no
+  pacote do servidor.
+
+O que **não** foi provado ainda: o app rodando dentro do container no rosset29
+contra o Postgres, e a navegação pelas telas no navegador.
 
 ## O que ainda não foi provado
 

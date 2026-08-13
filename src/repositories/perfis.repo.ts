@@ -1,4 +1,9 @@
-import { consultar, consultarUm, executar, emTransacao } from "@/integrations/oracle/client.server";
+import {
+  consultar,
+  consultarUm,
+  executar,
+  emTransacao,
+} from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -100,9 +105,9 @@ export async function atualizarPerfil(
 
   const n = await executar(
     `UPDATE perfis_acesso
-        SET nome = NVL(:nome, nome),
+        SET nome = COALESCE(:nome, nome),
             descricao = :descricao,
-            ativo = NVL(:ativo, ativo)
+            ativo = COALESCE(:ativo, ativo)
       WHERE id = :id`,
     {
       id,

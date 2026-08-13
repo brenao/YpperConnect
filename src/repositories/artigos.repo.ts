@@ -1,4 +1,4 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
+import { consultar, consultarUm, executar } from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -79,7 +79,7 @@ export async function criarArtigo(ctx: ContextoUsuario, d: DadosArtigo): Promise
         gerado_por_ia, autor_id, criado_em, atualizado_em)
      VALUES
        (:id, :titulo, :categoriaId, :resumo, :conteudo, :status, 0,
-        :geradoPorIa, :autorId, SYSTIMESTAMP, SYSTIMESTAMP)`,
+        :geradoPorIa, :autorId, LOCALTIMESTAMP, LOCALTIMESTAMP)`,
     {
       id,
       titulo: d.titulo.trim(),
@@ -113,12 +113,12 @@ export async function atualizarArtigo(
 
   const n = await executar(
     `UPDATE artigos
-        SET titulo = NVL(:titulo, titulo),
+        SET titulo = COALESCE(:titulo, titulo),
             categoria_id = :categoriaId,
             resumo = :resumo,
-            conteudo = NVL(:conteudo, conteudo),
-            status = NVL(:status, status),
-            atualizado_em = SYSTIMESTAMP
+            conteudo = COALESCE(:conteudo, conteudo),
+            status = COALESCE(:status, status),
+            atualizado_em = LOCALTIMESTAMP
       WHERE id = :id`,
     {
       id,

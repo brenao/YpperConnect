@@ -1,4 +1,9 @@
-import { consultar, consultarUm, executar, emTransacao } from "@/integrations/oracle/client.server";
+import {
+  consultar,
+  consultarUm,
+  executar,
+  emTransacao,
+} from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -129,11 +134,11 @@ export async function listarProjetos(): Promise<ProjetoComProgresso[]> {
             p.sponsor_id, us.nome AS sponsor_nome,
             p.gerente_id, ug.nome AS gerente_nome,
             p.status, p.inicio, p.fim, p.criado_em, p.atualizado_em,
-            NVL(t.total, 0) AS total_tarefas,
-            NVL(t.concluidas, 0) AS tarefas_concluidas,
-            NVL(ROUND(t.media), 0) AS progresso,
-            NVL(r.abertos, 0) AS riscos_abertos,
-            NVL(a.abertas, 0) AS atencoes_abertas,
+            COALESCE(t.total, 0) AS total_tarefas,
+            COALESCE(t.concluidas, 0) AS tarefas_concluidas,
+            COALESCE(ROUND(t.media), 0) AS progresso,
+            COALESCE(r.abertos, 0) AS riscos_abertos,
+            COALESCE(a.abertas, 0) AS atencoes_abertas,
             u.ultima AS ultima_atualizacao
        FROM projetos p
        LEFT JOIN usuarios us ON us.id = p.sponsor_id
@@ -269,7 +274,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
         criado_em, atualizado_em)
      VALUES
        (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status, :inicio, :fim,
-        SYSTIMESTAMP, SYSTIMESTAMP)`,
+        LOCALTIMESTAMP, LOCALTIMESTAMP)`,
     {
       id,
       nome: d.nome.trim(),
@@ -297,8 +302,8 @@ export async function atualizarProjeto(
   const n = await executar(
     `UPDATE projetos
         SET nome = :nome, objetivo = :objetivo, sponsor_id = :sponsorId,
-            gerente_id = :gerenteId, status = NVL(:status, status),
-            inicio = :inicio, fim = :fim, atualizado_em = SYSTIMESTAMP
+            gerente_id = :gerenteId, status = COALESCE(:status, status),
+            inicio = :inicio, fim = :fim, atualizado_em = LOCALTIMESTAMP
       WHERE id = :id`,
     {
       id,
@@ -398,12 +403,12 @@ export async function atualizarTarefa(
 
     const n = await tx.executar(
       `UPDATE projeto_tarefas
-          SET pai_id = :paiId, nome = NVL(:nome, nome), atividade = :atividade,
+          SET pai_id = :paiId, nome = COALESCE(:nome, nome), atividade = :atividade,
               inicio = :inicio, fim = :fim,
               progresso = :progresso, quadro = :quadro, marco = :marco,
-              alocacao_pct = :alocacaoPct, ordem = NVL(:ordem, ordem),
+              alocacao_pct = :alocacaoPct, ordem = COALESCE(:ordem, ordem),
               concluido_em = CASE WHEN :concluida = 1
-                                  THEN NVL(concluido_em, SYSTIMESTAMP) ELSE NULL END
+                                  THEN COALESCE(concluido_em, LOCALTIMESTAMP) ELSE NULL END
         WHERE id = :id`,
       {
         id,
@@ -457,7 +462,7 @@ export async function moverTarefa(
         SET quadro = :quadro,
             progresso = CASE WHEN :concluida = 1 THEN 100 ELSE progresso END,
             concluido_em = CASE WHEN :concluida = 1
-                                THEN NVL(concluido_em, SYSTIMESTAMP) ELSE NULL END
+                                THEN COALESCE(concluido_em, LOCALTIMESTAMP) ELSE NULL END
       WHERE id = :id`,
     { id, quadro, concluida: deBool(concluida) },
   );
@@ -500,7 +505,7 @@ export async function criarRisco(ctx: ContextoUsuario, d: DadosRisco): Promise<s
     `INSERT INTO projeto_riscos
        (id, projeto_id, descricao, probabilidade, impacto, mitigacao, status, criado_em)
      VALUES (:id, :projetoId, :descricao, :probabilidade, :impacto, :mitigacao,
-             :status, SYSTIMESTAMP)`,
+             :status, LOCALTIMESTAMP)`,
     {
       id,
       projetoId: d.projetoId,
@@ -530,7 +535,7 @@ export async function criarAtualizacao(ctx: ContextoUsuario, d: DadosAtualizacao
        (id, projeto_id, autor_id, data_ref, descricao, ultimas_entregas,
         proximas_entregas, criado_em)
      VALUES (:id, :projetoId, :autorId, :dataRef, :descricao, :ultimas,
-             :proximas, SYSTIMESTAMP)`,
+             :proximas, LOCALTIMESTAMP)`,
     {
       id,
       projetoId: d.projetoId,
@@ -560,7 +565,7 @@ export async function criarAtencao(ctx: ContextoUsuario, d: DadosAtencao): Promi
        (id, projeto_id, titulo, descricao, decisao_necessaria,
         responsavel_decisao_id, status, criado_em)
      VALUES (:id, :projetoId, :titulo, :descricao, :decisao, :responsavelId,
-             'aberto', SYSTIMESTAMP)`,
+             'aberto', LOCALTIMESTAMP)`,
     {
       id,
       projetoId: d.projetoId,
@@ -576,7 +581,7 @@ export async function criarAtencao(ctx: ContextoUsuario, d: DadosAtencao): Promi
 export async function resolverAtencao(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirTi(ctx, "resolver pontos de atenção");
   await executar(
-    `UPDATE projeto_atencoes SET status = 'resolvido', resolvido_em = SYSTIMESTAMP
+    `UPDATE projeto_atencoes SET status = 'resolvido', resolvido_em = LOCALTIMESTAMP
       WHERE id = :id`,
     { id },
   );
@@ -710,14 +715,14 @@ export async function atualizarCampoTarefa(
 
   await executar(
     `UPDATE projeto_tarefas
-        SET nome = NVL(:nome, nome),
-            progresso = NVL(:progresso, progresso),
+        SET nome = COALESCE(:nome, nome),
+            progresso = COALESCE(:progresso, progresso),
             inicio = :inicio,
             fim = :fim,
             quadro = CASE WHEN :concluida = 1 THEN 'done'
                           WHEN quadro = 'done' THEN 'doing' ELSE quadro END,
             concluido_em = CASE WHEN :concluida = 1
-                                THEN NVL(concluido_em, SYSTIMESTAMP) ELSE NULL END
+                                THEN COALESCE(concluido_em, LOCALTIMESTAMP) ELSE NULL END
       WHERE id = :id`,
     {
       id,
@@ -832,14 +837,14 @@ export async function salvarBaseline(
   const id = novoId();
   await emTransacao(async (tx) => {
     const v = await tx.consultar<{ prox: number }>(
-      `SELECT NVL(MAX(versao), 0) + 1 AS prox FROM projeto_baselines WHERE projeto_id = :p`,
+      `SELECT COALESCE(MAX(versao), 0) + 1 AS prox FROM projeto_baselines WHERE projeto_id = :p`,
       { p: projetoId },
     );
     const versao = v[0]?.prox ?? 1;
 
     await tx.executar(
       `INSERT INTO projeto_baselines (id, projeto_id, versao, descricao, autor_id, criado_em)
-       VALUES (:id, :projetoId, :versao, :descricao, :autorId, SYSTIMESTAMP)`,
+       VALUES (:id, :projetoId, :versao, :descricao, :autorId, LOCALTIMESTAMP)`,
       { id, projetoId, versao, descricao: descricao?.trim() ?? null, autorId: ctx.id },
     );
 

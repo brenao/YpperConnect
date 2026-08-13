@@ -1,4 +1,4 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
+import { consultar, consultarUm, executar } from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 

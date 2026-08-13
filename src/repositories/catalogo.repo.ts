@@ -1,4 +1,4 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
+import { consultar, consultarUm, executar } from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { RecordType } from "@/models/itsm-types";
 import type { ContextoUsuario } from "@/services/current-user.server";
@@ -170,7 +170,7 @@ export async function criarServico(ctx: ContextoUsuario, d: DadosServico): Promi
         gerado_por_ia, ativo, criado_em, atualizado_em)
      VALUES
        (:id, :nome, :categoriaId, :descricao, :tipoPadrao, :slaHoras, :equipeId,
-        :geradoPorIa, 1, SYSTIMESTAMP, SYSTIMESTAMP)`,
+        :geradoPorIa, 1, LOCALTIMESTAMP, LOCALTIMESTAMP)`,
     {
       id,
       nome: d.nome.trim(),
@@ -201,7 +201,7 @@ export async function atualizarServico(
             tipo_padrao = :tipoPadrao,
             sla_horas = :slaHoras,
             equipe_id = :equipeId,
-            atualizado_em = SYSTIMESTAMP
+            atualizado_em = LOCALTIMESTAMP
       WHERE id = :id`,
     {
       id,
@@ -224,7 +224,7 @@ export async function atualizarServico(
 export async function definirServicoAtivo(ctx: ContextoUsuario, id: string, ativo: boolean) {
   exigirAdmin(ctx, "alterar serviços");
   await executar(
-    `UPDATE servicos SET ativo = :ativo, atualizado_em = SYSTIMESTAMP WHERE id = :id`,
+    `UPDATE servicos SET ativo = :ativo, atualizado_em = LOCALTIMESTAMP WHERE id = :id`,
     { id, ativo: deBool(ativo) },
   );
 }

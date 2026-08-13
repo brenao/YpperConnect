@@ -1,3 +1,16 @@
+-- Calendario de atendimento: expediente e feriados (Postgres)
+--
+-- APLICAR:
+--   docker exec -i postgres-rosset psql -U postgres -d ypper \
+--     -v ON_ERROR_STOP=1 < 02-seed-calendario.sql
+--
+-- O BEGIN/COMMIT abaixo faz o arquivo ser tudo-ou-nada: se uma linha
+-- falhar, nada e gravado. Sem isso o seed ficaria pela metade e a
+-- segunda tentativa esbarraria em chave duplicada do que ja entrou.
+
+\set ON_ERROR_STOP on
+BEGIN;
+
 -- Jornada padrao: seg-sex, 08:00-12:00 e 14:00-18:00 = 8h/dia.
 -- Ajuste minuto_ini/minuto_fim se o intervalo de almoco for outro.
 INSERT INTO expediente (id, dia_semana, minuto_ini, minuto_fim) VALUES ('exp-1-m', 1, 480, 720);
@@ -40,5 +53,6 @@ INSERT INTO feriados (id, data_feriado, descricao, recorrente) VALUES
   ('fer-2026-paixao', DATE '2026-04-03', 'Sexta-feira Santa', 0);
 INSERT INTO feriados (id, data_feriado, descricao, recorrente) VALUES
   ('fer-2026-corpus', DATE '2026-06-04', 'Corpus Christi', 0);
+
 
 COMMIT;

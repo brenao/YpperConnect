@@ -1,24 +1,62 @@
 -- =====================================================================
--- YpperConnect - Schema Oracle 19c
--- Charset do banco: WE8MSWIN1252 (single-byte)
+-- YpperConnect - Schema PostgreSQL 18
+-- Servidor: rosset96 (teste) / rosset97 (producao) - banco `ypper`
 --
--- CONVENCOES
---   - VARCHAR2(n CHAR): semantica de caractere explicita. Hoje equivale
---     a bytes, mas mantem o schema correto se o banco migrar para
---     AL32UTF8 no futuro.
---   - Booleano: NUMBER(1) com CHECK (0,1). Oracle 19c nao tem BOOLEAN.
---   - Instante no tempo: TIMESTAMP.
---     Data pura (cronograma): DATE, sempre com TRUNC na aplicacao.
---   - Enum de negocio ITIL: CHECK constraint (mudar exige mudar codigo).
---     Lista administravel: tabela (equipes, categorias).
+-- Traducao do schema Oracle (db/oracle/*.sql), com os ajustes que la
+-- vieram em arquivos separados (04, 06, 07, 09) ja embutidos: aqui o
+-- banco nasce do zero, nao ha nada para alterar depois.
+--
+-- CONVENCOES E POR QUE CADA UMA
+--   - VARCHAR(n): o Oracle usava VARCHAR2(n CHAR). No Postgres a
+--     semantica ja e de caractere, entao o `CHAR` some. Os limites
+--     foram mantidos de proposito: sao validacao de dominio, nao
+--     economia de disco.
+--   - CLOB -> TEXT.
+--   - Booleano: SMALLINT 0/1 com CHECK, e NAO o BOOLEAN nativo.
+--     Motivo: a aplicacao le e grava 0/1 em dezenas de consultas
+--     (`WHERE ativo = 1`). Trocar para BOOLEAN agora obrigaria a mexer
+--     em todas elas no mesmo passo da migracao de banco - dois riscos
+--     somados. Fica como melhoria posterior, isolada.
+--   - Instante no tempo: TIMESTAMP (sem fuso), igual ao Oracle.
+--     Data pura (cronograma): DATE.
+--     ATENCAO: nao trocar para TIMESTAMPTZ sem revisar o app. O
+--     Oracle usava TIMESTAMP puro justamente porque o driver deslocava
+--     o SLA em 3 horas com tipo com fuso; o mesmo cuidado vale aqui.
+--   - Enum de negocio ITIL: CHECK constraint (mudar exige mudar
+--     codigo). Lista administravel: tabela (equipes, categorias).
 --   - Toda relacao e por ID. Nenhuma coluna guarda nome de pessoa.
 --
--- ATENCAO ORACLE: string vazia e NULL. A aplicacao deve normalizar ''
--- para NULL antes do insert, senao coluna NOT NULL estoura.
+-- DIFERENCA DE COMPORTAMENTO QUE O CODIGO PRECISA RESPEITAR
+--   No Oracle, string vazia E nulo. No Postgres, '' e um valor. A
+--   camada de acesso continua convertendo '' para NULL antes do
+--   insert; sem isso, uma coluna NOT NULL passaria a aceitar '' e o
+--   dado ficaria diferente do que era em Oracle, sem erro nenhum.
 --
--- Para texto livre em Unicode completo (emoji), trocar VARCHAR2 por
--- NVARCHAR2 e CLOB por NCLOB nas colunas marcadas [TEXTO LIVRE].
+-- APLICAR (de dentro do servidor, com o container de pe):
+--   docker exec -i postgres-rosset psql -U postgres -d ypper \
+--     -v ON_ERROR_STOP=1 < 01-schema.sql
 -- =====================================================================
+
+
+-- ---------------------------------------------------------------------
+-- Dono das tabelas: SEMPRE `ypper`, nao importa quem aplicou.
+--
+-- Na primeira tentativa este arquivo rodou como `postgres`, e as 25
+-- tabelas nasceram dele. Resultado: a aplicacao levou "permission
+-- denied" em tudo, porque o GRANT existente e o ALTER DEFAULT
+-- PRIVILEGES do grants.sql valem para o que o `ypper` cria - nao para
+-- o que o `postgres` criou.
+--
+-- Pior, e silencioso: ALTER TABLE e DROP TABLE so o dono pode, e nao
+-- existe GRANT que substitua isso. A migration seguinte quebraria num
+-- deploy, semanas depois.
+--
+-- O SET ROLE abaixo fecha essa porta. Funciona tanto para o superuser
+-- `postgres` quanto para um dev do grupo `devs` (que ja e membro de
+-- `ypper`). Se quem rodar nao for membro, o comando falha AQUI, com
+-- mensagem clara, antes de criar qualquer coisa.
+-- ---------------------------------------------------------------------
+SET ROLE ypper;
 
 
 -- ---------------------------------------------------------------------
@@ -26,19 +64,19 @@
 -- ---------------------------------------------------------------------
 
 CREATE TABLE equipes (
-  id     VARCHAR2(36 CHAR)  NOT NULL,
-  nome   VARCHAR2(120 CHAR) NOT NULL,
-  ativo  NUMBER(1)          DEFAULT 1 NOT NULL,
+  id     VARCHAR(36)  NOT NULL,
+  nome   VARCHAR(120) NOT NULL,
+  ativo  SMALLINT     DEFAULT 1 NOT NULL,
   CONSTRAINT pk_equipes PRIMARY KEY (id),
   CONSTRAINT uq_equipes_nome UNIQUE (nome),
   CONSTRAINT ck_equipes_ativo CHECK (ativo IN (0,1))
 );
 
 CREATE TABLE categorias (
-  id      VARCHAR2(36 CHAR)  NOT NULL,
-  nome    VARCHAR2(120 CHAR) NOT NULL,
-  escopo  VARCHAR2(20 CHAR)  NOT NULL,
-  ativo   NUMBER(1)          DEFAULT 1 NOT NULL,
+  id      VARCHAR(36)  NOT NULL,
+  nome    VARCHAR(120) NOT NULL,
+  escopo  VARCHAR(20)  NOT NULL,
+  ativo   SMALLINT     DEFAULT 1 NOT NULL,
   CONSTRAINT pk_categorias PRIMARY KEY (id),
   CONSTRAINT uq_categorias_escopo_nome UNIQUE (escopo, nome),
   CONSTRAINT ck_categorias_escopo CHECK (escopo IN ('chamado','servico','artigo','sistema')),
@@ -50,31 +88,35 @@ CREATE TABLE categorias (
 -- 2. Identidade e autorizacao
 -- ---------------------------------------------------------------------
 
+-- `sistema` marca o perfil embutido na aplicacao, que a tela de
+-- permissoes nao pode excluir. No Oracle veio no 04-ajustes.sql.
 CREATE TABLE perfis_acesso (
-  id         VARCHAR2(36 CHAR)  NOT NULL,
-  nome       VARCHAR2(120 CHAR) NOT NULL,
-  descricao  VARCHAR2(500 CHAR),
-  ativo      NUMBER(1)          DEFAULT 1 NOT NULL,
+  id         VARCHAR(36)  NOT NULL,
+  nome       VARCHAR(120) NOT NULL,
+  descricao  VARCHAR(500),
+  ativo      SMALLINT     DEFAULT 1 NOT NULL,
+  sistema    SMALLINT     DEFAULT 0 NOT NULL,
   CONSTRAINT pk_perfis_acesso PRIMARY KEY (id),
   CONSTRAINT uq_perfis_acesso_nome UNIQUE (nome),
-  CONSTRAINT ck_perfis_acesso_ativo CHECK (ativo IN (0,1))
+  CONSTRAINT ck_perfis_acesso_ativo CHECK (ativo IN (0,1)),
+  CONSTRAINT ck_perfis_sistema CHECK (sistema IN (0,1))
 );
 
 -- ad_object_id: objectGUID do AD (ou claim "oid" do Entra ID).
 -- Unica chave estavel de uma pessoa. Login, email e nome mudam.
 -- Fica nulo enquanto a autenticacao nao for implementada.
 CREATE TABLE usuarios (
-  id               VARCHAR2(36 CHAR)  NOT NULL,
-  ad_object_id     VARCHAR2(64 CHAR),
-  nome             VARCHAR2(200 CHAR) NOT NULL,
-  email            VARCHAR2(320 CHAR) NOT NULL,
-  login            VARCHAR2(120 CHAR) NOT NULL,
-  departamento     VARCHAR2(160 CHAR),
-  equipe_id        VARCHAR2(36 CHAR),
-  perfil_id        VARCHAR2(36 CHAR),
-  origem           VARCHAR2(10 CHAR)  DEFAULT 'manual' NOT NULL,
-  admin            NUMBER(1)          DEFAULT 0 NOT NULL,
-  ativo            NUMBER(1)          DEFAULT 1 NOT NULL,
+  id               VARCHAR(36)  NOT NULL,
+  ad_object_id     VARCHAR(64),
+  nome             VARCHAR(200) NOT NULL,
+  email            VARCHAR(320) NOT NULL,
+  login            VARCHAR(120) NOT NULL,
+  departamento     VARCHAR(160),
+  equipe_id        VARCHAR(36),
+  perfil_id        VARCHAR(36),
+  origem           VARCHAR(10)  DEFAULT 'manual' NOT NULL,
+  admin            SMALLINT     DEFAULT 0 NOT NULL,
+  ativo            SMALLINT     DEFAULT 1 NOT NULL,
   sincronizado_em  TIMESTAMP,
   criado_em        TIMESTAMP NOT NULL,
   atualizado_em    TIMESTAMP NOT NULL,
@@ -96,16 +138,16 @@ CREATE INDEX ix_usuarios_equipe ON usuarios (equipe_id);
 -- itsm-types.ts. Ficam em codigo de proposito: sao atrelados a rotas
 -- e a checagens do app, nao sao dado de negocio.
 CREATE TABLE perfil_modulos (
-  perfil_id   VARCHAR2(36 CHAR) NOT NULL,
-  modulo_key  VARCHAR2(60 CHAR) NOT NULL,
+  perfil_id   VARCHAR(36) NOT NULL,
+  modulo_key  VARCHAR(60) NOT NULL,
   CONSTRAINT pk_perfil_modulos PRIMARY KEY (perfil_id, modulo_key),
   CONSTRAINT fk_perfil_modulos_perfil FOREIGN KEY (perfil_id)
     REFERENCES perfis_acesso (id) ON DELETE CASCADE
 );
 
 CREATE TABLE perfil_features (
-  perfil_id    VARCHAR2(36 CHAR) NOT NULL,
-  feature_key  VARCHAR2(60 CHAR) NOT NULL,
+  perfil_id    VARCHAR(36) NOT NULL,
+  feature_key  VARCHAR(60) NOT NULL,
   CONSTRAINT pk_perfil_features PRIMARY KEY (perfil_id, feature_key),
   CONSTRAINT fk_perfil_features_perfil FOREIGN KEY (perfil_id)
     REFERENCES perfis_acesso (id) ON DELETE CASCADE
@@ -117,15 +159,15 @@ CREATE TABLE perfil_features (
 -- ---------------------------------------------------------------------
 
 CREATE TABLE servicos (
-  id             VARCHAR2(36 CHAR)   NOT NULL,
-  nome           VARCHAR2(200 CHAR)  NOT NULL,
-  categoria_id   VARCHAR2(36 CHAR),
-  descricao      VARCHAR2(1000 CHAR),
-  tipo_padrao    VARCHAR2(20 CHAR)   NOT NULL,
-  sla_horas      NUMBER(6)           NOT NULL,
-  equipe_id      VARCHAR2(36 CHAR),
-  gerado_por_ia  NUMBER(1)           DEFAULT 0 NOT NULL,
-  ativo          NUMBER(1)           DEFAULT 1 NOT NULL,
+  id             VARCHAR(36)   NOT NULL,
+  nome           VARCHAR(200)  NOT NULL,
+  categoria_id   VARCHAR(36),
+  descricao      VARCHAR(1000),
+  tipo_padrao    VARCHAR(20)   NOT NULL,
+  sla_horas      INTEGER       NOT NULL,
+  equipe_id      VARCHAR(36),
+  gerado_por_ia  SMALLINT      DEFAULT 0 NOT NULL,
+  ativo          SMALLINT      DEFAULT 1 NOT NULL,
   criado_em      TIMESTAMP NOT NULL,
   atualizado_em  TIMESTAMP NOT NULL,
   CONSTRAINT pk_servicos PRIMARY KEY (id),
@@ -142,15 +184,15 @@ CREATE INDEX ix_servicos_categoria ON servicos (categoria_id);
 CREATE INDEX ix_servicos_ativo ON servicos (ativo);
 
 CREATE TABLE sistemas (
-  id              VARCHAR2(36 CHAR)   NOT NULL,
-  nome            VARCHAR2(200 CHAR)  NOT NULL,
-  descricao       VARCHAR2(1000 CHAR),
-  categoria_id    VARCHAR2(36 CHAR),
-  responsavel_id  VARCHAR2(36 CHAR),
-  atribuicao_id   VARCHAR2(36 CHAR),
-  equipe_id       VARCHAR2(36 CHAR),
-  criticidade     VARCHAR2(10 CHAR)   NOT NULL,
-  ativo           NUMBER(1)           DEFAULT 1 NOT NULL,
+  id              VARCHAR(36)   NOT NULL,
+  nome            VARCHAR(200)  NOT NULL,
+  descricao       VARCHAR(1000),
+  categoria_id    VARCHAR(36),
+  responsavel_id  VARCHAR(36),
+  atribuicao_id   VARCHAR(36),
+  equipe_id       VARCHAR(36),
+  criticidade     VARCHAR(10)   NOT NULL,
+  ativo           SMALLINT      DEFAULT 1 NOT NULL,
   CONSTRAINT pk_sistemas PRIMARY KEY (id),
   CONSTRAINT uq_sistemas_nome UNIQUE (nome),
   CONSTRAINT ck_sistemas_criticidade CHECK (criticidade IN ('alta','media','baixa')),
@@ -165,15 +207,15 @@ CREATE INDEX ix_sistemas_responsavel ON sistemas (responsavel_id);
 CREATE INDEX ix_sistemas_equipe ON sistemas (equipe_id);
 
 CREATE TABLE artigos (
-  id             VARCHAR2(36 CHAR)   NOT NULL,
-  titulo         VARCHAR2(300 CHAR)  NOT NULL,   -- [TEXTO LIVRE]
-  categoria_id   VARCHAR2(36 CHAR),
-  resumo         VARCHAR2(1000 CHAR),            -- [TEXTO LIVRE]
-  conteudo       CLOB                NOT NULL,   -- [TEXTO LIVRE]
-  status         VARCHAR2(15 CHAR)   DEFAULT 'rascunho' NOT NULL,
-  visualizacoes  NUMBER(10)          DEFAULT 0 NOT NULL,
-  gerado_por_ia  NUMBER(1)           DEFAULT 0 NOT NULL,
-  autor_id       VARCHAR2(36 CHAR),
+  id             VARCHAR(36)   NOT NULL,
+  titulo         VARCHAR(300)  NOT NULL,
+  categoria_id   VARCHAR(36),
+  resumo         VARCHAR(1000),
+  conteudo       TEXT          NOT NULL,
+  status         VARCHAR(15)   DEFAULT 'rascunho' NOT NULL,
+  visualizacoes  INTEGER       DEFAULT 0 NOT NULL,
+  gerado_por_ia  SMALLINT      DEFAULT 0 NOT NULL,
+  autor_id       VARCHAR(36),
   criado_em      TIMESTAMP NOT NULL,
   atualizado_em  TIMESTAMP NOT NULL,
   CONSTRAINT pk_artigos PRIMARY KEY (id),
@@ -193,27 +235,37 @@ CREATE INDEX ix_artigos_categoria ON artigos (categoria_id);
 
 -- numero: identificador curto para humanos ("#1042"). Separado da PK
 -- porque uuid nao serve para o usuario ler no telefone.
--- IDENTITY exige Oracle 12c+; aqui roda no 19c sem sequence manual.
+--
+-- prefixo (Oracle: 07-codigo-chamado.sql) e coluna real, gravada na
+-- abertura e NUNCA alterada. Se o chamado for reclassificado, o codigo
+-- permanece - ele ja circulou por e-mail e foi citado pelo solicitante.
+--
+-- codigo e coluna gerada. No Oracle era VIRTUAL (calculada na leitura);
+-- no Postgres usamos STORED, que e o que a versao suporta para coluna
+-- gerada indexavel. Custa alguns bytes por linha e nada mais.
 CREATE TABLE chamados (
-  id                     VARCHAR2(36 CHAR)  NOT NULL,
-  numero                 NUMBER(12) GENERATED BY DEFAULT AS IDENTITY START WITH 1000,
-  titulo                 VARCHAR2(300 CHAR) NOT NULL,   -- [TEXTO LIVRE]
-  descricao              CLOB               NOT NULL,   -- [TEXTO LIVRE]
-  tipo                   VARCHAR2(20 CHAR)  NOT NULL,
-  categoria_id           VARCHAR2(36 CHAR),
-  servico_id             VARCHAR2(36 CHAR),
-  sistema_id             VARCHAR2(36 CHAR),
-  impacto                VARCHAR2(10 CHAR)  NOT NULL,
-  urgencia               VARCHAR2(10 CHAR)  NOT NULL,
-  prioridade             VARCHAR2(2 CHAR)   NOT NULL,
-  status                 VARCHAR2(20 CHAR)  DEFAULT 'novo' NOT NULL,
-  solicitante_id         VARCHAR2(36 CHAR)  NOT NULL,
-  responsavel_id         VARCHAR2(36 CHAR),
-  equipe_id              VARCHAR2(36 CHAR),
-  origem                 VARCHAR2(10 CHAR)  NOT NULL,
-  problema_vinculado_id  VARCHAR2(36 CHAR),
-  descricao_encerramento CLOB,                          -- [TEXTO LIVRE]
+  id                     VARCHAR(36)  NOT NULL,
+  numero                 BIGINT GENERATED BY DEFAULT AS IDENTITY (START WITH 1000),
+  prefixo                VARCHAR(4)   NOT NULL,
+  codigo                 VARCHAR(24)  GENERATED ALWAYS AS (prefixo || '-' || numero::text) STORED,
+  titulo                 VARCHAR(300) NOT NULL,
+  descricao              TEXT         NOT NULL,
+  tipo                   VARCHAR(20)  NOT NULL,
+  categoria_id           VARCHAR(36),
+  servico_id             VARCHAR(36),
+  sistema_id             VARCHAR(36),
+  impacto                VARCHAR(10)  NOT NULL,
+  urgencia               VARCHAR(10)  NOT NULL,
+  prioridade             VARCHAR(2)   NOT NULL,
+  status                 VARCHAR(20)  DEFAULT 'novo' NOT NULL,
+  solicitante_id         VARCHAR(36)  NOT NULL,
+  responsavel_id         VARCHAR(36),
+  equipe_id              VARCHAR(36),
+  origem                 VARCHAR(10)  NOT NULL,
+  problema_vinculado_id  VARCHAR(36),
+  descricao_encerramento TEXT,
   criado_em              TIMESTAMP NOT NULL,
+  atualizado_em          TIMESTAMP NOT NULL,
   prazo_resposta         TIMESTAMP,
   prazo_sla              TIMESTAMP NOT NULL,
   respondido_em          TIMESTAMP,
@@ -238,6 +290,8 @@ CREATE TABLE chamados (
   CONSTRAINT fk_chamados_problema FOREIGN KEY (problema_vinculado_id) REFERENCES chamados (id)
 );
 
+CREATE UNIQUE INDEX ux_chamados_codigo ON chamados (codigo);
+
 -- Indices desenhados para as telas existentes: fila por status,
 -- painel de SLA, "meus chamados" e analise de recorrencia.
 CREATE INDEX ix_chamados_status_prazo ON chamados (status, prazo_sla);
@@ -251,11 +305,11 @@ CREATE INDEX ix_chamados_equipe_status ON chamados (equipe_id, status);
 -- Thread do chamado. tipo separa o que o solicitante ve (comentario)
 -- do que so a TI ve (nota_interna).
 CREATE TABLE chamado_interacoes (
-  id          VARCHAR2(36 CHAR) NOT NULL,
-  chamado_id  VARCHAR2(36 CHAR) NOT NULL,
-  autor_id    VARCHAR2(36 CHAR),
-  tipo        VARCHAR2(15 CHAR) NOT NULL,
-  corpo       CLOB              NOT NULL,   -- [TEXTO LIVRE]
+  id          VARCHAR(36) NOT NULL,
+  chamado_id  VARCHAR(36) NOT NULL,
+  autor_id    VARCHAR(36),
+  tipo        VARCHAR(15) NOT NULL,
+  corpo       TEXT        NOT NULL,
   criado_em   TIMESTAMP NOT NULL,
   CONSTRAINT pk_chamado_interacoes PRIMARY KEY (id),
   CONSTRAINT ck_interacoes_tipo CHECK (tipo IN ('comentario','nota_interna','email')),
@@ -270,12 +324,12 @@ CREATE INDEX ix_interacoes_chamado ON chamado_interacoes (chamado_id, criado_em)
 -- recorrencia e a pergunta "quem mudou a prioridade e quando".
 -- Nunca sofre UPDATE nem DELETE.
 CREATE TABLE chamado_historico (
-  id              VARCHAR2(36 CHAR)  NOT NULL,
-  chamado_id      VARCHAR2(36 CHAR)  NOT NULL,
-  autor_id        VARCHAR2(36 CHAR),
-  campo           VARCHAR2(60 CHAR)  NOT NULL,
-  valor_anterior  VARCHAR2(500 CHAR),
-  valor_novo      VARCHAR2(500 CHAR),
+  id              VARCHAR(36)  NOT NULL,
+  chamado_id      VARCHAR(36)  NOT NULL,
+  autor_id        VARCHAR(36),
+  campo           VARCHAR(60)  NOT NULL,
+  valor_anterior  VARCHAR(500),
+  valor_novo      VARCHAR(500),
   criado_em       TIMESTAMP NOT NULL,
   CONSTRAINT pk_chamado_historico PRIMARY KEY (id),
   CONSTRAINT fk_historico_chamado FOREIGN KEY (chamado_id)
@@ -293,14 +347,14 @@ CREATE INDEX ix_historico_campo ON chamado_historico (campo, criado_em);
 
 -- usuario_id opcional: permite cadastrar terceirizado sem conta no AD.
 CREATE TABLE recursos (
-  id                       VARCHAR2(36 CHAR)  NOT NULL,
-  usuario_id               VARCHAR2(36 CHAR),
-  nome                     VARCHAR2(200 CHAR) NOT NULL,
-  papel                    VARCHAR2(120 CHAR),
-  equipe_id                VARCHAR2(36 CHAR),
-  horas_dia                NUMBER(4,2)        DEFAULT 8 NOT NULL,
-  disponibilidade_projetos NUMBER(3)          DEFAULT 50 NOT NULL,
-  ativo                    NUMBER(1)          DEFAULT 1 NOT NULL,
+  id                       VARCHAR(36)  NOT NULL,
+  usuario_id               VARCHAR(36),
+  nome                     VARCHAR(200) NOT NULL,
+  papel                    VARCHAR(120),
+  equipe_id                VARCHAR(36),
+  horas_dia                NUMERIC(4,2) DEFAULT 8 NOT NULL,
+  disponibilidade_projetos SMALLINT     DEFAULT 50 NOT NULL,
+  ativo                    SMALLINT     DEFAULT 1 NOT NULL,
   CONSTRAINT pk_recursos PRIMARY KEY (id),
   CONSTRAINT uq_recursos_usuario UNIQUE (usuario_id),
   CONSTRAINT ck_recursos_horas CHECK (horas_dia > 0 AND horas_dia <= 24),
@@ -318,14 +372,14 @@ CREATE INDEX ix_recursos_equipe ON recursos (equipe_id);
 -- ---------------------------------------------------------------------
 
 CREATE TABLE projetos (
-  id             VARCHAR2(36 CHAR)  NOT NULL,
-  nome           VARCHAR2(300 CHAR) NOT NULL,   -- [TEXTO LIVRE]
-  objetivo       CLOB,                          -- [TEXTO LIVRE]
-  sponsor_id     VARCHAR2(36 CHAR),
-  gerente_id     VARCHAR2(36 CHAR),
-  status         VARCHAR2(15 CHAR)  DEFAULT 'planejamento' NOT NULL,
-  inicio         DATE               NOT NULL,
-  fim            DATE               NOT NULL,
+  id             VARCHAR(36)  NOT NULL,
+  nome           VARCHAR(300) NOT NULL,
+  objetivo       TEXT,
+  sponsor_id     VARCHAR(36),
+  gerente_id     VARCHAR(36),
+  status         VARCHAR(15)  DEFAULT 'planejamento' NOT NULL,
+  inicio         DATE         NOT NULL,
+  fim            DATE         NOT NULL,
   criado_em      TIMESTAMP NOT NULL,
   atualizado_em  TIMESTAMP NOT NULL,
   CONSTRAINT pk_projetos PRIMARY KEY (id),
@@ -343,20 +397,20 @@ CREATE INDEX ix_projetos_gerente ON projetos (gerente_id);
 -- ordem preserva a sequencia manual do cronograma, que array JSON dava
 -- de graca e tabela nao.
 CREATE TABLE projeto_tarefas (
-  id               VARCHAR2(36 CHAR)  NOT NULL,
-  projeto_id       VARCHAR2(36 CHAR)  NOT NULL,
-  pai_id           VARCHAR2(36 CHAR),
-  nome             VARCHAR2(300 CHAR) NOT NULL,   -- [TEXTO LIVRE]
-  atividade        VARCHAR2(200 CHAR),
-  inicio           DATE               NOT NULL,
-  fim              DATE               NOT NULL,
-  progresso        NUMBER(3)          DEFAULT 0 NOT NULL,
-  quadro           VARCHAR2(10 CHAR)  DEFAULT 'backlog' NOT NULL,
-  marco            NUMBER(1)          DEFAULT 0 NOT NULL,
-  duracao          NUMBER(6,2),
-  duracao_unidade  VARCHAR2(6 CHAR),
-  alocacao_pct     NUMBER(3),
-  ordem            NUMBER(6)          DEFAULT 0 NOT NULL,
+  id               VARCHAR(36)  NOT NULL,
+  projeto_id       VARCHAR(36)  NOT NULL,
+  pai_id           VARCHAR(36),
+  nome             VARCHAR(300) NOT NULL,
+  atividade        VARCHAR(200),
+  inicio           DATE         NOT NULL,
+  fim              DATE         NOT NULL,
+  progresso        SMALLINT     DEFAULT 0 NOT NULL,
+  quadro           VARCHAR(10)  DEFAULT 'backlog' NOT NULL,
+  marco            SMALLINT     DEFAULT 0 NOT NULL,
+  duracao          NUMERIC(6,2),
+  duracao_unidade  VARCHAR(6),
+  alocacao_pct     SMALLINT,
+  ordem            INTEGER      DEFAULT 0 NOT NULL,
   concluido_em     TIMESTAMP,
   CONSTRAINT pk_projeto_tarefas PRIMARY KEY (id),
   CONSTRAINT ck_tarefas_progresso CHECK (progresso BETWEEN 0 AND 100),
@@ -378,9 +432,9 @@ CREATE INDEX ix_tarefas_pai ON projeto_tarefas (pai_id);
 
 -- Substitui ProjectTask.responsaveis[]
 CREATE TABLE tarefa_responsaveis (
-  tarefa_id   VARCHAR2(36 CHAR) NOT NULL,
-  recurso_id  VARCHAR2(36 CHAR) NOT NULL,
-  principal   NUMBER(1)         DEFAULT 0 NOT NULL,
+  tarefa_id   VARCHAR(36) NOT NULL,
+  recurso_id  VARCHAR(36) NOT NULL,
+  principal   SMALLINT    DEFAULT 0 NOT NULL,
   CONSTRAINT pk_tarefa_responsaveis PRIMARY KEY (tarefa_id, recurso_id),
   CONSTRAINT ck_tresp_principal CHECK (principal IN (0,1)),
   CONSTRAINT fk_tresp_tarefa FOREIGN KEY (tarefa_id)
@@ -392,8 +446,8 @@ CREATE INDEX ix_tresp_recurso ON tarefa_responsaveis (recurso_id);
 
 -- Substitui ProjectTask.predecessoras[]
 CREATE TABLE tarefa_predecessoras (
-  tarefa_id        VARCHAR2(36 CHAR) NOT NULL,
-  predecessora_id  VARCHAR2(36 CHAR) NOT NULL,
+  tarefa_id        VARCHAR(36) NOT NULL,
+  predecessora_id  VARCHAR(36) NOT NULL,
   CONSTRAINT pk_tarefa_predecessoras PRIMARY KEY (tarefa_id, predecessora_id),
   CONSTRAINT ck_tpred_self CHECK (tarefa_id <> predecessora_id),
   CONSTRAINT fk_tpred_tarefa FOREIGN KEY (tarefa_id)
@@ -405,13 +459,13 @@ CREATE TABLE tarefa_predecessoras (
 CREATE INDEX ix_tpred_pred ON tarefa_predecessoras (predecessora_id);
 
 CREATE TABLE projeto_atualizacoes (
-  id                 VARCHAR2(36 CHAR) NOT NULL,
-  projeto_id         VARCHAR2(36 CHAR) NOT NULL,
-  autor_id           VARCHAR2(36 CHAR),
-  data_ref           DATE              NOT NULL,
-  descricao          CLOB,                        -- [TEXTO LIVRE]
-  ultimas_entregas   CLOB,                        -- [TEXTO LIVRE]
-  proximas_entregas  CLOB,                        -- [TEXTO LIVRE]
+  id                 VARCHAR(36) NOT NULL,
+  projeto_id         VARCHAR(36) NOT NULL,
+  autor_id           VARCHAR(36),
+  data_ref           DATE        NOT NULL,
+  descricao          TEXT,
+  ultimas_entregas   TEXT,
+  proximas_entregas  TEXT,
   criado_em          TIMESTAMP NOT NULL,
   CONSTRAINT pk_projeto_atualizacoes PRIMARY KEY (id),
   CONSTRAINT fk_patual_projeto FOREIGN KEY (projeto_id)
@@ -422,13 +476,13 @@ CREATE TABLE projeto_atualizacoes (
 CREATE INDEX ix_patual_projeto ON projeto_atualizacoes (projeto_id, data_ref);
 
 CREATE TABLE projeto_riscos (
-  id             VARCHAR2(36 CHAR) NOT NULL,
-  projeto_id     VARCHAR2(36 CHAR) NOT NULL,
-  descricao      CLOB              NOT NULL,   -- [TEXTO LIVRE]
-  probabilidade  VARCHAR2(10 CHAR) NOT NULL,
-  impacto        VARCHAR2(10 CHAR) NOT NULL,
-  mitigacao      CLOB,                         -- [TEXTO LIVRE]
-  status         VARCHAR2(12 CHAR) DEFAULT 'aberto' NOT NULL,
+  id             VARCHAR(36) NOT NULL,
+  projeto_id     VARCHAR(36) NOT NULL,
+  descricao      TEXT        NOT NULL,
+  probabilidade  VARCHAR(10) NOT NULL,
+  impacto        VARCHAR(10) NOT NULL,
+  mitigacao      TEXT,
+  status         VARCHAR(12) DEFAULT 'aberto' NOT NULL,
   criado_em      TIMESTAMP NOT NULL,
   CONSTRAINT pk_projeto_riscos PRIMARY KEY (id),
   CONSTRAINT ck_riscos_prob CHECK (probabilidade IN ('alta','media','baixa')),
@@ -441,13 +495,13 @@ CREATE TABLE projeto_riscos (
 CREATE INDEX ix_riscos_projeto ON projeto_riscos (projeto_id, status);
 
 CREATE TABLE projeto_atencoes (
-  id                      VARCHAR2(36 CHAR)  NOT NULL,
-  projeto_id              VARCHAR2(36 CHAR)  NOT NULL,
-  titulo                  VARCHAR2(300 CHAR) NOT NULL,   -- [TEXTO LIVRE]
-  descricao               CLOB,                          -- [TEXTO LIVRE]
-  decisao_necessaria      CLOB,                          -- [TEXTO LIVRE]
-  responsavel_decisao_id  VARCHAR2(36 CHAR),
-  status                  VARCHAR2(12 CHAR)  DEFAULT 'aberto' NOT NULL,
+  id                      VARCHAR(36)  NOT NULL,
+  projeto_id              VARCHAR(36)  NOT NULL,
+  titulo                  VARCHAR(300) NOT NULL,
+  descricao               TEXT,
+  decisao_necessaria      TEXT,
+  responsavel_decisao_id  VARCHAR(36),
+  status                  VARCHAR(12)  DEFAULT 'aberto' NOT NULL,
   criado_em               TIMESTAMP NOT NULL,
   resolvido_em            TIMESTAMP,
   CONSTRAINT pk_projeto_atencoes PRIMARY KEY (id),
@@ -460,6 +514,42 @@ CREATE TABLE projeto_atencoes (
 
 CREATE INDEX ix_atencoes_projeto ON projeto_atencoes (projeto_id, status);
 
+-- Baseline (Oracle: 09-baseline.sql): a foto do cronograma no momento
+-- em que foi aprovado. Sem ela nao existe "progresso esperado" nem
+-- desvio - so da para dizer onde o projeto esta, nunca se esta
+-- atrasado em relacao ao combinado.
+--
+-- Guardamos por versao: replanejamento e evento de governanca, e a
+-- comparacao com a PRIMEIRA baseline e o que revela derrapagem
+-- acumulada. Sobrescrever apagaria justamente essa evidencia.
+CREATE TABLE projeto_baselines (
+  id           VARCHAR(36)  NOT NULL,
+  projeto_id   VARCHAR(36)  NOT NULL,
+  versao       SMALLINT     NOT NULL,
+  descricao    VARCHAR(500),
+  autor_id     VARCHAR(36),
+  criado_em    TIMESTAMP    NOT NULL,
+  CONSTRAINT pk_projeto_baselines PRIMARY KEY (id),
+  CONSTRAINT uq_baseline_versao UNIQUE (projeto_id, versao),
+  CONSTRAINT fk_baseline_projeto FOREIGN KEY (projeto_id)
+    REFERENCES projetos (id) ON DELETE CASCADE,
+  CONSTRAINT fk_baseline_autor FOREIGN KEY (autor_id) REFERENCES usuarios (id)
+);
+
+-- Copia das datas por tarefa. tarefa_id sem FK de proposito: a tarefa
+-- pode ser excluida depois, e a baseline precisa sobreviver como
+-- registro historico do que foi planejado.
+CREATE TABLE baseline_tarefas (
+  baseline_id  VARCHAR(36)  NOT NULL,
+  tarefa_id    VARCHAR(36)  NOT NULL,
+  nome         VARCHAR(300) NOT NULL,
+  inicio       DATE         NOT NULL,
+  fim          DATE         NOT NULL,
+  CONSTRAINT pk_baseline_tarefas PRIMARY KEY (baseline_id, tarefa_id),
+  CONSTRAINT fk_bt_baseline FOREIGN KEY (baseline_id)
+    REFERENCES projeto_baselines (id) ON DELETE CASCADE
+);
+
 
 -- ---------------------------------------------------------------------
 -- 7. Notificacoes
@@ -468,17 +558,17 @@ CREATE INDEX ix_atencoes_projeto ON projeto_atencoes (projeto_id, status);
 -- referencia_tipo + referencia_id apontam para chamado ou projeto sem
 -- FK polimorfica (que nenhum banco valida bem).
 CREATE TABLE notificacoes (
-  id                  VARCHAR2(36 CHAR)   NOT NULL,
-  tipo                VARCHAR2(30 CHAR)   NOT NULL,
-  destinatario_id     VARCHAR2(36 CHAR),
-  destinatario_email  VARCHAR2(320 CHAR)  NOT NULL,
-  assunto             VARCHAR2(300 CHAR)  NOT NULL,   -- [TEXTO LIVRE]
-  corpo               CLOB,                           -- [TEXTO LIVRE]
-  referencia_tipo     VARCHAR2(20 CHAR),
-  referencia_id       VARCHAR2(36 CHAR),
-  status              VARCHAR2(12 CHAR)   DEFAULT 'pendente' NOT NULL,
-  tentativas          NUMBER(4)           DEFAULT 0 NOT NULL,
-  erro                VARCHAR2(1000 CHAR),
+  id                  VARCHAR(36)   NOT NULL,
+  tipo                VARCHAR(30)   NOT NULL,
+  destinatario_id     VARCHAR(36),
+  destinatario_email  VARCHAR(320)  NOT NULL,
+  assunto             VARCHAR(300)  NOT NULL,
+  corpo               TEXT,
+  referencia_tipo     VARCHAR(20),
+  referencia_id       VARCHAR(36),
+  status              VARCHAR(12)   DEFAULT 'pendente' NOT NULL,
+  tentativas          SMALLINT      DEFAULT 0 NOT NULL,
+  erro                VARCHAR(1000),
   criado_em           TIMESTAMP NOT NULL,
   enviado_em          TIMESTAMP,
   CONSTRAINT pk_notificacoes PRIMARY KEY (id),
@@ -492,3 +582,60 @@ CREATE TABLE notificacoes (
 
 CREATE INDEX ix_notif_status ON notificacoes (status, criado_em);
 CREATE INDEX ix_notif_referencia ON notificacoes (referencia_tipo, referencia_id);
+
+
+-- ---------------------------------------------------------------------
+-- 8. Calendario de atendimento (SLA em horario comercial)
+-- ---------------------------------------------------------------------
+--
+-- MODELO: cada linha de `expediente` e uma faixa continua de trabalho.
+-- O intervalo de almoco nao e uma coluna: e a lacuna entre a faixa da
+-- manha e a da tarde. Isso permite jornadas irregulares (sabado ate
+-- meio-dia, turno unico em algum dia) sem mudar o schema.
+--
+-- HORARIO EM MINUTOS: o Postgres tem tipo TIME, mas mantivemos minutos
+-- desde a meia-noite (0-1440) porque o calculo de SLA na aplicacao ja
+-- faz aritmetica direta com esses numeros. Mudar o tipo aqui mexeria
+-- em sla.server.ts sem ganho nenhum agora.
+-- 08:00 = 480, 12:00 = 720, 14:00 = 840, 18:00 = 1080.
+
+CREATE TABLE expediente (
+  id           VARCHAR(36) NOT NULL,
+  dia_semana   SMALLINT    NOT NULL,
+  minuto_ini   SMALLINT    NOT NULL,
+  minuto_fim   SMALLINT    NOT NULL,
+  ativo        SMALLINT    DEFAULT 1 NOT NULL,
+  CONSTRAINT pk_expediente PRIMARY KEY (id),
+  CONSTRAINT uq_expediente_dia_ini UNIQUE (dia_semana, minuto_ini),
+  -- 1=segunda ... 7=domingo (ISO 8601)
+  CONSTRAINT ck_expediente_dia CHECK (dia_semana BETWEEN 1 AND 7),
+  CONSTRAINT ck_expediente_ini CHECK (minuto_ini BETWEEN 0 AND 1440),
+  CONSTRAINT ck_expediente_fim CHECK (minuto_fim BETWEEN 0 AND 1440),
+  CONSTRAINT ck_expediente_ordem CHECK (minuto_fim > minuto_ini),
+  CONSTRAINT ck_expediente_ativo CHECK (ativo IN (0,1))
+);
+
+-- recorrente = 1: feriado de data fixa que se repete todo ano
+-- (Natal, Tiradentes). O ano gravado e irrelevante; a busca casa
+-- por mes e dia atraves das colunas gerada abaixo.
+-- recorrente = 0: data movel (Carnaval, Pascoa) ou ponto facultativo
+-- especifico daquele ano. Precisa ser cadastrado ano a ano.
+CREATE TABLE feriados (
+  id             VARCHAR(36)  NOT NULL,
+  data_feriado   DATE         NOT NULL,
+  descricao      VARCHAR(200) NOT NULL,
+  tipo           VARCHAR(12)  DEFAULT 'nacional' NOT NULL,
+  recorrente     SMALLINT     DEFAULT 0 NOT NULL,
+  ativo          SMALLINT     DEFAULT 1 NOT NULL,
+  mes            SMALLINT GENERATED ALWAYS AS (EXTRACT(MONTH FROM data_feriado)::smallint) STORED,
+  dia            SMALLINT GENERATED ALWAYS AS (EXTRACT(DAY FROM data_feriado)::smallint) STORED,
+  CONSTRAINT pk_feriados PRIMARY KEY (id),
+  CONSTRAINT uq_feriados_data UNIQUE (data_feriado),
+  CONSTRAINT ck_feriados_tipo CHECK (tipo IN
+    ('nacional','estadual','municipal','facultativo')),
+  CONSTRAINT ck_feriados_recorrente CHECK (recorrente IN (0,1)),
+  CONSTRAINT ck_feriados_ativo CHECK (ativo IN (0,1))
+);
+
+CREATE INDEX ix_feriados_data ON feriados (data_feriado, ativo);
+CREATE INDEX ix_feriados_recorrente ON feriados (recorrente, mes, dia, ativo);

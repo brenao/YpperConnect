@@ -5,8 +5,9 @@
 # O app e TanStack Start com SSR: nao e site estatico, entao a imagem final
 # roda um servidor Node (saida do Nitro em .output/), nao um nginx.
 #
-# node-oracledb roda em modo "thin" (ver src/integrations/oracle/client.server.ts):
-# nao precisa de Oracle Instant Client dentro da imagem.
+# O banco e PostgreSQL (ver src/integrations/postgres/client.server.ts). O
+# driver `pg` e JavaScript puro: nao ha biblioteca de cliente para instalar
+# na imagem.
 
 ARG NODE_VERSION=22-bookworm-slim
 
@@ -45,16 +46,22 @@ RUN npm run build
 
 # -------------------------------------------------------------------- runtime
 # So o .output entra aqui. O Nitro ja rastreia para dentro dele as dependencias
-# que o servidor usa em tempo de execucao — inclusive o oracledb, que o
-# vite.config.ts marca como `ssr.external`. Conferido na imagem construida:
-# .output/server/node_modules contem oracledb e tslib, e o conjunto da 8 MB.
-# Por isso nao existe estagio de "npm ci --omit=dev" nem copia de node_modules.
+# que o servidor usa em tempo de execucao — inclusive o `pg`, que o
+# vite.config.ts marca como `ssr.external`. Por isso nao existe estagio de
+# "npm ci --omit=dev" nem copia de node_modules.
+#
+# CONFERIR na primeira imagem construida apos a migracao:
+#   docker run --rm --entrypoint ls IMAGEM .output/server/node_modules
+# O `pg` precisa aparecer ai. Se nao aparecer, o container sobe e so quebra
+# na primeira consulta.
 FROM node:${NODE_VERSION} AS runtime
 WORKDIR /app
 
 # Fuso do container. Sem isto o Node roda em UTC e toda data renderizada no
-# servidor (SSR) sai 3 horas adiantada. O ORA_SDTZ do client.server.ts cobre
-# a sessao Oracle, nao o Date do JavaScript.
+# servidor (SSR) sai 3 horas adiantada. O PG_TIMEZONE do client.server.ts cobre
+# a sessao do banco, nao o Date do JavaScript — e o driver `pg` usa o fuso do
+# PROCESSO para converter Date em timestamp, entao esta linha tambem e o que
+# faz a data gravada bater com a data digitada.
 ENV TZ=America/Sao_Paulo
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 

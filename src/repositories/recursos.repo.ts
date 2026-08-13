@@ -1,4 +1,4 @@
-import { consultar, consultarUm, executar } from "@/integrations/oracle/client.server";
+import { consultar, consultarUm, executar } from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -167,9 +167,14 @@ export interface CargaRecurso {
  */
 export async function cargaPorRecurso(): Promise<CargaRecurso[]> {
   return consultar<CargaRecurso>(
+    // Os ::numeric NAO sao decoracao. alocacao_pct e
+    // disponibilidade_projetos sao inteiros, e no Postgres inteiro
+    // dividido por inteiro e DIVISAO INTEIRA: 50/100 daria 0, e a carga
+    // de todo mundo apareceria zerada sem erro nenhum. O Oracle nao tem
+    // essa armadilha porque NUMBER e sempre decimal.
     `SELECT tr.recurso_id,
-            SUM(NVL(t.alocacao_pct, 100) / 100 * r.horas_dia
-                * r.disponibilidade_projetos / 100) AS horas_comprometidas,
+            SUM(COALESCE(t.alocacao_pct, 100)::numeric / 100 * r.horas_dia
+                * r.disponibilidade_projetos::numeric / 100) AS horas_comprometidas,
             COUNT(DISTINCT t.projeto_id) AS projetos_ativos
        FROM tarefa_responsaveis tr
        JOIN projeto_tarefas t ON t.id = tr.tarefa_id
@@ -177,7 +182,7 @@ export async function cargaPorRecurso(): Promise<CargaRecurso[]> {
        JOIN recursos r ON r.id = tr.recurso_id
       WHERE t.quadro <> 'done'
         AND p.status IN ('planejamento','execucao')
-        AND TRUNC(SYSDATE) BETWEEN t.inicio AND t.fim
+        AND CURRENT_DATE BETWEEN t.inicio AND t.fim
       GROUP BY tr.recurso_id`,
   );
 }
