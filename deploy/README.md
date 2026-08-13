@@ -43,6 +43,7 @@ sudo cp atualizar-ypper.sh /var/ypper/ && sudo chmod +x /var/ypper/atualizar-ypp
 sudo cp .env.example /var/ypper/.env      # preencher Postgres, SMTP e IA
                                           # PG_USER=ypper (conta da aplicação,
                                           # nunca a conta pessoal do dev)
+                                          # SEM ASPAS nos valores — ver abaixo
 sudo chmod 600 /var/ypper/.env
 printf 'GITHUB_PAT=ghp_xxx\n' | sudo tee /var/ypper/.deploy.env
 sudo chmod 600 /var/ypper/.deploy.env
@@ -60,6 +61,25 @@ docker ps --filter name=ypper-app
 docker logs -n 50 ypper-app
 curl -I http://localhost:8083/ypper/
 ```
+
+### Aspas no `.env` quebram a conexão com o banco
+
+O `docker --env-file` **não** remove aspas ao redor do valor: `PG_PASSWORD="x"`
+vira a senha `"x"`, com as aspas dentro. O `node --env-file`, usado na máquina
+do dev, **remove** — por isso o mesmo arquivo funciona no dev e falha no
+container, e a mensagem que aparece é só `password authentication failed for
+user "ypper"`.
+
+Aconteceu no primeiro deploy com Postgres, em 2026-08-13. Para conferir sem
+imprimir a senha (o esperado é o tamanho exato dela, sem os 2 caracteres a
+mais):
+
+```bash
+docker exec ypper-app sh -c 'printf %s "$PG_PASSWORD" | wc -c'
+```
+
+E, depois de corrigir o `.env`, **recrie o container**: `--env-file` só é lido
+na criação, então `docker restart` mantém o valor velho.
 
 ## Passos no rosset16
 

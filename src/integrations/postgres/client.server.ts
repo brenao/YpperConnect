@@ -43,7 +43,36 @@ let pool: pg.Pool | undefined;
 function obrigatorio(nome: string): string {
   const v = process.env[nome];
   if (!v) throw new Error(`Variável de ambiente ${nome} não configurada`);
+  avisarSeEntreAspas(nome, v);
   return v;
+}
+
+/**
+ * Aspas no .env: a pegadinha que custou um deploy.
+ *
+ * `node --env-file` REMOVE as aspas ao redor do valor. O
+ * `docker --env-file` NAO remove: ele pega tudo depois do `=` como
+ * literal. A mesma linha
+ *
+ *     PG_PASSWORD="senha"
+ *
+ * funciona rodando na maquina do dev e falha dentro do container, com
+ * uma mensagem que nao ajuda em nada: "password authentication failed".
+ *
+ * Aqui so avisamos, nao corrigimos. Tirar as aspas por conta propria
+ * esconderia o problema, e uma senha pode legitimamente conter aspas no
+ * meio - o que nao pode e comecar e terminar com elas.
+ */
+function avisarSeEntreAspas(nome: string, valor: string): void {
+  const aspa = valor[0];
+  if ((aspa === '"' || aspa === "'") && valor.length > 1 && valor.endsWith(aspa)) {
+    console.error(
+      `[postgres] ATENÇÃO: ${nome} começa e termina com ${aspa}. ` +
+        `O docker --env-file não remove aspas, então elas fazem parte do valor ` +
+        `e a conexão vai falhar. Retire as aspas da linha ${nome}= no .env ` +
+        `e recrie o container (docker restart não relê o --env-file).`,
+    );
+  }
 }
 
 function getPool(): pg.Pool {
