@@ -6,7 +6,7 @@ import { z } from "zod";
  * ao cliente — sem regra de negócio aqui.
  *
  * Os repositórios são importados dinamicamente dentro do handler para
- * o driver pg nunca entrar no bundle do navegador.
+ * o driver do Postgres nunca entrar no bundle do navegador.
  *
  * Os tipos inferidos do Zod são exportados porque as telas precisam
  * tipar as mutations: Parameters<typeof fn>[0]["data"] não funciona,
@@ -82,14 +82,14 @@ export const criarChamadoFn = createServerFn({ method: "POST" })
     // Fora da transação do chamado: um relay indisponível não pode
     // impedir a abertura. Falha aqui só deixa o chamado sem aviso.
     try {
-      const { enfileirar } = await import("@/repositories/notificacoes.repo");
-      await enfileirar({
+      await avisar({
         tipo: "chamado_criado",
-        destinatarioId: ctx.id,
-        destinatarioEmail: ctx.email,
+        destinatarios: [ctx.id, r.responsavelId],
+        autorId: ctx.id,
         assunto: `[${r.codigo}] ${data.titulo}`,
-        corpo: `Seu chamado ${r.codigo} foi registrado.\n\n${data.descricao}`,
-        referenciaTipo: "chamado",
+        corpo:
+          `O chamado ${r.codigo} — ${data.titulo} — foi registrado.\n\n${data.descricao}` +
+          (r.responsavelId ? `\n\nAtribuído automaticamente pelo cadastro do sistema.` : ""),
         referenciaId: r.id,
       });
     } catch (e) {
@@ -128,30 +128,20 @@ export const atualizarChamadoFn = createServerFn({ method: "POST" })
     // interessa ao solicitante e geraria ruído.
     if (mudancas.status) {
       try {
-        const { enfileirar } = await import("@/repositories/notificacoes.repo");
-        const { consultarUm } = await import("@/integrations/postgres/client.server");
         const chamado = await buscarChamado(id);
-
         if (chamado) {
-          const dest = await consultarUm<{ email: string }>(
-            `SELECT email FROM usuarios WHERE id = :id`,
-            { id: chamado.solicitanteId },
-          );
-          if (dest) {
-            await enfileirar({
-              tipo: "chamado_status",
-              destinatarioId: chamado.solicitanteId,
-              destinatarioEmail: dest.email,
-              assunto: `[${chamado.codigo}] Status atualizado: ${mudancas.status}`,
-              corpo:
-                `O chamado ${chamado.codigo} — ${chamado.titulo} — passou para "${mudancas.status}".` +
-                (chamado.descricaoEncerramento
-                  ? `\n\nEncerramento: ${chamado.descricaoEncerramento}`
-                  : ""),
-              referenciaTipo: "chamado",
-              referenciaId: id,
-            });
-          }
+          await avisar({
+            tipo: "chamado_status",
+            destinatarios: [chamado.solicitanteId, chamado.responsavelId],
+            autorId: ctx.id,
+            assunto: `[${chamado.codigo}] Status atualizado: ${mudancas.status}`,
+            corpo:
+              `O chamado ${chamado.codigo} — ${chamado.titulo} — passou para "${mudancas.status}".` +
+              (chamado.descricaoEncerramento
+                ? `\n\nEncerramento: ${chamado.descricaoEncerramento}`
+                : ""),
+            referenciaId: id,
+          });
         }
       } catch (e) {
         console.error("Falha ao enfileirar notificação de status", e);
@@ -178,3 +168,49 @@ export const adicionarInteracaoFn = createServerFn({ method: "POST" })
     await adicionarInteracao(ctx, data.chamadoId, data.tipo, data.corpo);
     return { ok: true };
   });
+
+/**
+ * Enfileira o mesmo aviso para solicitante e responsável.
+ *
+ * Quem provocou a mudança fica de fora: receber e-mail da própria ação
+ * é ruído, e é o caminho mais curto para o time criar regra de caixa de
+ * entrada que descarta tudo do sistema.
+ */
+async function avisar(a: {
+  tipo: "chamado_criado" | "chamado_status";
+  destinatarios: (string | null | undefined)[];
+  autorId: string;
+  assunto: string;
+  corpo: string;
+  referenciaId: string;
+}): Promise<void> {
+  const ids = [...new Set(a.destinatarios.filter((d): d is string => !!d && d !== a.autorId))];
+  if (ids.length === 0) return;
+
+  const { enfileirar } = await import("@/repositories/notificacoes.repo");
+  const { consultar } = await import("@/integrations/postgres/client.server");
+
+  const binds: Record<string, unknown> = {};
+  const chaves = ids.map((id, i) => {
+    binds[`u${i}`] = id;
+    return `:u${i}`;
+  });
+
+  const pessoas = await consultar<{ id: string; email: string }>(
+    `SELECT id, email FROM usuarios WHERE ativo = 1 AND email IS NOT NULL
+      AND id IN (${chaves.join(",")})`,
+    binds,
+  );
+
+  for (const p of pessoas) {
+    await enfileirar({
+      tipo: a.tipo,
+      destinatarioId: p.id,
+      destinatarioEmail: p.email,
+      assunto: a.assunto,
+      corpo: a.corpo,
+      referenciaTipo: "chamado",
+      referenciaId: a.referenciaId,
+    });
+  }
+}

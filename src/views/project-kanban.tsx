@@ -89,9 +89,15 @@ export function ProjectKanban({
                       onDragEnd={() => setArrastando(null)}
                       onClick={() => editavel && onEditar(t)}
                       className={cn(
-                        "w-full rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40",
+                        // Post-it: amarelo fixo nos dois temas, canto inferior
+                        // direito dobrado e leve inclinação para o quadro não
+                        // parecer uma planilha.
+                        "w-full rounded-sm p-3 text-left shadow-sm transition-transform",
+                        "bg-[#fde68a] text-[#3f3000] [clip-path:polygon(0_0,100%_0,100%_calc(100%-14px),calc(100%-14px)_100%,0_100%)]",
+                        "hover:-rotate-1 hover:shadow-md",
+                        done ? "bg-[#e7e3cf]" : "",
                         editavel ? "cursor-grab active:cursor-grabbing" : "cursor-default",
-                        arrastando === t.id ? "opacity-50" : "",
+                        arrastando === t.id ? "rotate-2 opacity-60" : "",
                       )}
                     >
                       <p
@@ -105,25 +111,28 @@ export function ProjectKanban({
 
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         {t.marco ? (
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge
+                            variant="outline"
+                            className="border-[#8a6d09]/40 text-[10px] text-[#6b5a15]"
+                          >
                             marco
                           </Badge>
                         ) : null}
-                        <span className="font-mono text-[11px] text-muted-foreground">
+                        <span className="font-mono text-[11px] text-[#6b5a15]">
                           {fmt(t.inicio)} — {fmt(t.fim)}
                         </span>
                       </div>
 
                       {(responsaveis[t.id] ?? []).length > 0 ? (
-                        <p className="mt-1.5 truncate text-[11px] text-muted-foreground">
+                        <p className="mt-1.5 truncate text-[11px] text-[#6b5a15]">
                           {(responsaveis[t.id] ?? []).map(nomeRecurso).join(", ")}
                         </p>
                       ) : null}
 
                       {!done && t.progresso > 0 ? (
-                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-secondary">
+                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-[#00000022]">
                           <div
-                            className="h-full rounded-full bg-primary/70"
+                            className="h-full rounded-full bg-[#8a6d09]"
                             style={{ width: `${t.progresso}%` }}
                           />
                         </div>

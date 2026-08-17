@@ -468,7 +468,6 @@ export async function moverTarefa(
   );
 }
 
-/** Exclusão em cascata na aplicação: o Oracle não faz cascade em auto-FK. */
 export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirTi(ctx, "excluir tarefas");
   await emTransacao(async (tx) => {
@@ -671,11 +670,33 @@ export function calcularRollup(tarefas: Tarefa[]): TarefaCalculada[] {
 
 // ------------------------------------------------------- edição inline
 
+export type UnidadeDuracao = "horas" | "dias";
+
+/** Jornada usada para converter horas em dias corridos de cronograma. */
+export const HORAS_POR_DIA = 8;
+
+/**
+ * Duração informada pelo usuário para dias de calendário da tarefa.
+ * Arredonda para cima: 4h e 8h ocupam o mesmo dia na grade.
+ */
+export function duracaoParaDias(duracao: number, unidade: UnidadeDuracao): number {
+  const dias = unidade === "horas" ? duracao / HORAS_POR_DIA : duracao;
+  return Math.max(1, Math.ceil(dias));
+}
+
+/** Caminho inverso, para exibir a duração de tarefa que só tem datas. */
+export function diasParaDuracao(dias: number, unidade: UnidadeDuracao): number {
+  return unidade === "horas" ? dias * HORAS_POR_DIA : dias;
+}
+
 export interface CampoTarefa {
   progresso?: number | undefined;
   inicio?: Date | undefined;
   fim?: Date | undefined;
   nome?: string | undefined;
+  /** Quando vem, recalcula `fim` a partir do início. */
+  duracao?: number | undefined;
+  duracaoUnidade?: UnidadeDuracao | undefined;
 }
 
 /**
@@ -701,14 +722,40 @@ export async function atualizarCampoTarefa(
     throw new ErroDominio("Tarefa com subtarefas tem datas e progresso calculados a partir delas.");
   }
 
-  const atual = await consultarUm<{ inicio: Date; fim: Date }>(
-    `SELECT inicio, fim FROM projeto_tarefas WHERE id = :id`,
+  const atual = await consultarUm<{ inicio: Date; fim: Date; duracaoUnidade: string | null }>(
+    `SELECT inicio, fim, duracao_unidade FROM projeto_tarefas WHERE id = :id`,
     { id },
   );
   if (!atual) throw new ErroDominio(`Tarefa ${id} não encontrada`);
 
   const inicio = d.inicio ?? new Date(atual.inicio);
-  const fim = d.fim ?? new Date(atual.fim);
+
+  // Duração manda no término: quem digita "16h" espera que o fim ande,
+  // não que o sistema reclame de incoerência com a data antiga.
+  let fim = d.fim ?? new Date(atual.fim);
+  let duracao: number | null = null;
+  let unidade: UnidadeDuracao | null = null;
+
+  if (d.duracao !== undefined) {
+    if (!Number.isFinite(d.duracao) || d.duracao <= 0) {
+      throw new ErroDominio("Duração deve ser maior que zero");
+    }
+    const anterior = atual.duracaoUnidade === "dias" ? "dias" : "horas";
+    unidade = d.duracaoUnidade ?? anterior;
+    duracao = d.duracao;
+
+    fim = new Date(inicio);
+    fim.setDate(fim.getDate() + duracaoParaDias(d.duracao, unidade) - 1);
+  } else if (d.duracaoUnidade !== undefined) {
+    // Só trocou a unidade de exibição: converte o valor guardado.
+    unidade = d.duracaoUnidade;
+    const diasAtuais =
+      Math.round(
+        (new Date(fim).setHours(0, 0, 0, 0) - new Date(inicio).setHours(0, 0, 0, 0)) / 86_400_000,
+      ) + 1;
+    duracao = diasParaDuracao(Math.max(1, diasAtuais), d.duracaoUnidade);
+  }
+
   if (fim < inicio) throw new ErroDominio("Data de término anterior ao início");
 
   const concluida = d.progresso === 100;
@@ -719,6 +766,8 @@ export async function atualizarCampoTarefa(
             progresso = COALESCE(:progresso, progresso),
             inicio = :inicio,
             fim = :fim,
+            duracao = COALESCE(:duracao, duracao),
+            duracao_unidade = COALESCE(:unidade, duracao_unidade),
             quadro = CASE WHEN :concluida = 1 THEN 'done'
                           WHEN quadro = 'done' THEN 'doing' ELSE quadro END,
             concluido_em = CASE WHEN :concluida = 1
@@ -730,6 +779,8 @@ export async function atualizarCampoTarefa(
       progresso: d.progresso ?? null,
       inicio,
       fim,
+      duracao,
+      unidade,
       concluida: deBool(concluida),
     },
   );
@@ -977,4 +1028,302 @@ export function calcularCpm(
   }
 
   return saida;
+}
+
+// ----------------------------------------------------- vínculos em linha
+
+export interface VinculosTarefa {
+  responsaveis?: string[] | undefined;
+  predecessoras?: string[] | undefined;
+}
+
+/**
+ * Grava só os vínculos da tarefa.
+ *
+ * Existe separada de `atualizarTarefa` porque aquela reescreve a linha
+ * inteira — chamá-la com payload parcial apagaria atividade, marco e
+ * alocação. A grade de tarefas edita responsável e predecessora em
+ * linha e manda apenas o que mudou.
+ */
+export async function atualizarVinculosTarefa(
+  ctx: ContextoUsuario,
+  id: string,
+  d: VinculosTarefa,
+): Promise<void> {
+  exigirTi(ctx, "alterar tarefas");
+
+  const tarefa = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
+    { id },
+  );
+  if (!tarefa) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+
+  if (d.responsaveis && d.responsaveis.length > 0) {
+    const filhas = await consultarUm<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id`,
+      { id },
+    );
+    if ((filhas?.total ?? 0) > 0) {
+      throw new ErroDominio(
+        "Tarefa com subtarefas não tem responsável próprio: quem executa são as filhas.",
+      );
+    }
+    await validarRecursos(d.responsaveis);
+  }
+
+  if (d.predecessoras && d.predecessoras.length > 0) {
+    await validarPredecessoras(id, tarefa.projetoId, d.predecessoras);
+  }
+
+  await emTransacao(async (tx) => {
+    if (d.responsaveis) {
+      await tx.executar(`DELETE FROM tarefa_responsaveis WHERE tarefa_id = :id`, { id });
+      for (const r of new Set(d.responsaveis)) {
+        await tx.executar(
+          `INSERT INTO tarefa_responsaveis (tarefa_id, recurso_id) VALUES (:t, :r)`,
+          { t: id, r },
+        );
+      }
+    }
+    if (d.predecessoras) {
+      await tx.executar(`DELETE FROM tarefa_predecessoras WHERE tarefa_id = :id`, { id });
+      for (const p of new Set(d.predecessoras)) {
+        if (p === id) continue;
+        await tx.executar(
+          `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id) VALUES (:t, :p)`,
+          { t: id, p },
+        );
+      }
+    }
+  });
+}
+
+/** Recusa recurso inexistente ou desativado antes de gravar o vínculo. */
+async function validarRecursos(ids: string[]): Promise<void> {
+  const unicos = [...new Set(ids)];
+  const binds: Record<string, unknown> = {};
+  const chaves = unicos.map((id, i) => {
+    binds[`r${i}`] = id;
+    return `:r${i}`;
+  });
+
+  const achados = await consultar<{ id: string }>(
+    `SELECT id FROM recursos WHERE ativo = 1 AND id IN (${chaves.join(",")})`,
+    binds,
+  );
+  if (achados.length !== unicos.length) {
+    throw new ErroDominio("Responsável não encontrado ou desativado em Recursos.");
+  }
+}
+
+/**
+ * Predecessora precisa ser do mesmo projeto e não pode fechar ciclo —
+ * o CPM entraria em laço e o cronograma perderia o sentido.
+ */
+async function validarPredecessoras(id: string, projetoId: string, novas: string[]): Promise<void> {
+  if (novas.includes(id)) throw new ErroDominio("Uma tarefa não pode depender de si mesma.");
+
+  const unicas = [...new Set(novas)];
+  const binds: Record<string, unknown> = { projetoId };
+  const chaves = unicas.map((p, i) => {
+    binds[`p${i}`] = p;
+    return `:p${i}`;
+  });
+
+  const mesmas = await consultar<{ id: string }>(
+    `SELECT id FROM projeto_tarefas
+      WHERE projeto_id = :projetoId AND id IN (${chaves.join(",")})`,
+    binds,
+  );
+  if (mesmas.length !== unicas.length) {
+    throw new ErroDominio("Predecessora precisa ser uma tarefa do mesmo projeto.");
+  }
+
+  // Grafo atual do projeto, com as arestas propostas no lugar das antigas.
+  const arestas = await consultar<{ tarefaId: string; predecessoraId: string }>(
+    `SELECT tp.tarefa_id, tp.predecessora_id
+       FROM tarefa_predecessoras tp
+       JOIN projeto_tarefas t ON t.id = tp.tarefa_id
+      WHERE t.projeto_id = :projetoId`,
+    { projetoId },
+  );
+
+  const grafo = new Map<string, string[]>();
+  for (const a of arestas) {
+    if (a.tarefaId === id) continue;
+    grafo.set(a.tarefaId, [...(grafo.get(a.tarefaId) ?? []), a.predecessoraId]);
+  }
+  grafo.set(id, unicas);
+
+  // Subindo pelas predecessoras: se voltar em `id`, há ciclo.
+  const visitados = new Set<string>();
+  const pilha = [...unicas];
+  while (pilha.length > 0) {
+    const atual = pilha.pop();
+    if (!atual) continue;
+    if (atual === id) throw new ErroDominio("Essa dependência criaria um ciclo no cronograma.");
+    if (visitados.has(atual)) continue;
+    visitados.add(atual);
+    pilha.push(...(grafo.get(atual) ?? []));
+  }
+}
+
+/**
+ * Tarefas da baseline mais recente. É contra ela que se mede "o
+ * cronograma mudou desde a última foto?" — diferente de
+ * `baselineOriginal`, que mede o desvio acumulado do plano inicial.
+ */
+export async function baselineAtual(projetoId: string): Promise<BaselineTarefa[]> {
+  return consultar<BaselineTarefa>(
+    `SELECT bt.tarefa_id, bt.nome, bt.inicio, bt.fim
+       FROM baseline_tarefas bt
+       JOIN projeto_baselines b ON b.id = bt.baseline_id
+      WHERE b.projeto_id = :projetoId
+        AND b.versao = (SELECT MAX(versao) FROM projeto_baselines WHERE projeto_id = :projetoId)`,
+    { projetoId },
+  );
+}
+
+/** Tarefas de uma baseline específica, para o histórico de versões. */
+export async function tarefasDaBaseline(baselineId: string): Promise<BaselineTarefa[]> {
+  return consultar<BaselineTarefa>(
+    `SELECT tarefa_id, nome, inicio, fim
+       FROM baseline_tarefas
+      WHERE baseline_id = :baselineId
+      ORDER BY inicio`,
+    { baselineId },
+  );
+}
+
+// ------------------------------------------------------- nível na WBS
+
+/**
+ * Endenta ou desendenta a tarefa, mudando só o pai e a ordem.
+ *
+ * Separada de `atualizarTarefa` pelo mesmo motivo dos vínculos: aquela
+ * reescreve a linha inteira. Aqui o teclado troca o nível da tarefa sem
+ * tocar em nada que o usuário digitou.
+ *
+ * "dentro" adota a irmã imediatamente acima como mãe — é o único destino
+ * que preserva a leitura da WBS. "fora" sobe um nível e se posiciona logo
+ * depois da antiga mãe.
+ */
+export async function aninharTarefa(
+  ctx: ContextoUsuario,
+  id: string,
+  direcao: "dentro" | "fora",
+): Promise<void> {
+  exigirTi(ctx, "alterar tarefas");
+
+  const t = await consultarUm<{ projetoId: string; paiId: string | null; ordem: number }>(
+    `SELECT projeto_id, pai_id, ordem FROM projeto_tarefas WHERE id = :id`,
+    { id },
+  );
+  if (!t) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+
+  if (direcao === "dentro") {
+    // A nova mãe é a irmã de cima. Sem irmã acima não há onde endentar:
+    // a tarefa já é a primeira do seu nível.
+    //
+    // IS NOT DISTINCT FROM compara NULL com NULL como igual, o que
+    // resolve a tarefa de primeiro nível sem sentinela.
+    const anterior = await consultarUm<{ id: string }>(
+      `SELECT id FROM projeto_tarefas
+        WHERE projeto_id = :projetoId
+          AND pai_id IS NOT DISTINCT FROM :paiId
+          AND ordem < :ordem
+        ORDER BY ordem DESC
+        LIMIT 1`,
+      { projetoId: t.projetoId, paiId: t.paiId, ordem: t.ordem },
+    );
+    if (!anterior) {
+      throw new ErroDominio("Não há tarefa acima no mesmo nível para receber esta como subtarefa.");
+    }
+
+    await executar(`UPDATE projeto_tarefas SET pai_id = :paiId WHERE id = :id`, {
+      id,
+      paiId: anterior.id,
+    });
+    return;
+  }
+
+  if (t.paiId === null) {
+    throw new ErroDominio("A tarefa já está no nível mais alto.");
+  }
+
+  const mae = await consultarUm<{ paiId: string | null; ordem: number }>(
+    `SELECT pai_id, ordem FROM projeto_tarefas WHERE id = :id`,
+    { id: t.paiId },
+  );
+  if (!mae) throw new ErroDominio("Tarefa mãe não encontrada");
+
+  // Sobe um nível e se coloca logo abaixo da antiga mãe, senão a linha
+  // saltaria para o fim do grupo e o usuário perderia a tarefa de vista.
+  await emTransacao(async (tx) => {
+    await tx.executar(
+      `UPDATE projeto_tarefas SET ordem = ordem + 1
+        WHERE projeto_id = :projetoId AND ordem > :ordem`,
+      { projetoId: t.projetoId, ordem: mae.ordem },
+    );
+    await tx.executar(`UPDATE projeto_tarefas SET pai_id = :paiId, ordem = :ordem WHERE id = :id`, {
+      id,
+      paiId: mae.paiId,
+      ordem: mae.ordem + 1,
+    });
+  });
+}
+
+// ------------------------------------------------------------ lembretes
+
+export interface ProjetoSemAtualizacao {
+  id: string;
+  nome: string;
+  gerenteId: string | null;
+  gerenteEmail: string | null;
+  gerenteNome: string | null;
+  /** Dias desde a última atualização, ou desde a criação se nunca houve. */
+  diasSemAtualizar: number;
+  /** true quando já saiu lembrete deste projeto hoje. */
+  avisadoHoje: boolean;
+}
+
+/** Booleano é SMALLINT 0/1 no schema: avisado_hoje volta como número. */
+interface LinhaProjetoSemAtualizacao extends Omit<ProjetoSemAtualizacao, "avisadoHoje"> {
+  avisadoHoje: number;
+}
+
+/**
+ * Projetos que passaram do prazo de acompanhamento semanal.
+ *
+ * Só entram os que estão vivos: cobrar atualização de projeto concluído
+ * ou cancelado é ruído que ensina o gerente a ignorar o aviso.
+ *
+ * O `avisado_hoje` sai da própria fila de notificações — assim o
+ * lembrete diário não depende de coluna nova nem de estado em memória,
+ * e rodar a rotina duas vezes no mesmo dia não duplica e-mail.
+ */
+export async function projetosSemAtualizacao(
+  diasMinimos: number,
+): Promise<ProjetoSemAtualizacao[]> {
+  const linhas = await consultar<LinhaProjetoSemAtualizacao>(
+    `SELECT p.id, p.nome, p.gerente_id, u.email AS gerente_email, u.nome AS gerente_nome,
+            CURRENT_DATE - COALESCE(a.ultima, p.criado_em::date) AS dias_sem_atualizar,
+            CASE WHEN n.enviados > 0 THEN 1 ELSE 0 END AS avisado_hoje
+       FROM projetos p
+       LEFT JOIN usuarios u ON u.id = p.gerente_id
+       LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
+                    FROM projeto_atualizacoes GROUP BY projeto_id) a
+              ON a.projeto_id = p.id
+       LEFT JOIN (SELECT referencia_id, COUNT(*) AS enviados
+                    FROM notificacoes
+                   WHERE tipo = 'projeto_lembrete'
+                     AND criado_em >= CURRENT_DATE
+                   GROUP BY referencia_id) n
+              ON n.referencia_id = p.id
+      WHERE p.status IN ('planejamento', 'execucao', 'paralisado')
+        AND CURRENT_DATE - COALESCE(a.ultima, p.criado_em::date) >= :diasMinimos
+      ORDER BY dias_sem_atualizar DESC`,
+    { diasMinimos },
+  );
+  return linhas.map((l) => ({ ...l, avisadoHoje: paraBool(l.avisadoHoje) }));
 }

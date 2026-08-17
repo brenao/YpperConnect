@@ -305,6 +305,24 @@ export const processarFilaEmailFn = createServerFn({ method: "POST" }).handler(a
   return processarFila();
 });
 
+/**
+ * Gera os lembretes de projeto e despacha a fila, na ordem.
+ *
+ * É a mesma rotina que o cron chama; existe aqui como botão para o
+ * administrador conseguir rodar sob demanda e ver o resultado.
+ */
+export const executarRotinasFn = createServerFn({ method: "POST" }).handler(async () => {
+  const c = await ctx();
+  if (!c.admin) throw new Error("Somente administradores podem executar as rotinas");
+
+  const { gerarLembretesProjeto } = await import("@/services/lembretes.server");
+  const { processarFila } = await import("@/services/notificacoes.server");
+
+  const lembretes = await gerarLembretesProjeto();
+  const fila = await processarFila();
+  return { lembretes, fila };
+});
+
 export const testarSmtpFn = createServerFn({ method: "POST" }).handler(async () => {
   const c = await ctx();
   if (!c.admin) throw new Error("Somente administradores podem testar o SMTP");

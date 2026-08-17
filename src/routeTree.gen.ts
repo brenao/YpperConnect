@@ -21,6 +21,7 @@ import { Route as PermissoesRouteImport } from './routes/permissoes'
 import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as RecursosRouteImport } from './routes/recursos'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
+import { Route as ApiRotinasRouteImport } from './routes/api/rotinas'
 import { Route as ProjetosProjectIdRouteImport } from './routes/projetos_.$projectId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -83,6 +84,11 @@ const ApiChatRoute = ApiChatRouteImport.update({
   path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiRotinasRoute = ApiRotinasRouteImport.update({
+  id: '/api/rotinas',
+  path: '/api/rotinas',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjetosProjectIdRoute = ProjetosProjectIdRouteImport.update({
   id: '/projetos_/$projectId',
   path: '/projetos/$projectId',
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/rotinas': typeof ApiRotinasRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRoutesByTo {
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/rotinas': typeof ApiRotinasRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRoutesById {
@@ -133,6 +141,7 @@ export interface FileRoutesById {
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/rotinas': typeof ApiRotinasRoute
   '/projetos_/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRouteTypes {
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/projetos'
     | '/recursos'
     | '/api/chat'
+    | '/api/rotinas'
     | '/projetos/$projectId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
     | '/projetos'
     | '/recursos'
     | '/api/chat'
+    | '/api/rotinas'
     | '/projetos/$projectId'
   id:
     | '__root__'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
     | '/projetos'
     | '/recursos'
     | '/api/chat'
+    | '/api/rotinas'
     | '/projetos_/$projectId'
   fileRoutesById: FileRoutesById
 }
@@ -196,6 +208,7 @@ export interface RootRouteChildren {
   ProjetosRoute: typeof ProjetosRoute
   RecursosRoute: typeof RecursosRoute
   ApiChatRoute: typeof ApiChatRoute
+  ApiRotinasRoute: typeof ApiRotinasRoute
   ProjetosProjectIdRoute: typeof ProjetosProjectIdRoute
 }
 
@@ -285,6 +298,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/rotinas': {
+      id: '/api/rotinas'
+      path: '/api/rotinas'
+      fullPath: '/api/rotinas'
+      preLoaderRoute: typeof ApiRotinasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projetos_/$projectId': {
       id: '/projetos_/$projectId'
       path: '/projetos/$projectId'
@@ -308,6 +328,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjetosRoute: ProjetosRoute,
   RecursosRoute: RecursosRoute,
   ApiChatRoute: ApiChatRoute,
+  ApiRotinasRoute: ApiRotinasRoute,
   ProjetosProjectIdRoute: ProjetosProjectIdRoute,
 }
 export const routeTree = rootRouteImport

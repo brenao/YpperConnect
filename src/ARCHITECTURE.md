@@ -1,18 +1,16 @@
-# Arquitetura (MVC)
+# Arquitetura
 
-O código está organizado em camadas MVC adaptadas ao TanStack Start.
+Cinco camadas. A regra que sustenta todas: **o cliente Oracle nunca pode chegar
+ao navegador**.
 
-| Camada         | Pasta                                          | Responsabilidade                                                                                                                                                                                                     |
-| -------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Model**      | `src/models/`                                  | Tipos de domínio, enums, regras de classificação (matriz de prioridade, SLA) e dados iniciais (`itsm-seed.ts`). Sem React.                                                                                           |
-| **Service**    | `src/services/`                                | Regras de negócio e cálculos: cronograma/CPM (`project-utils`), capacidade de recursos (`resource-utils`), notificações (`notifications`) e funções de servidor de IA (`ai-*.functions.ts`, `ai-gateway.server.ts`). |
-| **Controller** | `src/controllers/`                             | Orquestração de estado e casos de uso expostos à UI (`itsm-store.tsx`). Ponte entre models/services e as views.                                                                                                      |
-| **View**       | `src/views/` e `src/routes/`                   | `src/routes/` são as páginas (roteamento por arquivo, obrigatório do framework); `src/views/` contém os componentes de tela do domínio.                                                                              |
-| Infra/UI       | `src/components/ui/`, `src/hooks/`, `src/lib/` | Design system (shadcn), hooks genéricos e utilitários sem domínio (`utils`, `theme`, tratamento de erro).                                                                                                            |
+| Camada          | Pasta                        | Responsabilidade                                                                                     |
+| --------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Infra de dados  | `src/integrations/oracle/`   | Pool de conexão, `consultar`/`executar`/`emTransacao` e cálculo de prazo de SLA sobre o calendário.   |
+| Modelo          | `src/models/`                | Tipos de domínio, matriz de prioridade, matriz de SLA, catálogo de módulos e permissões. Sem React.   |
+| Repositório     | `src/repositories/*.repo.ts` | Todo o SQL. Uma unidade por assunto. Recebe `ContextoUsuario` para gravar autoria.                    |
+| Server function | `src/services/*.functions.ts`| Ponte cliente↔servidor: valida entrada com Zod e chama o repositório. Sem regra de negócio.           |
+| Serviço         | `src/services/*.ts`          | Cálculo puro reaproveitável entre telas (`gantt-utils`, `resource-utils`, `notifications`).           |
+| Tela            | `src/routes/`, `src/views/`  | `routes/` são as páginas (roteamento por arquivo); `views/` são os componentes de domínio.            |
+| UI genérica     | `src/components/ui/`, `src/hooks/`, `src/lib/` | Design system (shadcn), hooks e utilitários sem domínio (`utils`, `datas`, `theme`). |
 
-## Regras
-
-- Views nunca importam `src/models` diretamente para lógica — apenas tipos; a lógica vem de services/controllers.
-- Services não importam React nem componentes.
-- `src/routes/` deve permanecer fino: monta a view e liga ao controller.
-- `src/routeTree.gen.ts` é gerado — não editar.
+## O caminho de uma requisição

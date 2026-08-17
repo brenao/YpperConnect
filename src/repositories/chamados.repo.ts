@@ -12,7 +12,7 @@ export type TipoInteracao = "comentario" | "nota_interna" | "email";
 export interface Chamado {
   id: string;
   numero: number;
-  /** Código legível e imutável: INC-1000, REQ-1001... Coluna virtual no banco. */
+  /** Código legível e imutável: INC-1000, REQ-1001... Coluna gerada no banco. */
   codigo: string;
   titulo: string;
   descricao: string;
@@ -111,7 +111,7 @@ export async function listarChamados(f: FiltroChamados = {}): Promise<Chamado[]>
   const cond: string[] = [];
   const binds: Record<string, unknown> = {};
 
-  // Listas viram :s0, :s1... porque Oracle não aceita array em IN.
+  // Listas viram :s0, :s1... porque não dá para passar array num bind.
   if (f.status?.length) {
     const chaves = f.status.map((s, i) => {
       binds[`s${i}`] = s;
@@ -220,7 +220,7 @@ export interface NovoChamado {
 export async function criarChamado(
   ctx: ContextoUsuario,
   dados: NovoChamado,
-): Promise<{ id: string; numero: number; codigo: string }> {
+): Promise<{ id: string; numero: number; codigo: string; responsavelId: string | null }> {
   if (dados.tipo === "problema" && !ctx.admin && ctx.equipeId === null) {
     throw new ErroDominio("Usuários finais não podem abrir Problemas");
   }
@@ -242,15 +242,23 @@ export async function criarChamado(
   const id = novoId();
   const solicitanteId = dados.solicitanteId ?? ctx.id;
 
+  // Roteamento automático. O cadastro do sistema diz quem atende, e é
+  // essa a razão de existir o campo: chamado que nasce sem dono espera
+  // alguém garimpar a fila. Serviço entra como segunda opção porque
+  // define a equipe, não a pessoa.
+  const roteamento = await resolverRoteamento(dados.sistemaId, dados.servicoId);
+  const responsavelId = roteamento.responsavelId;
+  const equipeId = dados.equipeId ?? roteamento.equipeId;
+
   const resultado = await emTransacao(async (tx) => {
     await tx.executar(
       `INSERT INTO chamados
          (id, prefixo, titulo, descricao, tipo, categoria_id, servico_id, sistema_id,
-          impacto, urgencia, prioridade, status, solicitante_id, equipe_id,
+          impacto, urgencia, prioridade, status, solicitante_id, responsavel_id, equipe_id,
           origem, criado_em, atualizado_em, prazo_resposta, prazo_sla)
        VALUES
          (:id, :prefixo, :titulo, :descricao, :tipo, :categoriaId, :servicoId, :sistemaId,
-          :impacto, :urgencia, :prioridade, 'novo', :solicitanteId, :equipeId,
+          :impacto, :urgencia, :prioridade, 'novo', :solicitanteId, :responsavelId, :equipeId,
           :origem, :criadoEm, :criadoEm2, :prazoResposta, :prazoSla)`,
       {
         id,
@@ -265,7 +273,8 @@ export async function criarChamado(
         urgencia: dados.urgencia,
         prioridade,
         solicitanteId,
-        equipeId: dados.equipeId ?? null,
+        responsavelId,
+        equipeId,
         origem: dados.origem ?? "portal",
         criadoEm,
         criadoEm2: criadoEm,
@@ -287,7 +296,24 @@ export async function criarChamado(
       },
     );
 
-    // numero é IDENTITY e codigo é coluna virtual: ambos só existem
+    // A atribuição automática entra no histórico como qualquer outra:
+    // quem abrir o chamado depois precisa ver por que já tinha dono.
+    if (responsavelId) {
+      await tx.executar(
+        `INSERT INTO chamado_historico
+           (id, chamado_id, autor_id, campo, valor_anterior, valor_novo, criado_em)
+         VALUES (:id, :chamadoId, :autorId, 'responsavel_id', NULL, :valorNovo, :criadoEm)`,
+        {
+          id: novoId(),
+          chamadoId: id,
+          autorId: ctx.id,
+          valorNovo: responsavelId,
+          criadoEm,
+        },
+      );
+    }
+
+    // numero é IDENTITY e codigo é coluna gerada: ambos só existem
     // depois do INSERT.
     const r = await tx.consultar<{ numero: number; codigo: string }>(
       `SELECT numero, codigo FROM chamados WHERE id = :id`,
@@ -296,7 +322,41 @@ export async function criarChamado(
     return r[0]!;
   });
 
-  return { id, numero: resultado.numero, codigo: resultado.codigo };
+  return { id, numero: resultado.numero, codigo: resultado.codigo, responsavelId };
+}
+
+/**
+ * Quem atende e por qual equipe, a partir do cadastro.
+ *
+ * `sistemas.atribuicao_id` é a pessoa que recebe o chamado;
+ * `sistemas.responsavel_id` é o dono técnico do sistema e não entra
+ * aqui — ele responde pelo sistema, não pela fila de atendimento.
+ */
+async function resolverRoteamento(
+  sistemaId: string | null | undefined,
+  servicoId: string | null | undefined,
+): Promise<{ responsavelId: string | null; equipeId: string | null }> {
+  let responsavelId: string | null = null;
+  let equipeId: string | null = null;
+
+  if (sistemaId) {
+    const s = await consultarUm<{ atribuicaoId: string | null; equipeId: string | null }>(
+      `SELECT atribuicao_id, equipe_id FROM sistemas WHERE id = :id AND ativo = 1`,
+      { id: sistemaId },
+    );
+    responsavelId = s?.atribuicaoId ?? null;
+    equipeId = s?.equipeId ?? null;
+  }
+
+  if (!equipeId && servicoId) {
+    const sv = await consultarUm<{ equipeId: string | null }>(
+      `SELECT equipe_id FROM servicos WHERE id = :id AND ativo = 1`,
+      { id: servicoId },
+    );
+    equipeId = sv?.equipeId ?? null;
+  }
+
+  return { responsavelId, equipeId };
 }
 
 export interface AlteracaoChamado {

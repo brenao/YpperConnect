@@ -12,6 +12,7 @@ const STATUS = ["planejamento", "execucao", "paralisado", "cancelado", "concluid
 const QUADROS = ["backlog", "todo", "doing", "done"] as const;
 const NIVEIS = ["alta", "media", "baixa"] as const;
 const IMPACTOS = ["alto", "medio", "baixo"] as const;
+const UNIDADES = ["horas", "dias"] as const;
 
 async function ctx() {
   const { getUsuarioAtual } = await import("@/services/current-user.server");
@@ -31,16 +32,25 @@ export const detalheProjetoFn = createServerFn({ method: "GET" })
     const projeto = await r.buscarProjeto(data.id);
     if (!projeto) return null;
 
-    const [tarefas, vinculos, riscos, atualizacoes, atencoes, baselines, planejado] =
-      await Promise.all([
-        r.listarTarefas(data.id),
-        r.listarVinculosTarefas(data.id),
-        r.listarRiscos(data.id),
-        r.listarAtualizacoes(data.id),
-        r.listarAtencoes(data.id),
-        r.listarBaselines(data.id),
-        r.baselineOriginal(data.id),
-      ]);
+    const [
+      tarefas,
+      vinculos,
+      riscos,
+      atualizacoes,
+      atencoes,
+      baselines,
+      planejado,
+      planejadoAtual,
+    ] = await Promise.all([
+      r.listarTarefas(data.id),
+      r.listarVinculosTarefas(data.id),
+      r.listarRiscos(data.id),
+      r.listarAtualizacoes(data.id),
+      r.listarAtencoes(data.id),
+      r.listarBaselines(data.id),
+      r.baselineOriginal(data.id),
+      r.baselineAtual(data.id),
+    ]);
 
     // Rollup e CPM calculados no servidor: a tela recebe pronto e não
     // precisa reimplementar ponderação nem topologia do grafo.
@@ -57,7 +67,10 @@ export const detalheProjetoFn = createServerFn({ method: "GET" })
       atualizacoes,
       atencoes,
       baselines,
+      /** Primeira baseline: mede o desvio acumulado do plano original. */
       planejado,
+      /** Baseline mais recente: diz se o cronograma mudou desde a última foto. */
+      planejadoAtual,
     };
   });
 
@@ -153,6 +166,9 @@ const CampoSchema = z.object({
   progresso: z.number().int().min(0).max(100).optional(),
   inicio: z.coerce.date().optional(),
   fim: z.coerce.date().optional(),
+  /** Recalcula o término a partir do início. */
+  duracao: z.number().positive().max(9999).optional(),
+  duracaoUnidade: z.enum(UNIDADES).optional(),
 });
 
 export type CampoTarefaInput = z.infer<typeof CampoSchema>;
@@ -163,6 +179,35 @@ export const atualizarCampoTarefaFn = createServerFn({ method: "POST" })
     const { atualizarCampoTarefa } = await import("@/repositories/projetos.repo");
     const { id, ...campos } = data;
     await atualizarCampoTarefa(await ctx(), id, campos);
+    return { ok: true };
+  });
+
+const VinculosSchema = z.object({
+  id: z.string(),
+  responsaveis: z.array(z.string()).max(20).optional(),
+  predecessoras: z.array(z.string()).max(20).optional(),
+});
+
+export type VinculosTarefaInput = z.infer<typeof VinculosSchema>;
+
+/** Edição em linha de responsável e predecessora, sem tocar no resto. */
+export const atualizarVinculosTarefaFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => VinculosSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { atualizarVinculosTarefa } = await import("@/repositories/projetos.repo");
+    const { id, ...vinculos } = data;
+    await atualizarVinculosTarefa(await ctx(), id, vinculos);
+    return { ok: true };
+  });
+
+/** Endentar e desendentar pelo teclado, sem tocar no resto da tarefa. */
+export const aninharTarefaFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) =>
+    z.object({ id: z.string(), direcao: z.enum(["dentro", "fora"]) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { aninharTarefa } = await import("@/repositories/projetos.repo");
+    await aninharTarefa(await ctx(), data.id, data.direcao);
     return { ok: true };
   });
 
@@ -184,6 +229,14 @@ export const salvarBaselineFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { salvarBaseline } = await import("@/repositories/projetos.repo");
     return { id: await salvarBaseline(await ctx(), data.projetoId, data.descricao) };
+  });
+
+/** Tarefas de uma versão específica, para o histórico de baselines. */
+export const tarefasDaBaselineFn = createServerFn({ method: "GET" })
+  .validator((d: unknown) => z.object({ baselineId: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { tarefasDaBaseline } = await import("@/repositories/projetos.repo");
+    return { tarefas: await tarefasDaBaseline(data.baselineId) };
   });
 
 // ------------------------------------------------- riscos e acompanhamento

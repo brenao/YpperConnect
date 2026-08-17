@@ -2,3 +2,5 @@
 *.png binary
 *.jpg binary
 *.ico binary
+
+* text=auto eol=lf
