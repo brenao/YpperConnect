@@ -48,7 +48,7 @@ export async function processarFila(): Promise<ResultadoFila> {
   if (pendentes.length === 0) return r;
 
   const t = getTransporter();
-  const from = process.env["SMTP_FROM"] ?? "YpperConnect <noreply@localhost>";
+  const from = process.env["SMTP_FROM"] ?? "Beagle One <noreply@localhost>";
 
   for (const n of pendentes) {
     try {

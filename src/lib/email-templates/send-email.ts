@@ -72,7 +72,7 @@ export async function sendTemplateEmail(
     typeof template.subject === "function" ? template.subject(templateData) : template.subject;
 
   await getTransporter().sendMail({
-    from: process.env["SMTP_FROM"] ?? "YpperConnect <noreply@localhost>",
+    from: process.env["SMTP_FROM"] ?? "Beagle One <noreply@localhost>",
     to: recipient,
     subject,
     html,

@@ -125,13 +125,13 @@ function fmtDataHoraLonga(v: Date | string | null | undefined): string {
 export const Route = createFileRoute("/chamados")({
   head: () => ({
     meta: [
-      { title: "Chamados · YpperConnect" },
+      { title: "Chamados · Beagle One" },
       {
         name: "description",
         content:
           "Fila única de incidentes, requisições, melhorias, problemas e tarefas com prioridade, status e SLA padronizados.",
       },
-      { property: "og:title", content: "Chamados · YpperConnect" },
+      { property: "og:title", content: "Chamados · Beagle One" },
       {
         property: "og:description",
         content: "Fila única de atendimento de TI com classificação ITIL e controle de SLA.",

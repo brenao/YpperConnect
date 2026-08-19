@@ -75,14 +75,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "YpperConnect · Gestão de TI e Projetos" },
+      { title: "Beagle One · Gestão de TI e Projetos" },
       {
         name: "description",
         content:
-          "YpperConnect: plataforma de governança de TI com chamados ITIL, catálogo de serviços, base de conhecimento e gestão de projetos.",
+          "Beagle One: plataforma de governança de TI com chamados ITIL, catálogo de serviços, base de conhecimento e gestão de projetos.",
       },
-      { name: "author", content: "YpperConnect" },
-      { property: "og:title", content: "YpperConnect · Gestão de TI e Projetos" },
+      { name: "author", content: "Beagle One" },
+      { property: "og:title", content: "Beagle One · Gestão de TI e Projetos" },
       {
         property: "og:description",
         content:

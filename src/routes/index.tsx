@@ -30,13 +30,13 @@ import { painelFn } from "@/services/indicadores.functions";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "YpperConnect · Central de governança e atendimento de TI" },
+      { title: "Beagle One · Central de governança e atendimento de TI" },
       {
         name: "description",
         content:
           "Painel de governança de TI com chamados ITIL, matriz de prioridade, catálogo de serviços, base de conhecimento e cronograma de projetos.",
       },
-      { property: "og:title", content: "YpperConnect · Central de governança de TI" },
+      { property: "og:title", content: "Beagle One · Central de governança de TI" },
       {
         property: "og:description",
         content:
