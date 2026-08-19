@@ -267,7 +267,7 @@ export const APP_MODULES: AppModule[] = [
   },
   {
     key: "/assistente",
-    label: "Assistente IA",
+    label: "Buddy AI",
     descricao: "Abertura assistida e sugestões por IA.",
     grupo: "Operação",
   },

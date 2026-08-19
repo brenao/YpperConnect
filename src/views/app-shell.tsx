@@ -29,7 +29,7 @@ const nav = [
   { to: "/catalogo", label: "Catálogo de serviços", icon: Boxes },
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },
   { to: "/governanca", label: "Governança ITIL", icon: ShieldCheck },
-  { to: "/assistente", label: "Assistente IA", icon: Sparkles },
+  { to: "/assistente", label: "Buddy AI", icon: Sparkles },
   { to: "/administracao", label: "Administração", icon: Settings },
   { to: "/permissoes", label: "Perfis de acesso", icon: KeyRound },
 ] as const;
