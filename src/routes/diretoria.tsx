@@ -35,13 +35,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/diretoria")({
   head: () => ({
     meta: [
-      { title: "Visão diretoria · YpperConnect" },
+      { title: "Visão diretoria · Beagle One" },
       {
         name: "description",
         content:
           "Panorama executivo do portfólio de projetos e da operação de atendimento de TI, com indicadores de SLA e produtividade.",
       },
-      { property: "og:title", content: "Visão diretoria · YpperConnect" },
+      { property: "og:title", content: "Visão diretoria · Beagle One" },
       {
         property: "og:description",
         content: "Indicadores executivos de projetos, chamados e níveis de serviço.",

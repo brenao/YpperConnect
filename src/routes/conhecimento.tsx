@@ -46,13 +46,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/conhecimento")({
   head: () => ({
     meta: [
-      { title: "Base de conhecimento · YpperConnect" },
+      { title: "Base de conhecimento · Beagle One" },
       {
         name: "description",
         content:
           "Procedimentos, orientações e soluções recorrentes de TI padronizados, com curadoria apoiada por IA generativa.",
       },
-      { property: "og:title", content: "Base de conhecimento · YpperConnect" },
+      { property: "og:title", content: "Base de conhecimento · Beagle One" },
       {
         property: "og:description",
         content: "Procedimentos e soluções recorrentes de TI em formato padronizado.",

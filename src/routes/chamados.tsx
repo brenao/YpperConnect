@@ -125,13 +125,13 @@ function fmtDataHoraLonga(v: Date | string | null | undefined): string {
 export const Route = createFileRoute("/chamados")({
   head: () => ({
     meta: [
-      { title: "Chamados · YpperConnect" },
+      { title: "Chamados · Beagle One" },
       {
         name: "description",
         content:
           "Fila única de incidentes, requisições, melhorias, problemas e tarefas com prioridade, status e SLA padronizados.",
       },
-      { property: "og:title", content: "Chamados · YpperConnect" },
+      { property: "og:title", content: "Chamados · Beagle One" },
       {
         property: "og:description",
         content: "Fila única de atendimento de TI com classificação ITIL e controle de SLA.",
@@ -547,7 +547,7 @@ function Chamados() {
                         {o === "todos"
                           ? "Qualquer origem"
                           : o === "ia"
-                            ? "Assistente IA"
+                            ? "Buddy AI"
                             : o.charAt(0).toUpperCase() + o.slice(1)}
                       </button>
                     ))}
@@ -596,7 +596,7 @@ function Chamados() {
                   <Badge variant="secondary" className="gap-1">
                     Origem:{" "}
                     {filtroOrigem === "ia"
-                      ? "Assistente IA"
+                      ? "Buddy AI"
                       : filtroOrigem.charAt(0).toUpperCase() + filtroOrigem.slice(1)}
                     <button
                       onClick={() => setFiltroOrigem("todos")}
@@ -732,7 +732,7 @@ function Chamados() {
                     ["Solicitante", atual.solicitanteNome ?? "—"],
                     ["Responsável", atual.responsavelNome ?? "Não atribuído"],
                     ["Equipe", atual.equipeNome ?? "—"],
-                    ["Origem", atual.origem === "ia" ? "Assistente IA" : atual.origem],
+                    ["Origem", atual.origem === "ia" ? "Buddy AI" : atual.origem],
                     ["Impacto", atual.impacto],
                     ["Urgência", atual.urgencia],
                   ].map(([k, v]) => (

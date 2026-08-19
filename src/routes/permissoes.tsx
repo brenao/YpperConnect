@@ -47,13 +47,13 @@ import {
 export const Route = createFileRoute("/permissoes")({
   head: () => ({
     meta: [
-      { title: "Perfis de acesso · YpperConnect" },
+      { title: "Perfis de acesso · Beagle One" },
       {
         name: "description",
         content:
-          "Cadastre perfis de acesso do YpperConnect definindo quais menus e funcionalidades cada usuário poderá utilizar.",
+          "Cadastre perfis de acesso do Beagle One definindo quais menus e funcionalidades cada usuário poderá utilizar.",
       },
-      { property: "og:title", content: "Perfis de acesso · YpperConnect" },
+      { property: "og:title", content: "Perfis de acesso · Beagle One" },
       {
         property: "og:description",
         content: "Controle de menus e funcionalidades por perfil de usuário.",

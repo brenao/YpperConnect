@@ -19,13 +19,13 @@ import { calendarioFn } from "@/services/indicadores.functions";
 export const Route = createFileRoute("/governanca")({
   head: () => ({
     meta: [
-      { title: "Governança ITIL · YpperConnect" },
+      { title: "Governança ITIL · Beagle One" },
       {
         name: "description",
         content:
           "Matriz de prioridade por impacto e urgência, definições de classificação, SLAs em horário comercial e fluxo de incidentes críticos.",
       },
-      { property: "og:title", content: "Governança ITIL · YpperConnect" },
+      { property: "og:title", content: "Governança ITIL · Beagle One" },
       {
         property: "og:description",
         content:

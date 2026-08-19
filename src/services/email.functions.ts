@@ -8,7 +8,7 @@ const schema = z.object({
   destinatarios: z.array(z.string().email()).min(1),
 });
 
-/** Envia uma notificação do YpperConnect para cada destinatário. */
+/** Envia uma notificação do Beagle One para cada destinatário. */
 export const enviarNotificacaoEmail = createServerFn({ method: "POST" })
   .inputValidator((data) => schema.parse(data))
   .handler(async ({ data }) => {

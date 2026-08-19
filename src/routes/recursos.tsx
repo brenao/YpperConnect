@@ -17,13 +17,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/recursos")({
   head: () => ({
     meta: [
-      { title: "Recursos e capacidade · YpperConnect" },
+      { title: "Recursos e capacidade · Beagle One" },
       {
         name: "description",
         content:
           "Cadastro de recursos de TI com percentual de disponibilidade diária para projetos, alocação multiprojeto e alertas de sobrealocação.",
       },
-      { property: "og:title", content: "Recursos e capacidade · YpperConnect" },
+      { property: "og:title", content: "Recursos e capacidade · Beagle One" },
       {
         property: "og:description",
         content:

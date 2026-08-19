@@ -11,7 +11,7 @@ import { createAiProvider, AI_MODEL } from "@/services/ai-provider.server";
  */
 const MARCADOR_PRONTO = "[[ABRIR_CHAMADO]]";
 
-const SYSTEM_PROMPT = `Você é o assistente de atendimento de TI da plataforma YpperConnect, baseada em práticas ITIL.
+const SYSTEM_PROMPT = `Você é o Buddy AI, assistente de atendimento de TI powered by Beagle One, baseada em práticas ITIL.
 
 Seu papel:
 1. Coletar as informações necessárias para abrir um chamado: o que aconteceu, desde quando, quantas pessoas afetadas, se há alternativa de continuidade, e qual serviço ou sistema está envolvido.

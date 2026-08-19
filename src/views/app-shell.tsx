@@ -14,7 +14,7 @@ import {
   KeyRound,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import logo from "@/assets/ypperconnect-logo.png";
+import logoAsset from "@/assets/beagle-one-logo.png.asset.json";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
@@ -29,7 +29,7 @@ const nav = [
   { to: "/catalogo", label: "Catálogo de serviços", icon: Boxes },
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },
   { to: "/governanca", label: "Governança ITIL", icon: ShieldCheck },
-  { to: "/assistente", label: "Assistente IA", icon: Sparkles },
+  { to: "/assistente", label: "Buddy AI", icon: Sparkles },
   { to: "/administracao", label: "Administração", icon: Settings },
   { to: "/permissoes", label: "Perfis de acesso", icon: KeyRound },
 ] as const;
@@ -63,11 +63,11 @@ export function AppShell({
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
         <Link to="/" className="mb-8 flex items-center gap-3 px-2">
           <span className="grid size-9 place-items-center rounded-lg bg-hero ring-1 ring-primary/40">
-            <img src={logo} alt="Logo YpperConnect" width={1024} height={1024} className="size-6" />
+            <img src={logoAsset.url} alt="Logo Beagle One" width={1024} height={1024} className="size-6" />
           </span>
           <span>
             <span className="block text-sm font-semibold text-sidebar-foreground">
-              YpperConnect
+              Beagle One
             </span>
             <span className="block text-[11px] text-muted-foreground">Gestão de TI · ITIL</span>
           </span>

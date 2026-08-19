@@ -35,13 +35,13 @@ import { usuarioAtualFn } from "@/services/cadastros.functions";
 export const Route = createFileRoute("/catalogo")({
   head: () => ({
     meta: [
-      { title: "Catálogo de serviços de TI · YpperConnect" },
+      { title: "Catálogo de serviços de TI · Beagle One" },
       {
         name: "description",
         content:
           "Catálogo de serviços de TI com categoria, classificação padrão, SLA e equipe responsável por cada serviço.",
       },
-      { property: "og:title", content: "Catálogo de serviços de TI · YpperConnect" },
+      { property: "og:title", content: "Catálogo de serviços de TI · Beagle One" },
       {
         property: "og:description",
         content: "Serviços padronizados de TI com SLA e responsabilidades definidas.",
