@@ -3,10 +3,11 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Send, Sparkles, TicketPlus } from "lucide-react";
+import { Loader2, Send, TicketPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { AppShell } from "@/views/app-shell";
+import logoAsset from "@/assets/beagle-one-logo.png.asset.json";
 import { AiTicketDraft } from "@/views/ai-ticket-draft";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -150,7 +151,7 @@ function Assistente() {
   return (
     <AppShell
       title="Buddy AI"
-      subtitle="Coleta as informações, sugere categoria e prioridade e direciona o chamado à equipe responsável"
+      subtitle="Powered by Beagle One · Coleta as informações, sugere categoria e prioridade e direciona o chamado à equipe responsável"
     >
       <div className="mx-auto flex h-[calc(100vh-11rem)] max-w-3xl flex-col">
         <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -158,7 +159,7 @@ function Assistente() {
             {messages.length === 0 ? (
               <div className="mx-auto max-w-md py-10 text-center">
                 <span className="mx-auto grid size-12 place-items-center rounded-xl bg-hero ring-1 ring-primary/40">
-                  <Sparkles className="size-5 text-primary" />
+                  <img src={logoAsset.url} alt="Buddy AI" className="size-8" />
                 </span>
                 <h2 className="mt-4 text-base font-semibold">Descreva o que está acontecendo</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
