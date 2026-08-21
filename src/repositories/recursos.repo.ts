@@ -162,8 +162,8 @@ export interface CargaRecurso {
 /**
  * Carga por recurso, vinda das tarefas de projeto em andamento.
  *
- * Enquanto a migração de projetos não acontece, a tabela está vazia e
- * todos aparecem com carga zero — número correto, não falha.
+ * Recurso sem tarefa no período aparece com carga zero — número
+ * correto, não ausência de dado.
  */
 export async function cargaPorRecurso(): Promise<CargaRecurso[]> {
   return consultar<CargaRecurso>(
@@ -181,6 +181,7 @@ export async function cargaPorRecurso(): Promise<CargaRecurso[]> {
        JOIN projetos p ON p.id = t.projeto_id
        JOIN recursos r ON r.id = tr.recurso_id
       WHERE t.quadro <> 'done'
+        AND t.ativo = 1
         AND p.status IN ('planejamento','execucao')
         AND CURRENT_DATE BETWEEN t.inicio AND t.fim
       GROUP BY tr.recurso_id`,

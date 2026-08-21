@@ -147,7 +147,8 @@ export async function listarProjetos(): Promise<ProjetoComProgresso[]> {
                          COUNT(*) AS total,
                          COUNT(CASE WHEN quadro = 'done' THEN 1 END) AS concluidas,
                          AVG(progresso) AS media
-                    FROM projeto_tarefas GROUP BY projeto_id) t
+                    FROM projeto_tarefas WHERE ativo = 1
+                   GROUP BY projeto_id) t
               ON t.projeto_id = p.id
        LEFT JOIN (SELECT projeto_id, COUNT(*) AS abertos
                     FROM projeto_riscos WHERE status <> 'mitigado'
@@ -173,7 +174,7 @@ export async function listarTarefas(projetoId: string): Promise<Tarefa[]> {
     `SELECT id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
             quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem, concluido_em
        FROM projeto_tarefas
-      WHERE projeto_id = :projetoId
+      WHERE projeto_id = :projetoId AND ativo = 1
       ORDER BY ordem, inicio`,
     { projetoId },
   );
@@ -190,14 +191,14 @@ export async function listarVinculosTarefas(projetoId: string): Promise<{
       `SELECT tp.tarefa_id, tp.predecessora_id
          FROM tarefa_predecessoras tp
          JOIN projeto_tarefas t ON t.id = tp.tarefa_id
-        WHERE t.projeto_id = :projetoId`,
+        WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
       { projetoId },
     ),
     consultar<{ tarefaId: string; recursoId: string }>(
       `SELECT tr.tarefa_id, tr.recurso_id
          FROM tarefa_responsaveis tr
          JOIN projeto_tarefas t ON t.id = tr.tarefa_id
-        WHERE t.projeto_id = :projetoId`,
+        WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
       { projetoId },
     ),
   ]);
@@ -469,29 +470,34 @@ export async function moverTarefa(
 }
 
 /**
- * Exclusão da tarefa e das suas filhas.
+ * Desativa a tarefa e toda a sua descendência.
  *
- * A cascata é feita aqui mesmo tendo `ON DELETE CASCADE` em `pai_id`:
- * as predecessoras que apontam PARA esta tarefa não têm cascade, e sem
- * o DELETE explícito o banco recusaria por violação de chave.
+ * Não é DELETE: a tarefa sai do cronograma, para de contar no rollup e
+ * no CPM, mas continua no banco. É o que mantém o histórico de
+ * baselines íntegro — `baseline_tarefas` guarda o `tarefa_id` sem
+ * chave estrangeira, e apagar a linha deixaria a foto do plano
+ * apontando para algo que não existe mais.
  *
- * É exclusão real, contrariando a regra de que nada some do sistema.
- * Trocar por desativação exige coluna nova em `projeto_tarefas` e está
- * na lista de correções.
+ * Os vínculos de predecessora ficam onde estão. Quem depende de uma
+ * tarefa desativada simplesmente deixa de vê-la: o CPM descarta
+ * predecessora que não está na lista de tarefas vivas.
+ *
+ * A recursão desce a árvore inteira num comando só — desativar a mãe e
+ * deixar as filhas visíveis produziria órfãs soltas na grade.
  */
 export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirTi(ctx, "excluir tarefas");
-  await emTransacao(async (tx) => {
-    const filhas = await tx.consultar<{ id: string }>(
-      `SELECT id FROM projeto_tarefas WHERE pai_id = :id`,
-      { id },
-    );
-    for (const f of filhas) {
-      await tx.executar(`DELETE FROM projeto_tarefas WHERE id = :id`, { id: f.id });
-    }
-    await tx.executar(`DELETE FROM tarefa_predecessoras WHERE predecessora_id = :id`, { id });
-    await tx.executar(`DELETE FROM projeto_tarefas WHERE id = :id`, { id });
-  });
+  const n = await executar(
+    `WITH RECURSIVE arvore AS (
+       SELECT id FROM projeto_tarefas WHERE id = :id
+       UNION ALL
+       SELECT t.id FROM projeto_tarefas t JOIN arvore a ON t.pai_id = a.id
+     )
+     UPDATE projeto_tarefas SET ativo = 0
+      WHERE id IN (SELECT id FROM arvore)`,
+    { id },
+  );
+  if (n === 0) throw new ErroDominio(`Tarefa ${id} não encontrada`);
 }
 
 /**
@@ -726,7 +732,7 @@ export async function atualizarCampoTarefa(
   exigirTi(ctx, "alterar tarefas");
 
   const filhas = await consultarUm<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id`,
+    `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
     { id },
   );
   if ((filhas?.total ?? 0) > 0) {
@@ -913,7 +919,8 @@ export async function salvarBaseline(
     // INSERT SELECT: copia o cronograma inteiro numa ida só.
     await tx.executar(
       `INSERT INTO baseline_tarefas (baseline_id, tarefa_id, nome, inicio, fim)
-       SELECT :id, id, nome, inicio, fim FROM projeto_tarefas WHERE projeto_id = :projetoId`,
+              SELECT :id, id, nome, inicio, fim
+         FROM projeto_tarefas WHERE projeto_id = :projetoId AND ativo = 1`,
       { id, projetoId },
     );
   });
@@ -1071,7 +1078,7 @@ export async function atualizarVinculosTarefa(
 
   if (d.responsaveis && d.responsaveis.length > 0) {
     const filhas = await consultarUm<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id`,
+      `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
       { id },
     );
     if ((filhas?.total ?? 0) > 0) {
@@ -1143,7 +1150,7 @@ async function validarPredecessoras(id: string, projetoId: string, novas: string
 
   const mesmas = await consultar<{ id: string }>(
     `SELECT id FROM projeto_tarefas
-      WHERE projeto_id = :projetoId AND id IN (${chaves.join(",")})`,
+      WHERE projeto_id = :projetoId AND ativo = 1 AND id IN (${chaves.join(",")})`,
     binds,
   );
   if (mesmas.length !== unicas.length) {
@@ -1154,8 +1161,8 @@ async function validarPredecessoras(id: string, projetoId: string, novas: string
   const arestas = await consultar<{ tarefaId: string; predecessoraId: string }>(
     `SELECT tp.tarefa_id, tp.predecessora_id
        FROM tarefa_predecessoras tp
-       JOIN projeto_tarefas t ON t.id = tp.tarefa_id
-      WHERE t.projeto_id = :projetoId`,
+              JOIN projeto_tarefas t ON t.id = tp.tarefa_id
+      WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
     { projetoId },
   );
 
@@ -1241,6 +1248,7 @@ export async function aninharTarefa(
     const anterior = await consultarUm<{ id: string }>(
       `SELECT id FROM projeto_tarefas
         WHERE projeto_id = :projetoId
+          AND ativo = 1
           AND pai_id IS NOT DISTINCT FROM :paiId
           AND ordem < :ordem
         ORDER BY ordem DESC
