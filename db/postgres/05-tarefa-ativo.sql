@@ -26,3 +26,7 @@ ALTER TABLE projeto_tarefas
 -- Toda leitura de cronograma filtra por ativo; o índice existente
 -- (projeto_id, ordem) passa a ser consultado sempre junto dessa coluna.
 CREATE INDEX ix_tarefas_ativo ON projeto_tarefas (projeto_id, ativo);
+
+
+INSERT INTO db_migrations (arquivo) VALUES ('05-tarefa-ativo.sql')
+ON CONFLICT (arquivo) DO NOTHING;
