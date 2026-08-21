@@ -12,6 +12,7 @@ import {
   Users,
   Settings,
   KeyRound,
+  LogOut,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import logo from "@/assets/ypperconnect-logo.png";
@@ -33,6 +34,34 @@ const nav = [
   { to: "/administracao", label: "Administração", icon: Settings },
   { to: "/permissoes", label: "Perfis de acesso", icon: KeyRound },
 ] as const;
+
+/**
+ * Encerra a sessão no /vuelogin, que é quem a mantém.
+ *
+ * Quem autentica é o OpenResty; a aplicação não tem sessão própria para
+ * limpar. Sair é derrubar o token no sistema de login — depois disso, a
+ * próxima visita a /ypper é barrada pelo check-token.lua e redirecionada
+ * para a tela de login.
+ *
+ * A URL é montada a partir da origem porque /vuelogin e /ypper são
+ * caminhos do mesmo domínio: assim teste e produção funcionam sem
+ * configuração, e não há endereço fixo para alguém esquecer de trocar.
+ */
+function BotaoSair() {
+  return (
+    <button
+      type="button"
+      title="Sair"
+      aria-label="Sair"
+      onClick={() => {
+        window.location.href = `${window.location.origin}/vuelogin/logout`;
+      }}
+      className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+    >
+      <LogOut className="size-4" />
+    </button>
+  );
+}
 
 export function AppShell({
   title,
@@ -114,6 +143,7 @@ export function AppShell({
                 </span>
               </span>
             ) : null}
+            <BotaoSair />
             <ThemeToggle />
             <NewTicketDialog />
           </div>
