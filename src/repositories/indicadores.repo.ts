@@ -1,4 +1,5 @@
 import { consultar, consultarUm } from "@/integrations/postgres/client.server";
+import { paraBool } from "./tipos";
 
 /**
  * Indicadores agregados do painel.
@@ -353,4 +354,176 @@ export async function metricasProjetos(): Promise<MetricasProjetos> {
       atrasados: 0,
     }
   );
+}
+
+// -------------------------------------------------- carteira de projetos
+
+export interface MesCarteira {
+  /** MM/AA, pronto para o eixo do gráfico. */
+  rotulo: string;
+  /** true no mês corrente: separa realizado de previsto. */
+  atual: boolean;
+  /** Concluídos com término naquele mês. */
+  entregues: number;
+  /** Em planejamento ou execução com término previsto naquele mês. */
+  previstos: number;
+  /** Cancelados naquele mês. */
+  cancelados: number;
+}
+
+/** Booleano é SMALLINT 0/1 no schema. */
+interface LinhaMesCarteira extends Omit<MesCarteira, "atual"> {
+  atual: number;
+}
+
+/**
+ * Curva da carteira: o que saiu nos últimos meses e o que está previsto
+ * para os próximos.
+ *
+ * Entregue e previsto saem os dois da data `fim` do projeto — é a data
+ * que o gerente informou e é contra ela que a diretoria cobra. Usar
+ * `atualizado_em` para o entregue faria o projeto pular de mês a cada
+ * edição posterior.
+ *
+ * Projeto ativo com `fim` no passado é contado no mês corrente: ele não
+ * foi entregue, então somar no passado inflaria a barra de entregas de
+ * um mês que não teve entrega nenhuma.
+ *
+ * Cancelado usa `atualizado_em` por falta de coluna própria — para um
+ * projeto cancelado, a última alteração é quase sempre o cancelamento.
+ */
+export async function carteiraProjetos(mesesAtras = 3, mesesFrente = 6): Promise<MesCarteira[]> {
+  const linhas = await consultar<LinhaMesCarteira>(
+    `WITH meses AS (
+       SELECT generate_series(
+                date_trunc('month', CURRENT_DATE) - make_interval(months => :atras::int),
+                date_trunc('month', CURRENT_DATE) + make_interval(months => :frente::int),
+                INTERVAL '1 month'
+              ) AS mes
+     )
+     SELECT TO_CHAR(m.mes, 'MM/YY') AS rotulo,
+            CASE WHEN m.mes = date_trunc('month', CURRENT_DATE) THEN 1 ELSE 0 END AS atual,
+            (SELECT COUNT(*) FROM projetos p
+              WHERE p.status = 'concluido'
+                AND date_trunc('month', p.fim) = m.mes) AS entregues,
+            (SELECT COUNT(*) FROM projetos p
+              WHERE p.status IN ('planejamento', 'execucao')
+                AND GREATEST(
+                      date_trunc('month', p.fim),
+                      date_trunc('month', CURRENT_DATE)
+                    ) = m.mes) AS previstos,
+            (SELECT COUNT(*) FROM projetos p
+              WHERE p.status = 'cancelado'
+                AND date_trunc('month', p.atualizado_em) = m.mes) AS cancelados
+       FROM meses m
+      ORDER BY m.mes`,
+    { atras: mesesAtras, frente: mesesFrente },
+  );
+  return linhas.map((l) => ({ ...l, atual: paraBool(l.atual) }));
+}
+
+export interface CargaGerente {
+  gerenteId: string | null;
+  gerenteNome: string;
+  total: number;
+  emExecucao: number;
+  atrasados: number;
+  /** Sem atualização há mais de 7 dias. */
+  semAcompanhamento: number;
+}
+
+/**
+ * Quantos projetos cada gerente carrega, e em que estado.
+ *
+ * Projeto sem gerente vira uma linha "Sem gerente" em vez de sumir: é
+ * exatamente o caso que a diretoria precisa enxergar.
+ */
+export async function projetosPorGerente(): Promise<CargaGerente[]> {
+  return consultar<CargaGerente>(
+    `SELECT p.gerente_id,
+            COALESCE(u.nome, 'Sem gerente') AS gerente_nome,
+            COUNT(*) AS total,
+            COUNT(CASE WHEN p.status = 'execucao' THEN 1 END) AS em_execucao,
+            COUNT(CASE WHEN p.status IN ('planejamento', 'execucao')
+                        AND p.fim < CURRENT_DATE THEN 1 END) AS atrasados,
+            COUNT(CASE WHEN p.status IN ('planejamento', 'execucao')
+                        AND CURRENT_DATE - COALESCE(a.ultima, p.criado_em::date) > 7
+                       THEN 1 END) AS sem_acompanhamento
+       FROM projetos p
+       LEFT JOIN usuarios u ON u.id = p.gerente_id
+       LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
+                    FROM projeto_atualizacoes GROUP BY projeto_id) a
+              ON a.projeto_id = p.id
+      WHERE p.status <> 'cancelado'
+      GROUP BY p.gerente_id, u.nome
+      ORDER BY COUNT(*) DESC`,
+  );
+}
+
+export interface FiltroPortfolio {
+  gerenteId?: string | undefined;
+  nome?: string | undefined;
+  status?: string | undefined;
+}
+
+export interface ProjetoPortfolio {
+  id: string;
+  nome: string;
+  status: string;
+  gerenteNome: string | null;
+  inicio: Date;
+  fim: Date;
+  progresso: number;
+  diasSemAtualizar: number | null;
+  atrasado: boolean;
+}
+
+/** Booleano é SMALLINT 0/1 no schema. */
+interface LinhaProjetoPortfolio extends Omit<ProjetoPortfolio, "atrasado"> {
+  atrasado: number;
+}
+
+/**
+ * Lista filtrável do portfólio, para a diretoria descer do número
+ * agregado até o projeto que o explica.
+ */
+export async function portfolio(f: FiltroPortfolio = {}): Promise<ProjetoPortfolio[]> {
+  const cond: string[] = [];
+  const binds: Record<string, unknown> = {};
+
+  if (f.gerenteId) {
+    cond.push(`p.gerente_id = :gerenteId`);
+    binds["gerenteId"] = f.gerenteId;
+  }
+  if (f.status) {
+    cond.push(`p.status = :status`);
+    binds["status"] = f.status;
+  }
+  if (f.nome) {
+    // ILIKE: busca por nome não deve depender de maiúscula.
+    cond.push(`p.nome ILIKE :nome`);
+    binds["nome"] = `%${f.nome}%`;
+  }
+
+  const where = cond.length ? `WHERE ${cond.join(" AND ")}` : "";
+
+  const linhas = await consultar<LinhaProjetoPortfolio>(
+    `SELECT p.id, p.nome, p.status, u.nome AS gerente_nome, p.inicio, p.fim,
+            COALESCE(ROUND(t.media), 0) AS progresso,
+            CURRENT_DATE - COALESCE(a.ultima, p.criado_em::date) AS dias_sem_atualizar,
+            CASE WHEN p.status IN ('planejamento', 'execucao') AND p.fim < CURRENT_DATE
+                 THEN 1 ELSE 0 END AS atrasado
+       FROM projetos p
+       LEFT JOIN usuarios u ON u.id = p.gerente_id
+       LEFT JOIN (SELECT projeto_id, AVG(progresso) AS media
+                    FROM projeto_tarefas GROUP BY projeto_id) t
+              ON t.projeto_id = p.id
+       LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
+                    FROM projeto_atualizacoes GROUP BY projeto_id) a
+              ON a.projeto_id = p.id
+       ${where}
+      ORDER BY p.status, p.fim`,
+    binds,
+  );
+  return linhas.map((l) => ({ ...l, atrasado: paraBool(l.atrasado) }));
 }

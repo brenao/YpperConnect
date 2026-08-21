@@ -468,6 +468,17 @@ export async function moverTarefa(
   );
 }
 
+/**
+ * Exclusão da tarefa e das suas filhas.
+ *
+ * A cascata é feita aqui mesmo tendo `ON DELETE CASCADE` em `pai_id`:
+ * as predecessoras que apontam PARA esta tarefa não têm cascade, e sem
+ * o DELETE explícito o banco recusaria por violação de chave.
+ *
+ * É exclusão real, contrariando a regra de que nada some do sistema.
+ * Trocar por desativação exige coluna nova em `projeto_tarefas` e está
+ * na lista de correções.
+ */
 export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirTi(ctx, "excluir tarefas");
   await emTransacao(async (tx) => {

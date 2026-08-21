@@ -63,17 +63,40 @@ export const diretoriaFn = createServerFn({ method: "GET" })
       chamadosPorStatus,
       chamadosPorEquipe,
       metricasProjetos,
+      carteiraProjetos,
+      projetosPorGerente,
     } = await import("@/repositories/indicadores.repo");
 
-    const [chamados, serie, prioridade, tipo, status, equipe, projetos] = await Promise.all([
-      metricasChamados(data),
-      serieCriadosAtendidos(data),
-      chamadosPorPrioridade(data),
-      chamadosPorTipo(data),
-      chamadosPorStatus(data),
-      chamadosPorEquipe(data),
-      metricasProjetos(),
-    ]);
+    const [chamados, serie, prioridade, tipo, status, equipe, projetos, carteira, gerentes] =
+      await Promise.all([
+        metricasChamados(data),
+        serieCriadosAtendidos(data),
+        chamadosPorPrioridade(data),
+        chamadosPorTipo(data),
+        chamadosPorStatus(data),
+        chamadosPorEquipe(data),
+        metricasProjetos(),
+        carteiraProjetos(),
+        projetosPorGerente(),
+      ]);
 
-    return { chamados, serie, prioridade, tipo, status, equipe, projetos };
+    // A carteira e a carga por gerente ignoram o filtro de período de
+    // propósito: são a foto do portfólio inteiro, não do recorte.
+    return { chamados, serie, prioridade, tipo, status, equipe, projetos, carteira, gerentes };
+  });
+
+const FiltroPortfolioSchema = z.object({
+  gerenteId: z.string().optional(),
+  nome: z.string().max(300).optional(),
+  status: z.enum(["planejamento", "execucao", "paralisado", "cancelado", "concluido"]).optional(),
+});
+
+export type FiltroPortfolioInput = z.infer<typeof FiltroPortfolioSchema>;
+
+/** Lista filtrável do portfólio, consultada à parte dos agregados. */
+export const portfolioFn = createServerFn({ method: "GET" })
+  .validator((d: unknown) => FiltroPortfolioSchema.parse(d ?? {}))
+  .handler(async ({ data }) => {
+    const { portfolio } = await import("@/repositories/indicadores.repo");
+    return portfolio(data);
   });

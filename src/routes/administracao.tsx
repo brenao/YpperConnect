@@ -56,6 +56,7 @@ import {
   criarSistemaFn,
   atualizarSistemaFn,
   definirSistemaAtivoFn,
+  executarRotinasFn,
   processarFilaEmailFn,
   testarSmtpFn,
   type UsuarioInput,
@@ -619,6 +620,27 @@ function Administracao() {
     onError: erro,
   });
 
+  // Gera os lembretes de projeto e despacha a fila, na ordem. É a mesma
+  // rotina que o cron chamaria — existe como botão porque o agendador
+  // ainda não foi decidido.
+  const executarRotinas = useMutation({
+    mutationFn: () => executarRotinasFn(),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["notificacoes"] });
+      const detalhe = [
+        `${r.lembretes.enfileirados} lembrete(s) gerado(s)`,
+        r.lembretes.jaAvisadosHoje > 0 ? `${r.lembretes.jaAvisadosHoje} já avisado(s) hoje` : "",
+        r.lembretes.semGerente > 0 ? `${r.lembretes.semGerente} projeto(s) sem gerente` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      toast.success(`${r.fila.enviadas} e-mail(s) enviado(s), ${r.fila.falhas} falha(s)`, {
+        description: detalhe,
+      });
+    },
+    onError: erro,
+  });
+
   const testarSmtp = useMutation({
     mutationFn: () => testarSmtpFn(),
     onSuccess: () => toast.success("Conexão SMTP funcionando"),
@@ -943,13 +965,22 @@ function Administracao() {
                 </Button>
                 <Button
                   size="sm"
+                  variant="outline"
                   disabled={processarFila.isPending}
                   onClick={() => processarFila.mutate()}
                 >
                   {processarFila.isPending ? "Enviando..." : "Processar fila agora"}
                 </Button>
+                <Button
+                  size="sm"
+                  disabled={executarRotinas.isPending}
+                  onClick={() => executarRotinas.mutate()}
+                >
+                  {executarRotinas.isPending ? "Executando..." : "Executar rotinas do dia"}
+                </Button>
                 <span className="text-xs text-muted-foreground">
-                  O envio ainda é manual — falta o agendador.
+                  As rotinas geram os lembretes de projeto sem atualização e despacham a fila. O
+                  agendador ainda não existe: por ora, alguém precisa clicar.
                 </span>
               </div>
             ) : null}
