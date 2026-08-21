@@ -113,10 +113,50 @@ function novoId(): string {
   return crypto.randomUUID();
 }
 
-function exigirTi(ctx: ContextoUsuario, acao: string): void {
-  if (!ctx.admin && ctx.equipeId === null) {
-    throw new ErroDominio(`Somente a equipe de TI pode ${acao}`);
+/**
+ * Quem pode mexer neste projeto.
+ *
+ * Projeto é o único módulo aberto a toda a empresa: qualquer pessoa
+ * cadastra o seu. Como consequência, ela precisa conseguir montar o
+ * cronograma dele — liberar a criação e travar as tarefas produziria um
+ * projeto que ninguém consegue tocar.
+ *
+ * O acesso é por projeto, não por papel global: gerente e sponsor
+ * mandam no que é deles, e TI e admin mandam em tudo, porque respondem
+ * pela carteira inteira na visão de diretoria.
+ */
+async function exigirAcessoProjeto(
+  ctx: ContextoUsuario,
+  projetoId: string,
+  acao: string,
+): Promise<void> {
+  if (ctx.admin || ctx.equipeId !== null) return;
+
+  const p = await consultarUm<{ gerenteId: string | null; sponsorId: string | null }>(
+    `SELECT gerente_id, sponsor_id FROM projetos WHERE id = :id`,
+    { id: projetoId },
+  );
+  if (!p) throw new ErroDominio(`Projeto ${projetoId} não encontrado`);
+
+  if (p.gerenteId !== ctx.id && p.sponsorId !== ctx.id) {
+    throw new ErroDominio(`Somente o gerente do projeto ou a equipe de TI pode ${acao}`);
   }
+}
+
+/** Mesma regra, quando só se tem a tarefa em mãos. */
+async function exigirAcessoTarefa(
+  ctx: ContextoUsuario,
+  tarefaId: string,
+  acao: string,
+): Promise<void> {
+  if (ctx.admin || ctx.equipeId !== null) return;
+
+  const t = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
+    { id: tarefaId },
+  );
+  if (!t) throw new ErroDominio(`Tarefa ${tarefaId} não encontrada`);
+  await exigirAcessoProjeto(ctx, t.projetoId, acao);
 }
 
 // ---------------------------------------------------------------- leitura
@@ -264,8 +304,11 @@ function validarProjeto(d: DadosProjeto): void {
   if (d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
 }
 
+/**
+ * Cria projeto. Aberto a qualquer usuário ativo, por regra de negócio:
+ * a gestão de projetos não é privilégio da TI.
+ */
 export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promise<string> {
-  exigirTi(ctx, "criar projetos");
   validarProjeto(d);
 
   const id = novoId();
@@ -297,7 +340,7 @@ export async function atualizarProjeto(
   id: string,
   d: DadosProjeto,
 ): Promise<void> {
-  exigirTi(ctx, "alterar projetos");
+  await exigirAcessoProjeto(ctx, id, "alterar este projeto");
   validarProjeto(d);
 
   const n = await executar(
@@ -341,7 +384,7 @@ export interface DadosTarefa {
  * por falha parcial desmonta o cálculo de capacidade.
  */
 export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise<string> {
-  exigirTi(ctx, "criar tarefas");
+  await exigirAcessoProjeto(ctx, d.projetoId, "criar tarefas neste projeto");
   if (d.nome.trim().length < 3) throw new ErroDominio("Informe o nome da tarefa");
   if (d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
 
@@ -394,7 +437,7 @@ export async function atualizarTarefa(
   id: string,
   d: Omit<DadosTarefa, "projetoId">,
 ): Promise<void> {
-  exigirTi(ctx, "alterar tarefas");
+  await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
   if (d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
 
   await emTransacao(async (tx) => {
@@ -456,7 +499,7 @@ export async function moverTarefa(
   id: string,
   quadro: QuadroTarefa,
 ): Promise<void> {
-  exigirTi(ctx, "mover tarefas");
+  await exigirAcessoTarefa(ctx, id, "mover tarefas deste projeto");
   const concluida = quadro === "done";
   await executar(
     `UPDATE projeto_tarefas
@@ -486,7 +529,7 @@ export async function moverTarefa(
  * deixar as filhas visíveis produziria órfãs soltas na grade.
  */
 export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<void> {
-  exigirTi(ctx, "excluir tarefas");
+  await exigirAcessoTarefa(ctx, id, "excluir tarefas deste projeto");
   const n = await executar(
     `WITH RECURSIVE arvore AS (
        SELECT id FROM projeto_tarefas WHERE id = :id
@@ -515,7 +558,7 @@ export interface DadosRisco {
 }
 
 export async function criarRisco(ctx: ContextoUsuario, d: DadosRisco): Promise<string> {
-  exigirTi(ctx, "registrar riscos");
+  await exigirAcessoProjeto(ctx, d.projetoId, "registrar riscos neste projeto");
   const id = novoId();
   await executar(
     `INSERT INTO projeto_riscos
@@ -544,7 +587,7 @@ export interface DadosAtualizacao {
 }
 
 export async function criarAtualizacao(ctx: ContextoUsuario, d: DadosAtualizacao): Promise<string> {
-  exigirTi(ctx, "registrar atualizações");
+  await exigirAcessoProjeto(ctx, d.projetoId, "registrar atualizações neste projeto");
   const id = novoId();
   await executar(
     `INSERT INTO projeto_atualizacoes
@@ -574,7 +617,7 @@ export interface DadosAtencao {
 }
 
 export async function criarAtencao(ctx: ContextoUsuario, d: DadosAtencao): Promise<string> {
-  exigirTi(ctx, "registrar pontos de atenção");
+  await exigirAcessoProjeto(ctx, d.projetoId, "registrar pontos de atenção neste projeto");
   const id = novoId();
   await executar(
     `INSERT INTO projeto_atencoes
@@ -595,7 +638,15 @@ export async function criarAtencao(ctx: ContextoUsuario, d: DadosAtencao): Promi
 }
 
 export async function resolverAtencao(ctx: ContextoUsuario, id: string): Promise<void> {
-  exigirTi(ctx, "resolver pontos de atenção");
+  // O acesso é por projeto, e o ponto de atenção só sabe o próprio id:
+  // precisa descobrir a que projeto pertence antes de decidir.
+  const a = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM projeto_atencoes WHERE id = :id`,
+    { id },
+  );
+  if (!a) throw new ErroDominio(`Ponto de atenção ${id} não encontrado`);
+  await exigirAcessoProjeto(ctx, a.projetoId, "resolver pontos de atenção deste projeto");
+
   await executar(
     `UPDATE projeto_atencoes SET status = 'resolvido', resolvido_em = LOCALTIMESTAMP
       WHERE id = :id`,
@@ -729,7 +780,7 @@ export async function atualizarCampoTarefa(
   id: string,
   d: CampoTarefa,
 ): Promise<void> {
-  exigirTi(ctx, "alterar tarefas");
+  await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
 
   const filhas = await consultarUm<{ total: number }>(
     `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
@@ -812,7 +863,7 @@ export async function inserirAbaixo(
   referenciaId: string,
   comoFilha: boolean,
 ): Promise<string> {
-  exigirTi(ctx, "criar tarefas");
+  await exigirAcessoTarefa(ctx, referenciaId, "criar tarefas neste projeto");
 
   const ref = await consultarUm<{
     projetoId: string;
@@ -900,7 +951,7 @@ export async function salvarBaseline(
   projetoId: string,
   descricao?: string | null | undefined,
 ): Promise<string> {
-  exigirTi(ctx, "salvar baseline");
+  await exigirAcessoProjeto(ctx, projetoId, "salvar baseline deste projeto");
 
   const id = novoId();
   await emTransacao(async (tx) => {
@@ -1068,7 +1119,7 @@ export async function atualizarVinculosTarefa(
   id: string,
   d: VinculosTarefa,
 ): Promise<void> {
-  exigirTi(ctx, "alterar tarefas");
+  await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
 
   const tarefa = await consultarUm<{ projetoId: string }>(
     `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
@@ -1231,7 +1282,7 @@ export async function aninharTarefa(
   id: string,
   direcao: "dentro" | "fora",
 ): Promise<void> {
-  exigirTi(ctx, "alterar tarefas");
+  await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
 
   const t = await consultarUm<{ projetoId: string; paiId: string | null; ordem: number }>(
     `SELECT projeto_id, pai_id, ordem FROM projeto_tarefas WHERE id = :id`,

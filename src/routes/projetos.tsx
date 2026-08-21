@@ -114,7 +114,9 @@ function Projetos() {
   const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
   const q = useQuery({ queryKey: ["projetos"], queryFn: () => listarProjetosFn() });
 
-  const isTi = usuario.data ? usuario.data.admin || usuario.data.equipeId !== null : false;
+  // Cadastrar projeto é aberto a toda a empresa: quem cria vira gerente
+  // e passa a poder montar o cronograma dele.
+  const autenticado = usuario.data !== undefined;
   const projetos: ProjetoComProgresso[] = useMemo(() => q.data ?? [], [q.data]);
 
   const gerentes = useMemo(
@@ -187,7 +189,7 @@ function Projetos() {
               ))}
             </SelectContent>
           </Select>
-          {isTi ? <ProjectDialog /> : null}
+          {autenticado ? <ProjectDialog /> : null}
         </div>
 
         {projetos.length > 0 ? (

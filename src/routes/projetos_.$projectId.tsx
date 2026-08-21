@@ -97,7 +97,10 @@ function DetalheProjeto() {
   const [editando, setEditando] = useState<Tarefa | undefined>(undefined);
   const [tarefaAberta, setTarefaAberta] = useState(false);
 
-  const editavel = usuario.data ? usuario.data.admin || usuario.data.equipeId !== null : false;
+  // A tela espelha a regra do repositório: TI e admin mandam em tudo,
+  // gerente e sponsor mandam no projeto que é deles. Definido abaixo,
+  // depois que o projeto carrega.
+  const u = usuario.data;
   const recursos = useMemo(() => recursosQuery.data?.recursos ?? [], [recursosQuery.data]);
 
   const nomeRecurso = (id: string) => recursos.find((r) => r.id === id)?.nome ?? "—";
@@ -193,6 +196,10 @@ function DetalheProjeto() {
   const semAcompanhamento = semaforoAtualizacao(atualizacoes, hoje);
   const semAtualizar = diasSemAtualizar(atualizacoes, hoje);
   const estadoBaseline = compararComBaseline(tarefas, planejadoAtual);
+
+  const editavel = u
+    ? u.admin || u.equipeId !== null || projeto.gerenteId === u.id || projeto.sponsorId === u.id
+    : false;
 
   const atencoesAbertas = atencoes.filter((a) => a.status === "aberto");
   const riscosAbertos = riscos.filter((r) => r.status !== "mitigado");
