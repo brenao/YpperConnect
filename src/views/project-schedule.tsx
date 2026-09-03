@@ -10,6 +10,11 @@
  * Como as células fixas passam por cima da faixa do Gantt ao rolar, elas
  * precisam de fundo opaco — daí o `backgroundColor` explícito em vez do
  * `bg-secondary/20` translúcido que a linha usava antes.
+ *
+ * O nome da tarefa aqui é só leitura. Editar em dois lugares dobra a
+ * superfície de erro sem dobrar a utilidade, e cada coluna larga que a
+ * grade ocupa é linha do tempo que o Gantt perde — que é justamente o
+ * que se vem ver nesta aba. Renomear é na aba Tarefas.
  */
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -45,12 +50,18 @@ import {
   type ZoomGantt,
 } from "@/services/gantt-utils";
 
-/** Colunas fixas. A soma é a largura congelada da esquerda. */
+/**
+ * Colunas fixas. A soma é a largura congelada da esquerda.
+ *
+ * As colunas de data precisam caber `dd/mm/aaaa` e, quando em edição, o
+ * seletor nativo do navegador — que reserva espaço para o ícone de
+ * calendário além do texto. Com menos que isto o ano aparece cortado.
+ */
 const COLUNAS = [
   { chave: "indice", rotulo: "#", largura: 76 },
   { chave: "nome", rotulo: "Tarefa", largura: 300 },
-  { chave: "inicio", rotulo: "Início", largura: 104 },
-  { chave: "fim", rotulo: "Término", largura: 104 },
+  { chave: "inicio", rotulo: "Início", largura: 136 },
+  { chave: "fim", rotulo: "Término", largura: 136 },
   { chave: "progresso", rotulo: "%", largura: 92 },
 ] as const;
 
@@ -159,8 +170,8 @@ export function ProjectSchedule({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
-          Clique em nome, datas e percentual para editar. Linhas com subtarefas mostram o
-          consolidado e não são editáveis.
+          Clique nas datas e no percentual para editar. O nome se edita na aba Tarefas. Linhas com
+          subtarefas mostram o consolidado e não são editáveis.
           {criticas > 0 ? (
             <>
               {" "}
@@ -256,13 +267,19 @@ export function ProjectSchedule({
                 </span>
               </td>
               <td
-                className={cn(CLASSE_FIXA, "border-b border-border px-3 py-2 font-mono text-xs")}
+                className={cn(
+                  CLASSE_FIXA,
+                  "whitespace-nowrap border-b border-border px-3 py-2 font-mono text-xs",
+                )}
                 style={fixa(2, true)}
               >
                 {fmt(projeto.inicio)}
               </td>
               <td
-                className={cn(CLASSE_FIXA, "border-b border-border px-3 py-2 font-mono text-xs")}
+                className={cn(
+                  CLASSE_FIXA,
+                  "whitespace-nowrap border-b border-border px-3 py-2 font-mono text-xs",
+                )}
                 style={fixa(3, true)}
               >
                 {fmt(projeto.fim)}
@@ -443,6 +460,8 @@ function LinhaCronograma({
         className={cn(CLASSE_FIXA, "border-b border-border/60 px-3 py-1")}
         style={fixa(1, t.ehPai)}
       >
+        {/* Nome em texto: renomear é na aba Tarefas. O ícone à direita
+            abre o detalhe, que é o caminho para o resto dos campos. */}
         <span className="flex items-center gap-1.5" style={{ paddingLeft: `${nivel * 14}px` }}>
           {t.ehPai ? <ChevronRight className="size-3 shrink-0 text-muted-foreground" /> : null}
           {/* Marcador do caminho crítico: folga zero. */}
@@ -453,25 +472,18 @@ function LinhaCronograma({
               aria-label="Caminho crítico"
             />
           ) : null}
-          {editavel ? (
-            <NomeInline
-              valor={t.nome}
-              negrito={t.ehPai}
-              riscado={t.quadro === "done"}
-              onSalvar={(v) => salvarCampo.mutate({ id: t.id, nome: v })}
-              onDetalhe={onDetalhe}
-            />
-          ) : (
-            <span
-              className={cn(
-                "truncate",
-                t.ehPai ? "font-medium" : "",
-                t.quadro === "done" ? "line-through opacity-70" : "",
-              )}
-            >
-              {t.nome}
-            </span>
-          )}
+
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              t.ehPai ? "font-medium" : "",
+              t.quadro === "done" ? "line-through opacity-70" : "",
+            )}
+            title={t.nome}
+          >
+            {t.nome}
+          </span>
+
           {t.marco ? (
             <Badge variant="outline" className="shrink-0 text-[10px]">
               marco
@@ -482,6 +494,16 @@ function LinhaCronograma({
               ({t.totalFolhas} subtarefa{t.totalFolhas > 1 ? "s" : ""})
             </span>
           ) : null}
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 shrink-0"
+            title="Abrir detalhes"
+            onClick={onDetalhe}
+          >
+            <ChevronRight className="size-3.5" />
+          </Button>
         </span>
 
         {secundaria.length ? (
@@ -504,9 +526,8 @@ function LinhaCronograma({
         className={cn(CLASSE_FIXA, "border-b border-border/60 px-3 py-1 align-top")}
         style={fixa(2, t.ehPai)}
       >
-        <CampoInline
-          valor={paraInput(t.inicioEfetivo)}
-          tipo="date"
+        <CampoData
+          valor={t.inicioEfetivo}
           editavel={podeEditar}
           onSalvar={(v) => salvarCampo.mutate({ id: t.id, inicio: new Date(`${v}T12:00:00`) })}
         />
@@ -516,9 +537,8 @@ function LinhaCronograma({
         className={cn(CLASSE_FIXA, "border-b border-border/60 px-3 py-1 align-top")}
         style={fixa(3, t.ehPai)}
       >
-        <CampoInline
-          valor={paraInput(t.fimEfetivo)}
-          tipo="date"
+        <CampoData
+          valor={t.fimEfetivo}
           editavel={podeEditar}
           alerta={desvioFim}
           onSalvar={(v) => salvarCampo.mutate({ id: t.id, fim: new Date(`${v}T12:00:00`) })}
@@ -530,11 +550,10 @@ function LinhaCronograma({
         style={fixa(4, t.ehPai)}
       >
         <span className="flex items-center gap-2">
-          <CampoInline
-            valor={String(t.progressoEfetivo)}
-            tipo="number"
+          <CampoProgresso
+            valor={t.progressoEfetivo}
             editavel={podeEditar}
-            onSalvar={(v) => salvarCampo.mutate({ id: t.id, progresso: Number(v) })}
+            onSalvar={(v) => salvarCampo.mutate({ id: t.id, progresso: v })}
           />
           <Progress value={t.progressoEfetivo} className="h-1 w-8" />
         </span>
@@ -560,54 +579,81 @@ function LinhaCronograma({
 }
 
 /**
- * Campo que salva ao sair (onBlur), não a cada tecla.
+ * Data em dd/mm/aaaa que vira campo de calendário ao receber foco.
  *
- * Salvar por tecla geraria uma requisição por dígito e, num campo de
- * data, tentaria gravar "10/0" no meio da digitação. O rascunho local
- * volta ao valor do servidor quando a gravação falha.
+ * O `<input type="date">` desenha o formato do sistema operacional e
+ * reserva espaço para o ícone de calendário, então ocupa bem mais
+ * largura do que o texto que representa — era isso que cortava o ano na
+ * grade. Mostrar texto e só trocar durante a edição resolve sem gastar
+ * a largura que o Gantt precisa.
+ *
+ * Salva ao sair, não a cada tecla: por tecla haveria uma requisição por
+ * dígito, e o campo tentaria gravar uma data pela metade no meio da
+ * digitação.
  */
-function CampoInline({
+function CampoData({
   valor,
-  tipo,
   editavel,
   alerta,
   onSalvar,
 }: {
-  valor: string;
-  tipo: "date" | "number";
+  valor: Date;
   editavel: boolean;
   alerta?: string | undefined;
-  onSalvar: (v: string) => void;
+  onSalvar: (iso: string) => void;
 }) {
-  const [rascunho, setRascunho] = useState(valor);
+  const [editando, setEditando] = useState(false);
+  const [rascunho, setRascunho] = useState(paraInput(valor));
 
-  // Se o servidor devolveu outro valor (rollup, rejeição), acompanha.
-  useEffect(() => setRascunho(valor), [valor]);
+  // Se o servidor devolveu outro valor (rollup, reagendamento), acompanha.
+  useEffect(() => setRascunho(paraInput(valor)), [valor]);
 
   if (!editavel) {
     return (
-      <span className={cn("font-mono text-xs", alerta ? "text-warning" : "text-muted-foreground")}>
-        {tipo === "date" ? valor.split("-").reverse().join("/") : `${valor}%`}
+      <span
+        className={cn(
+          "block whitespace-nowrap font-mono text-xs",
+          alerta ? "text-warning" : "text-muted-foreground",
+        )}
+        title={alerta}
+      >
+        {fmt(valor)}
       </span>
+    );
+  }
+
+  if (!editando) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditando(true)}
+        title={alerta}
+        className={cn(
+          "h-7 w-full whitespace-nowrap rounded-md border border-transparent px-1 text-left font-mono text-xs hover:border-border focus:border-primary focus:outline-none",
+          alerta ? "text-warning" : "",
+        )}
+      >
+        {fmt(valor)}
+      </button>
     );
   }
 
   return (
     <Input
-      type={tipo}
+      type="date"
+      autoFocus
       value={rascunho}
-      min={tipo === "number" ? 0 : undefined}
-      max={tipo === "number" ? 100 : undefined}
       title={alerta}
       onChange={(e) => setRascunho(e.target.value)}
       onBlur={() => {
-        if (rascunho !== valor && rascunho !== "") onSalvar(rascunho);
+        setEditando(false);
+        if (rascunho && rascunho !== paraInput(valor)) onSalvar(rascunho);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
         if (e.key === "Escape") {
-          setRascunho(valor);
-          e.currentTarget.blur();
+          setRascunho(paraInput(valor));
+          setEditando(false);
         }
       }}
       className={cn(
@@ -618,60 +664,43 @@ function CampoInline({
   );
 }
 
-/**
- * Nome editável em linha. Diferente dos campos numéricos, precisa de
- * largura flexível e de um caminho para abrir o detalhe — daí o ícone
- * separado em vez de clique no texto, que conflitaria com o foco.
- */
-function NomeInline({
+/** Percentual de conclusão, salvo ao sair do campo. */
+function CampoProgresso({
   valor,
-  negrito,
-  riscado,
+  editavel,
   onSalvar,
-  onDetalhe,
 }: {
-  valor: string;
-  negrito: boolean;
-  riscado: boolean;
-  onSalvar: (v: string) => void;
-  onDetalhe: () => void;
+  valor: number;
+  editavel: boolean;
+  onSalvar: (v: number) => void;
 }) {
-  const [rascunho, setRascunho] = useState(valor);
-  useEffect(() => setRascunho(valor), [valor]);
+  const [rascunho, setRascunho] = useState(String(valor));
+  useEffect(() => setRascunho(String(valor)), [valor]);
+
+  if (!editavel) {
+    return <span className="font-mono text-xs text-muted-foreground">{valor}%</span>;
+  }
 
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-1">
-      <Input
-        value={rascunho}
-        maxLength={300}
-        onChange={(e) => setRascunho(e.target.value)}
-        onBlur={() => {
-          const v = rascunho.trim();
-          if (v && v !== valor) onSalvar(v);
-          else if (!v) setRascunho(valor);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") {
-            setRascunho(valor);
-            e.currentTarget.blur();
-          }
-        }}
-        className={cn(
-          "h-7 min-w-0 flex-1 border-transparent bg-transparent px-1 text-sm hover:border-border focus:border-primary",
-          negrito ? "font-medium" : "",
-          riscado ? "line-through opacity-70" : "",
-        )}
-      />
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-6 shrink-0"
-        title="Abrir detalhes"
-        onClick={onDetalhe}
-      >
-        <ChevronRight className="size-3.5" />
-      </Button>
-    </span>
+    <Input
+      type="number"
+      min={0}
+      max={100}
+      value={rascunho}
+      onChange={(e) => setRascunho(e.target.value)}
+      onBlur={() => {
+        const n = Math.round(Number(rascunho));
+        if (Number.isFinite(n) && n >= 0 && n <= 100 && n !== valor) onSalvar(n);
+        else setRascunho(String(valor));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setRascunho(String(valor));
+          e.currentTarget.blur();
+        }
+      }}
+      className="h-7 w-12 border-transparent bg-transparent px-1 font-mono text-xs hover:border-border focus:border-primary"
+    />
   );
 }

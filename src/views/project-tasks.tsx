@@ -12,7 +12,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, CornerDownRight, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CornerDownRight,
+  IndentDecrease,
+  IndentIncrease,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,7 +38,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { diasEntre, paraInput } from "@/lib/datas";
 import { cn } from "@/lib/utils";
-import type { DadosCpm, Projeto, Tarefa, TarefaCalculada } from "@/repositories/projetos.repo";
+import type {
+  ConflitoData,
+  DadosCpm,
+  Projeto,
+  ResultadoCampo,
+  Tarefa,
+  TarefaCalculada,
+} from "@/repositories/projetos.repo";
 import {
   aninharTarefaFn,
   atualizarCampoTarefaFn,
@@ -51,6 +66,17 @@ type Unidade = "horas" | "dias";
 function curta(v: Date | string): string {
   const d = new Date(v);
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * dd/mm/aaaa, para o diálogo de conflito.
+ *
+ * Ali o ano importa: o caso mais comum de data recusada é justamente
+ * quem digitou o ano errado, e esconder o ano deixaria a pessoa sem ver
+ * o próprio erro.
+ */
+function longa(v: Date | string): string {
+  return new Date(v).toLocaleDateString("pt-BR");
 }
 
 /**
@@ -102,6 +128,19 @@ export function ProjectTasks({
 }: ProjectTasksProps) {
   const [unidade, setUnidade] = useState<Unidade>("horas");
 
+  // Ids das tarefas mãe recolhidas. Guardado por id, não por índice: a
+  // linha muda de número a cada inserção, o id não.
+  const [recolhidas, setRecolhidas] = useState<Set<string>>(new Set());
+
+  function alternarRecolhida(id: string) {
+    setRecolhidas((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+  }
+
   const indicePorId = useMemo(() => {
     const m = new Map<string, number>();
     wbs.forEach(({ tarefa }, i) => m.set(tarefa.id, i + 1));
@@ -121,9 +160,51 @@ export function ProjectTasks({
     [recursos],
   );
 
+  /**
+   * Esconde a descendência das mães recolhidas.
+   *
+   * A numeração continua sendo a da WBS inteira: recolher um grupo não
+   * pode renumerar as linhas de baixo, senão a predecessora digitada
+   * como "7" passaria a apontar para outra tarefa.
+   */
+  const visiveis = useMemo(() => {
+    if (recolhidas.size === 0) return wbs.map((w, i) => ({ ...w, indice: i + 1 }));
+
+    const escondidas = new Set<string>();
+    const saida: { tarefa: TarefaCalculada; nivel: number; indice: number }[] = [];
+
+    wbs.forEach(({ tarefa, nivel }, i) => {
+      const paiEscondido = tarefa.paiId !== null && escondidas.has(tarefa.paiId);
+      if (paiEscondido || (tarefa.paiId !== null && recolhidas.has(tarefa.paiId))) {
+        escondidas.add(tarefa.id);
+        return;
+      }
+      saida.push({ tarefa, nivel, indice: i + 1 });
+    });
+    return saida;
+  }, [wbs, recolhidas]);
+
   const criticas = Object.values(cpm).filter((c) => c.critica).length;
-  const duracaoProjeto = diasEntre(projeto.inicio, projeto.fim);
   const atrasoPontos = progressoEsperado - progressoReal;
+
+  /**
+   * Esforço total do projeto, em horas.
+   *
+   * Soma só as raízes porque `esforcoHoras` já vem consolidado do
+   * rollup: incluir os níveis de baixo contaria o mesmo trabalho duas
+   * vezes.
+   *
+   * Antes esta célula mostrava o intervalo de calendário do projeto, e
+   * era isso que produzia um cabeçalho com "8h" sobre filhas somando
+   * 24h — dois números certos medindo coisas diferentes, na mesma
+   * coluna. O período continua legível nas colunas de início e fim.
+   */
+  const esforcoProjeto = useMemo(
+    () => wbs.filter((w) => w.nivel === 0).reduce((s, w) => s + w.tarefa.esforcoHoras, 0),
+    [wbs],
+  );
+
+  const duracaoProjeto = diasEntre(projeto.inicio, projeto.fim);
 
   return (
     <div className="space-y-3">
@@ -178,13 +259,15 @@ export function ProjectTasks({
           </thead>
 
           <tbody>
-            {/* Linha 0: o projeto, com o resumo que dá escala à leitura. */}
-            <tr className="border-b border-border bg-secondary/30 font-medium">
+            {/* Linha do projeto: fundo próprio e borda mais forte, para
+                não se confundir com uma tarefa mãe. */}
+            <tr className="border-b-2 border-primary/30 bg-primary/10 font-semibold">
               <td className="px-2 py-2 font-mono text-xs text-muted-foreground">0</td>
               <td className="px-3 py-2">
                 <span className="block truncate">{projeto.nome}</span>
                 <span className="block truncate text-[11px] font-normal text-muted-foreground">
-                  {projeto.gerenteNome ?? "Sem gerente"} · {wbs.length} tarefa(s)
+                  {projeto.gerenteNome ?? "Sem gerente"} · {wbs.length} tarefa(s) · {duracaoProjeto}{" "}
+                  d de calendário
                   {progressoEsperado > 0 ? (
                     <>
                       {" · esperado "}
@@ -196,8 +279,11 @@ export function ProjectTasks({
                   ) : null}
                 </span>
               </td>
-              <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
-                {duracaoExibida(converterDuracao(duracaoProjeto, "dias", unidade), unidade)}
+              <td
+                className="px-3 py-2 font-mono text-xs text-muted-foreground"
+                title="Esforço somado de todas as tarefas"
+              >
+                {duracaoExibida(converterDuracao(esforcoProjeto, "horas", unidade), unidade)}
               </td>
               <td className="px-3 py-2 font-mono text-xs">{curta(projeto.inicio)}</td>
               <td className="px-3 py-2 font-mono text-xs">{curta(projeto.fim)}</td>
@@ -211,12 +297,14 @@ export function ProjectTasks({
               <td />
             </tr>
 
-            {wbs.map(({ tarefa: t, nivel }, i) => (
+            {visiveis.map(({ tarefa: t, nivel, indice }) => (
               <LinhaTarefa
                 key={t.id}
-                indice={i + 1}
+                indice={indice}
                 tarefa={t}
                 nivel={nivel}
+                recolhida={recolhidas.has(t.id)}
+                onAlternarRecolhida={() => alternarRecolhida(t.id)}
                 cpm={cpm[t.id]}
                 unidade={unidade}
                 predecessoras={predecessoras[t.id] ?? []}
@@ -248,6 +336,8 @@ function LinhaTarefa({
   indice,
   tarefa: t,
   nivel,
+  recolhida,
+  onAlternarRecolhida,
   cpm,
   unidade,
   predecessoras,
@@ -262,6 +352,8 @@ function LinhaTarefa({
   indice: number;
   tarefa: TarefaCalculada;
   nivel: number;
+  recolhida: boolean;
+  onAlternarRecolhida: () => void;
   cpm: DadosCpm | undefined;
   unidade: Unidade;
   predecessoras: string[];
@@ -281,9 +373,40 @@ function LinhaTarefa({
   };
   const erro = (e: Error) => toast.error("Não foi possível salvar", { description: e.message });
 
+  /**
+   * Conflito de data pendente de decisão.
+   *
+   * Guarda junto o payload que o provocou: as duas saídas do diálogo são
+   * o mesmo envio de novo, uma com a data corrigida e outra com
+   * `forcarData`. Remontar o payload a partir do estado da linha daria
+   * margem a divergir do que a pessoa realmente digitou.
+   */
+  const [conflito, setConflito] = useState<{ dados: ConflitoData; envio: CampoTarefaInput } | null>(
+    null,
+  );
+
   const salvarCampo = useMutation({
     mutationFn: (v: CampoTarefaInput) => atualizarCampoTarefaFn({ data: v }),
-    onSuccess: invalidar,
+    onSuccess: (res: ResultadoCampo, envio) => {
+      if (!res.ok && res.conflito) {
+        setConflito({ dados: res.conflito, envio });
+        return;
+      }
+
+      setConflito(null);
+
+      // Superalocação não impede a gravação, mas some da tela se não for
+      // dita agora: a grade não tem coluna de capacidade. O teto vai
+      // junto porque "120%" só significa algo ao lado do limite da
+      // pessoa — quem está metade do dia em sustentação estoura em 50%.
+      for (const a of res.avisos ?? []) {
+        toast.warning(`${a.recursoNome}: ${a.percentualTotal}% de ${a.tetoPct}% disponíveis`, {
+          description: `Concorre com ${a.tarefasConcorrentes} outra(s) tarefa(s) no mesmo período.`,
+        });
+      }
+
+      invalidar();
+    },
     onError: erro,
   });
 
@@ -323,14 +446,22 @@ function LinhaTarefa({
   const critica = cpm?.critica ?? false;
   const diasCalendario = cpm?.duracaoDias ?? diasEntre(t.inicioEfetivo, t.fimEfetivo);
 
-  // Tarefa mãe e tarefa antiga (sem duração gravada) só têm o calendário
-  // como fonte. As demais mostram o que foi digitado.
+  // Mãe mostra a soma do esforço das filhas; folha mostra o que foi
+  // digitado. O `esforcoHoras` já vem resolvido do servidor, sempre em
+  // horas — daí a origem ser sempre "horas" para a mãe.
   const unidadeOrigem: Unidade = t.duracaoUnidade === "horas" ? "horas" : "dias";
-  const duracaoBase = !t.ehPai && t.duracao !== null ? t.duracao : diasCalendario;
-  const duracaoOrigem: Unidade = !t.ehPai && t.duracao !== null ? unidadeOrigem : "dias";
+  const duracaoBase = t.ehPai ? t.esforcoHoras : t.duracao !== null ? t.duracao : diasCalendario;
+  const duracaoOrigem: Unidade = t.ehPai ? "horas" : t.duracao !== null ? unidadeOrigem : "dias";
 
   return (
-    <tr className={cn("group border-b border-border/60", t.ehPai ? "bg-secondary/20" : "")}>
+    <tr
+      className={cn(
+        "group border-b border-border/60",
+        // Mãe em fundo tênue e texto forte: numa WBS de trinta linhas,
+        // a hierarquia precisa ser legível antes da leitura.
+        t.ehPai ? "bg-secondary/25 font-semibold" : "",
+      )}
+    >
       {/* Calha: o número dá lugar aos botões quando o ponteiro entra na
           linha ou algum campo dela recebe foco. Fora do hover eles não
           ocupam pixel nem entram na ordem de tabulação. */}
@@ -361,6 +492,31 @@ function LinhaTarefa({
               >
                 <CornerDownRight className="size-3.5" />
               </Button>
+              {/* Indentar e desindentar: o atalho de teclado existe, mas
+                  só quem já sabe descobre. O botão é o caminho visível
+                  para associar uma tarefa a outra depois de criada. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                tabIndex={-1}
+                className="size-6"
+                title="Tornar subtarefa da linha acima (Alt+Shift+→)"
+                disabled={aninhar.isPending}
+                onClick={() => aninhar.mutate("dentro")}
+              >
+                <IndentIncrease className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                tabIndex={-1}
+                className="size-6"
+                title="Subir um nível (Alt+Shift+←)"
+                disabled={aninhar.isPending || t.paiId === null}
+                onClick={() => aninhar.mutate("fora")}
+              >
+                <IndentDecrease className="size-3.5" />
+              </Button>
               {/* Separado dos dois de inserir e só vermelho no hover: é o
                   único destrutivo do trio e não pode ser clicado por
                   reflexo. */}
@@ -384,9 +540,9 @@ function LinhaTarefa({
             <AlertDialogHeader>
               <AlertDialogTitle>Excluir “{t.nome}”?</AlertDialogTitle>
               <AlertDialogDescription>
-                {t.ehPai ? `As ${t.totalFolhas} subtarefas serão excluídas junto. ` : ""}A exclusão
-                é definitiva e não pode ser desfeita. O histórico de baselines continua guardando as
-                datas desta tarefa.
+                {t.ehPai ? `As ${t.totalFolhas} subtarefas serão excluídas junto. ` : ""}A tarefa
+                sai do cronograma e para de contar no progresso, mas continua guardada no banco — o
+                histórico de baselines permanece íntegro.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -403,11 +559,39 @@ function LinhaTarefa({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <DialogoConflito
+          conflito={conflito}
+          nomeTarefa={t.nome}
+          salvando={salvarCampo.isPending}
+          onFechar={() => setConflito(null)}
+          onReenviar={(v) => {
+            setConflito(null);
+            salvarCampo.mutate(v);
+          }}
+        />
       </td>
 
       <td className="px-3 py-1">
         <span className="flex items-center gap-1.5" style={{ paddingLeft: `${nivel * 14}px` }}>
-          {t.ehPai ? <ChevronRight className="size-3 shrink-0 text-muted-foreground" /> : null}
+          {t.ehPai ? (
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={onAlternarRecolhida}
+              title={recolhida ? "Expandir subtarefas" : "Recolher subtarefas"}
+              className="shrink-0 rounded text-muted-foreground hover:text-foreground"
+            >
+              {recolhida ? (
+                <ChevronRight className="size-3.5" />
+              ) : (
+                <ChevronDown className="size-3.5" />
+              )}
+            </button>
+          ) : (
+            // Espaço reservado: sem ele, folha e mãe desalinham.
+            <span className="size-3.5 shrink-0" />
+          )}
           {critica ? (
             <span
               className="size-1.5 shrink-0 rounded-full bg-destructive"
@@ -430,7 +614,7 @@ function LinhaTarefa({
             <span
               className={cn(
                 "truncate",
-                t.ehPai ? "font-medium" : "",
+                t.ehPai ? "font-semibold" : "",
                 t.quadro === "done" ? "line-through opacity-70" : "",
               )}
             >
@@ -444,7 +628,7 @@ function LinhaTarefa({
             </Badge>
           ) : null}
           {t.ehPai ? (
-            <span className="shrink-0 text-[10px] text-muted-foreground">
+            <span className="shrink-0 text-[10px] font-normal text-muted-foreground">
               ({t.totalFolhas} subtarefa{t.totalFolhas > 1 ? "s" : ""})
             </span>
           ) : null}
@@ -452,7 +636,7 @@ function LinhaTarefa({
 
         {t.atividade || critica || (cpm && cpm.folgaDias > 0 && !t.ehPai) ? (
           <span
-            className="mt-0.5 block truncate text-[11px] text-muted-foreground"
+            className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground"
             style={{ paddingLeft: `${nivel * 14 + 14}px` }}
           >
             {t.atividade ? <span>{t.atividade}</span> : null}
@@ -509,7 +693,7 @@ function LinhaTarefa({
           as folhas. */}
       <td className="px-3 py-1 align-top">
         {t.ehPai ? (
-          <span className="text-xs text-muted-foreground">—</span>
+          <span className="text-xs font-normal text-muted-foreground">—</span>
         ) : (
           <CampoPredecessoras
             valorIds={predecessoras}
@@ -525,7 +709,7 @@ function LinhaTarefa({
 
       <td className="px-3 py-1 align-top">
         {t.ehPai ? (
-          <span className="text-xs text-muted-foreground">—</span>
+          <span className="text-xs font-normal text-muted-foreground">—</span>
         ) : (
           <SeletorMultiplo
             opcoes={opcoesRecurso}
@@ -538,6 +722,93 @@ function LinhaTarefa({
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * Diálogo de data anterior ao que a dependência permite.
+ *
+ * Nada foi gravado quando ele aparece — o servidor recusa antes de
+ * escrever. As duas saídas são deliberadamente simétricas: ou a data
+ * cede à dependência, ou a dependência cede à data. Oferecer só a
+ * primeira transformaria o vínculo num obstáculo intransponível; aplicar
+ * a segunda em silêncio faria a pessoa perder o vínculo sem saber.
+ *
+ * "Manter a data" corta apenas os vínculos que bloqueiam. Os demais
+ * continuam, porque não têm nada a ver com o impedimento.
+ */
+function DialogoConflito({
+  conflito,
+  nomeTarefa,
+  salvando,
+  onFechar,
+  onReenviar,
+}: {
+  conflito: { dados: ConflitoData; envio: CampoTarefaInput } | null;
+  nomeTarefa: string;
+  salvando: boolean;
+  onFechar: () => void;
+  onReenviar: (v: CampoTarefaInput) => void;
+}) {
+  if (!conflito) return null;
+
+  const { dados, envio } = conflito;
+  const bloqueantes = dados.predecessoras.filter((p) => p.bloqueia);
+  const minimo = new Date(dados.minimoPermitido);
+
+  return (
+    <AlertDialog open onOpenChange={(aberto) => (aberto ? undefined : onFechar())}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>A data depende de outra tarefa</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-2">
+              <p>
+                “{nomeTarefa}” não pode começar em{" "}
+                <strong className="font-mono">{longa(dados.propostoEm)}</strong>: antes disso
+                {bloqueantes.length > 1 ? " as tarefas" : " a tarefa"}{" "}
+                {bloqueantes.map((p, i) => (
+                  <span key={p.id}>
+                    {i > 0 ? (i === bloqueantes.length - 1 ? " e " : ", ") : ""}
+                    <strong>{p.nome}</strong> (termina em {longa(p.fim)})
+                  </span>
+                ))}{" "}
+                ainda {bloqueantes.length > 1 ? "estão" : "está"} em andamento.
+              </p>
+              <p>
+                A primeira data possível é <strong className="font-mono">{longa(minimo)}</strong>.
+              </p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <AlertDialogFooter className="sm:justify-between">
+          <AlertDialogCancel disabled={salvando}>Cancelar</AlertDialogCancel>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {/* Destrutiva à esquerda e sem destaque: das duas saídas, é a
+                que apaga informação. */}
+            <Button
+              variant="outline"
+              disabled={salvando}
+              onClick={() => onReenviar({ ...envio, forcarData: true })}
+            >
+              Manter a data e remover{" "}
+              {bloqueantes.length > 1 ? `os ${bloqueantes.length} vínculos` : "o vínculo"}
+            </Button>
+            <AlertDialogAction
+              disabled={salvando}
+              onClick={(e) => {
+                e.preventDefault();
+                onReenviar({ ...envio, inicio: minimo, forcarData: false });
+              }}
+            >
+              Ajustar para {curta(minimo)}
+            </AlertDialogAction>
+          </div>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -636,7 +907,7 @@ function CampoPredecessoras({
           e.currentTarget.blur();
         }
       }}
-      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs hover:border-border focus:border-primary"
+      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
     />
   );
 }
@@ -671,7 +942,7 @@ function CampoData({
       <button
         type="button"
         onClick={() => setEditando(true)}
-        className="h-7 w-full rounded-md border border-transparent px-1 text-left font-mono text-xs hover:border-border focus:border-primary focus:outline-none"
+        className="h-7 w-full rounded-md border border-transparent px-1 text-left font-mono text-xs font-normal hover:border-border focus:border-primary focus:outline-none"
       >
         {curta(valor)}
       </button>
@@ -695,7 +966,7 @@ function CampoData({
           setEditando(false);
         }
       }}
-      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs hover:border-border focus:border-primary"
+      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
     />
   );
 }
@@ -744,9 +1015,11 @@ function CampoDuracao({
             e.currentTarget.blur();
           }
         }}
-        className="h-7 w-14 border-transparent bg-transparent px-1 font-mono text-xs hover:border-border focus:border-primary"
+        className="h-7 w-14 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
       />
-      <span className="text-[10px] text-muted-foreground">{unidade === "horas" ? "h" : "d"}</span>
+      <span className="text-[10px] font-normal text-muted-foreground">
+        {unidade === "horas" ? "h" : "d"}
+      </span>
     </span>
   );
 }
@@ -786,7 +1059,7 @@ function CampoNumero({
           e.currentTarget.blur();
         }
       }}
-      className="h-7 w-12 border-transparent bg-transparent px-1 font-mono text-xs hover:border-border focus:border-primary"
+      className="h-7 w-12 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
     />
   );
 }
@@ -851,7 +1124,7 @@ function NomeInline({
         }}
         className={cn(
           "h-7 min-w-0 flex-1 border-transparent bg-transparent px-1 text-sm hover:border-border focus:border-primary",
-          negrito ? "font-medium" : "",
+          negrito ? "font-semibold" : "font-normal",
           riscado ? "line-through opacity-70" : "",
         )}
       />

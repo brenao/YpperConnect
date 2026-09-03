@@ -1,7 +1,8 @@
 import * as React from "react";
+import type { ComponentType } from "react";
 import { render } from "@react-email/render";
 import nodemailer from "nodemailer";
-import { TEMPLATES } from "./registry";
+import { TEMPLATES, type DadosTemplate } from "./registry";
 
 // Somente servidor: lê as variáveis SMTP_*. Nunca importar de componente cliente.
 
@@ -9,7 +10,7 @@ export type SendTemplateEmailResult =
   { sent: true } | { sent: false; reason: "recipient_suppressed" };
 
 export interface SendTemplateEmailOptions {
-  templateData?: Record<string, any>;
+  templateData?: DadosTemplate;
   /** Mantido por compatibilidade de assinatura; SMTP não deduplica. */
   idempotencyKey?: string;
   replyTo?: string;
@@ -65,7 +66,14 @@ export async function sendTemplateEmail(
   }
 
   const templateData = options.templateData ?? {};
-  const element = React.createElement(template.component, templateData);
+
+  // A única conversão do módulo. O registro é heterogêneo — cada
+  // template tem props próprias — e o TypeScript não consegue expressar
+  // isso num Record. Quem registra um template é responsável por
+  // alimentar as props certas.
+  const Componente = template.component as ComponentType<DadosTemplate>;
+  const element = React.createElement(Componente, templateData);
+
   const html = await render(element);
   const text = await render(element, { plainText: true });
   const subject =

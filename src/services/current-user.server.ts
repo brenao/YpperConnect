@@ -15,6 +15,27 @@ import { consultarUm } from "@/integrations/postgres/client.server";
  * "tem acesso a este sistema".
  */
 
+/**
+ * Enxerga o portfólio inteiro, em leitura.
+ *
+ * É a visão de diretoria: responde pela carteira toda e precisa ver
+ * projeto de qualquer área, inclusive o que ninguém indicou para ela.
+ * Não dá direito de escrita — quem responde pelo projeto é quem o
+ * executa, e diretoria que edita cronograma alheio produz plano que o
+ * time não reconhece.
+ */
+export const FEATURE_PROJETOS_DIRETORIA = "projetos.visao_diretoria";
+
+/**
+ * Enxerga os projetos da própria equipe, em leitura.
+ *
+ * É o gestor de portfólio. O time vem de `usuarios.equipe_id`: são
+ * "seus" os projetos em que alguém da equipe é gerente, patrocinador ou
+ * responsável por tarefa. Sem equipe cadastrada, vê apenas os próprios —
+ * e é sinal de cadastro incompleto, não de restrição intencional.
+ */
+export const FEATURE_PROJETOS_PORTFOLIO = "projetos.portfolio";
+
 export interface ContextoUsuario {
   id: string;
   nome: string;
@@ -22,6 +43,11 @@ export interface ContextoUsuario {
   admin: boolean;
   perfilId: string | null;
   equipeId: string | null;
+  /** Chaves de `perfil_features` do perfil do usuário. */
+  funcionalidades: string[];
+  /** Atalhos dos papéis de projeto, para não espalhar string mágica. */
+  visaoDiretoriaProjetos: boolean;
+  gestorPortfolio: boolean;
 }
 
 /**
@@ -38,6 +64,8 @@ interface LinhaUsuario {
   admin: number;
   perfilId: string | null;
   equipeId: string | null;
+  /** Chaves separadas por vírgula, agregadas no SQL. */
+  funcionalidades: string | null;
 }
 
 /**
@@ -103,11 +131,19 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
   const username = token ? usuarioDoToken(token) : null;
   const login = username ?? LOGIN_DESENVOLVIMENTO;
 
+  // As funcionalidades vêm agregadas na mesma consulta: são lidas em
+  // toda requisição, e uma segunda ida ao banco por causa de uma lista
+  // de meia dúzia de chaves não se paga.
   const linha = await consultarUm<LinhaUsuario>(
-    `SELECT id, nome, email, admin, perfil_id, equipe_id
-       FROM usuarios
-      WHERE LOWER(REGEXP_REPLACE(login, '^.*\\\\', '')) = :login
-        AND ativo = 1`,
+    `SELECT u.id, u.nome, u.email, u.admin, u.perfil_id, u.equipe_id,
+            f.chaves AS funcionalidades
+       FROM usuarios u
+       LEFT JOIN (SELECT perfil_id, STRING_AGG(feature_key, ',') AS chaves
+                    FROM perfil_features
+                   GROUP BY perfil_id) f
+              ON f.perfil_id = u.perfil_id
+      WHERE LOWER(REGEXP_REPLACE(u.login, '^.*\\\\', '')) = :login
+        AND u.ativo = 1`,
     { login: normalizarLogin(login) },
   );
 
@@ -124,6 +160,8 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
     );
   }
 
+  const funcionalidades = (linha.funcionalidades ?? "").split(",").filter(Boolean);
+
   return {
     id: linha.id,
     nome: linha.nome,
@@ -131,5 +169,8 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
     admin: linha.admin === 1,
     perfilId: linha.perfilId,
     equipeId: linha.equipeId,
+    funcionalidades,
+    visaoDiretoriaProjetos: funcionalidades.includes(FEATURE_PROJETOS_DIRETORIA),
+    gestorPortfolio: funcionalidades.includes(FEATURE_PROJETOS_PORTFOLIO),
   };
 }

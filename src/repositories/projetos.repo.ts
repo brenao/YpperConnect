@@ -6,6 +6,7 @@ import {
 } from "@/integrations/postgres/client.server";
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
+import type { ProjectStatus } from "@/models/itsm-types";
 
 /**
  * Portfólio de projetos: cronograma, WBS, riscos e acompanhamento.
@@ -14,8 +15,6 @@ import type { ContextoUsuario } from "@/services/current-user.server";
  * vivem em tabelas de junção porque no localStorage eram arrays — e
  * array não sobrevive a banco relacional sem virar linha.
  */
-
-export type ProjectStatus = "planejamento" | "execucao" | "paralisado" | "cancelado" | "concluido";
 
 export type QuadroTarefa = "backlog" | "todo" | "doing" | "done";
 export type NivelRisco = "alta" | "media" | "baixa";
@@ -32,6 +31,21 @@ export interface Projeto {
   status: ProjectStatus;
   inicio: Date;
   fim: Date;
+  /**
+   * Cronograma em dias úteis (padrão) ou dias corridos.
+   *
+   * A exceção existe para projeto com gente trabalhando fim de semana —
+   * virada de sistema, parada de fábrica. Fora disso, contar sábado e
+   * domingo como dia de trabalho produz prazo que ninguém cumpre.
+   */
+  usaDiasUteis: boolean;
+  /** Origem e priorização: preenchidos no backlog, mantidos depois. */
+  areaDemandante: string | null;
+  justificativa: string | null;
+  valor: number | null;
+  esforco: number | null;
+  alcance: number | null;
+  confianca: number | null;
   criadoEm: Date;
   atualizadoEm: Date;
 }
@@ -104,13 +118,109 @@ const SELECT_PROJETO = `
   SELECT p.id, p.nome, p.objetivo,
          p.sponsor_id, us.nome AS sponsor_nome,
          p.gerente_id, ug.nome AS gerente_nome,
-         p.status, p.inicio, p.fim, p.criado_em, p.atualizado_em
+         p.status, p.inicio, p.fim,
+         (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+         p.area_demandante, p.justificativa,
+         p.valor, p.esforco, p.alcance, p.confianca,
+         p.criado_em, p.atualizado_em
     FROM projetos p
     LEFT JOIN usuarios us ON us.id = p.sponsor_id
     LEFT JOIN usuarios ug ON ug.id = p.gerente_id`;
 
 function novoId(): string {
   return crypto.randomUUID();
+}
+
+/**
+ * Quem executa o projeto: gerente, patrocinador ou quem tem tarefa
+ * atribuída nele.
+ *
+ * É a única porta de escrita. Diretoria e gestor de portfólio ficam de
+ * fora de propósito — eles acompanham a carteira, e plano editado por
+ * quem não executa é plano que o time não reconhece.
+ *
+ * O vínculo por tarefa passa por `recursos`, porque responsável de
+ * tarefa é recurso, não usuário: `recursos.usuario_id` é o que liga os
+ * dois, e recurso de terceiro sem conta simplesmente não casa.
+ */
+const SQL_EXECUTA_PROJETO = `
+  p.gerente_id = :usuarioId
+  OR p.sponsor_id = :usuarioId
+  OR EXISTS (SELECT 1
+               FROM projeto_tarefas t
+               JOIN tarefa_responsaveis tr ON tr.tarefa_id = t.id
+               JOIN recursos r ON r.id = tr.recurso_id
+              WHERE t.projeto_id = p.id AND t.ativo = 1 AND r.usuario_id = :usuarioId)`;
+
+/**
+ * Projetos do time do gestor de portfólio.
+ *
+ * "Do time" é qualquer projeto em que alguém da equipe apareça: como
+ * gerente, como patrocinador ou executando tarefa. Olhar só o gerente
+ * deixaria de fora o projeto de outra área em que a equipe inteira está
+ * alocada — que é exatamente o que o gestor precisa acompanhar.
+ */
+const SQL_TIME_DO_GESTOR = `
+  EXISTS (SELECT 1 FROM usuarios ue
+           WHERE ue.equipe_id = :equipeId
+             AND (ue.id = p.gerente_id OR ue.id = p.sponsor_id))
+  OR EXISTS (SELECT 1
+               FROM projeto_tarefas te
+               JOIN tarefa_responsaveis tre ON tre.tarefa_id = te.id
+               JOIN recursos re ON re.id = tre.recurso_id
+               JOIN usuarios ur ON ur.id = re.usuario_id
+              WHERE te.projeto_id = p.id AND te.ativo = 1 AND ur.equipe_id = :equipeId)`;
+
+export interface FiltroVisibilidade {
+  /** Predicado SQL sobre o alias `p` de `projetos`. */
+  clausula: string;
+  binds: Record<string, unknown>;
+}
+
+/**
+ * O que este usuário pode enxergar do portfólio.
+ *
+ * Antes a leitura era aberta: todo mundo via todos os projetos. Ficou
+ * assim porque o módulo nasceu aberto à empresa inteira, mas isso
+ * significava que qualquer pessoa lia o cronograma e os pontos de
+ * atenção de qualquer área.
+ *
+ * A restrição por equipe de TI que existia na escrita foi removida:
+ * pertencer à TI diz respeito a chamado, não a projeto. Um analista de
+ * infraestrutura não tem por que editar o cronograma de um projeto do
+ * comercial só por estar numa equipe.
+ */
+export function filtroVisibilidadeProjetos(ctx: ContextoUsuario): FiltroVisibilidade {
+  if (ctx.admin || ctx.visaoDiretoriaProjetos) {
+    return { clausula: "TRUE", binds: {} };
+  }
+
+  const partes = [SQL_EXECUTA_PROJETO];
+  const binds: Record<string, unknown> = { usuarioId: ctx.id };
+
+  // Gestor sem equipe cadastrada cai na visão de colaborador. É cadastro
+  // incompleto, não restrição intencional — e devolver o portfólio
+  // inteiro nesse caso seria pior do que devolver de menos.
+  if (ctx.gestorPortfolio && ctx.equipeId !== null) {
+    partes.push(SQL_TIME_DO_GESTOR);
+    binds["equipeId"] = ctx.equipeId;
+  }
+
+  return { clausula: partes.join("\n  OR "), binds };
+}
+
+/** Recusa leitura de projeto fora do alcance do usuário. */
+async function exigirLeituraProjeto(ctx: ContextoUsuario, projetoId: string): Promise<void> {
+  const f = filtroVisibilidadeProjetos(ctx);
+  if (f.clausula === "TRUE") return;
+
+  const p = await consultarUm<{ id: string }>(
+    `SELECT p.id FROM projetos p WHERE p.id = :projetoId AND (${f.clausula})`,
+    { ...f.binds, projetoId },
+  );
+  // Mesma mensagem de inexistente: dizer "sem permissão" confirmaria a
+  // existência de um projeto que a pessoa não deveria nem saber que há.
+  if (!p) throw new ErroDominio(`Projeto ${projetoId} não encontrado`);
 }
 
 /**
@@ -121,25 +231,29 @@ function novoId(): string {
  * cronograma dele — liberar a criação e travar as tarefas produziria um
  * projeto que ninguém consegue tocar.
  *
- * O acesso é por projeto, não por papel global: gerente e sponsor
- * mandam no que é deles, e TI e admin mandam em tudo, porque respondem
- * pela carteira inteira na visão de diretoria.
+ * Escrita é de quem executa: gerente, patrocinador e responsáveis por
+ * tarefa. Admin entra porque precisa destravar cadastro errado. Papéis
+ * de acompanhamento — diretoria e portfólio — são leitura e ficam de
+ * fora, mesmo enxergando o projeto na lista.
  */
 async function exigirAcessoProjeto(
   ctx: ContextoUsuario,
   projetoId: string,
   acao: string,
 ): Promise<void> {
-  if (ctx.admin || ctx.equipeId !== null) return;
+  if (ctx.admin) return;
 
-  const p = await consultarUm<{ gerenteId: string | null; sponsorId: string | null }>(
-    `SELECT gerente_id, sponsor_id FROM projetos WHERE id = :id`,
-    { id: projetoId },
+  const p = await consultarUm<{ id: string; executa: boolean }>(
+    `SELECT p.id, (${SQL_EXECUTA_PROJETO}) AS executa
+       FROM projetos p WHERE p.id = :projetoId`,
+    { projetoId, usuarioId: ctx.id },
   );
   if (!p) throw new ErroDominio(`Projeto ${projetoId} não encontrado`);
 
-  if (p.gerenteId !== ctx.id && p.sponsorId !== ctx.id) {
-    throw new ErroDominio(`Somente o gerente do projeto ou a equipe de TI pode ${acao}`);
+  if (!p.executa) {
+    throw new ErroDominio(
+      `Somente o gerente, o patrocinador ou os responsáveis pelas tarefas podem ${acao}`,
+    );
   }
 }
 
@@ -149,7 +263,7 @@ async function exigirAcessoTarefa(
   tarefaId: string,
   acao: string,
 ): Promise<void> {
-  if (ctx.admin || ctx.equipeId !== null) return;
+  if (ctx.admin) return;
 
   const t = await consultarUm<{ projetoId: string }>(
     `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
@@ -159,21 +273,59 @@ async function exigirAcessoTarefa(
   await exigirAcessoProjeto(ctx, t.projetoId, acao);
 }
 
+/**
+ * Mesma regra para os registros satélites (risco, atenção,
+ * acompanhamento), que só sabem o próprio id.
+ *
+ * A tabela entra como literal montado aqui dentro, nunca vindo do
+ * chamador externo: interpolar nome de tabela é o único jeito de
+ * reaproveitar a consulta, e o valor precisa ser controlado.
+ */
+async function exigirAcessoRegistro(
+  ctx: ContextoUsuario,
+  tabela: "projeto_riscos" | "projeto_atencoes" | "projeto_atualizacoes",
+  id: string,
+  acao: string,
+  rotulo: string,
+): Promise<string> {
+  const r = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM ${tabela} WHERE id = :id`,
+    { id },
+  );
+  if (!r) throw new ErroDominio(`${rotulo} ${id} não encontrado`);
+  await exigirAcessoProjeto(ctx, r.projetoId, acao);
+  return r.projetoId;
+}
+
 // ---------------------------------------------------------------- leitura
 
 /**
- * Lista com progresso agregado.
+ * Lista com progresso agregado, restrita ao que o usuário enxerga.
  *
  * O progresso vem da média das tarefas, calculada em SQL: carregar todas
  * as tarefas de todos os projetos para somar no cliente não escala.
  * Projeto sem tarefa fica com 0, não com "indefinido".
+ *
+ * O filtro entra no WHERE e não numa passada em memória: trazer o
+ * portfólio inteiro para descartar depois vaza os nomes dos projetos
+ * pela rede e desperdiça o trabalho dos agregados.
+ *
+ * Quem está no backlog fica de fora: aparece na tela própria, com a
+ * ordem e a pontuação que só fazem sentido lá. Misturar os dois faria a
+ * contagem de projetos crescer com o que ainda não foi decidido.
  */
-export async function listarProjetos(): Promise<ProjetoComProgresso[]> {
+export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComProgresso[]> {
+  const f = filtroVisibilidadeProjetos(ctx);
+
   return consultar<ProjetoComProgresso>(
     `SELECT p.id, p.nome, p.objetivo,
             p.sponsor_id, us.nome AS sponsor_nome,
             p.gerente_id, ug.nome AS gerente_nome,
-            p.status, p.inicio, p.fim, p.criado_em, p.atualizado_em,
+            p.status, p.inicio, p.fim,
+            (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+            p.area_demandante, p.justificativa,
+            p.valor, p.esforco, p.alcance, p.confianca,
+            p.criado_em, p.atualizado_em,
             COALESCE(t.total, 0) AS total_tarefas,
             COALESCE(t.concluidas, 0) AS tarefas_concluidas,
             COALESCE(ROUND(t.media), 0) AS progresso,
@@ -201,16 +353,48 @@ export async function listarProjetos(): Promise<ProjetoComProgresso[]> {
        LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
                     FROM projeto_atualizacoes GROUP BY projeto_id) u
               ON u.projeto_id = p.id
+      WHERE p.status <> 'backlog' AND (${f.clausula})
       ORDER BY p.status, p.fim`,
+    f.binds,
   );
 }
 
-export async function buscarProjeto(id: string): Promise<Projeto | null> {
+/**
+ * Detalhe do projeto, se o usuário puder vê-lo.
+ *
+ * A checagem é aqui e não só na tela: a rota do projeto é uma URL, e
+ * quem tiver o id de um projeto alheio poderia abri-lo à mão.
+ */
+export async function buscarProjeto(ctx: ContextoUsuario, id: string): Promise<Projeto | null> {
+  await exigirLeituraProjeto(ctx, id);
   return consultarUm<Projeto>(`${SELECT_PROJETO} WHERE p.id = :id`, { id });
 }
 
+/**
+ * Diz se o usuário pode editar este projeto, para a tela decidir o que
+ * mostrar.
+ *
+ * A tela precisa saber antes de renderizar: diretoria e portfólio
+ * enxergam o projeto, então sem isto veriam campos editáveis que o
+ * servidor recusaria depois — pior experiência do que não ver o botão.
+ */
+export async function podeEditarProjeto(ctx: ContextoUsuario, projetoId: string): Promise<boolean> {
+  if (ctx.admin) return true;
+
+  const p = await consultarUm<{ executa: boolean }>(
+    `SELECT (${SQL_EXECUTA_PROJETO}) AS executa FROM projetos p WHERE p.id = :projetoId`,
+    { projetoId, usuarioId: ctx.id },
+  );
+  return p?.executa ?? false;
+}
+
+/** Linha crua da tarefa: `marco` é SMALLINT 0/1 no schema. */
+interface LinhaTarefaBruta extends Omit<Tarefa, "marco"> {
+  marco: number;
+}
+
 export async function listarTarefas(projetoId: string): Promise<Tarefa[]> {
-  const linhas = await consultar<Omit<Tarefa, "marco"> & { marco: number }>(
+  const linhas = await consultar<LinhaTarefaBruta>(
     `SELECT id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
             quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem, concluido_em
        FROM projeto_tarefas
@@ -262,16 +446,75 @@ export async function listarRiscos(projetoId: string): Promise<Risco[]> {
   );
 }
 
-export async function listarAtualizacoes(projetoId: string): Promise<Atualizacao[]> {
+/**
+ * Filtro do histórico de acompanhamento.
+ *
+ * O acompanhamento é semanal e não para de crescer: em um ano são
+ * cinquenta registros por projeto, e mostrar tudo de uma vez transforma
+ * a aba num paredão. A busca vai para o SQL, não para o cliente —
+ * filtrar em memória só adia o problema até o volume dobrar.
+ */
+export interface FiltroAtualizacoes {
+  /** Texto livre em descrição e entregas. */
+  busca?: string | null | undefined;
+  /** Recorte por período, para "o que foi dito no trimestre". */
+  de?: Date | null | undefined;
+  ate?: Date | null | undefined;
+  /** Teto de linhas devolvidas. */
+  limite?: number | undefined;
+}
+
+export async function listarAtualizacoes(
+  projetoId: string,
+  filtro: FiltroAtualizacoes = {},
+): Promise<Atualizacao[]> {
+  // ILIKE com % nas duas pontas não usa índice, mas o universo aqui é o
+  // histórico de um projeto — algumas dezenas de linhas, não a tabela
+  // inteira.
+  const busca = filtro.busca?.trim();
+  const temBusca = busca !== undefined && busca.length > 0;
+
+  // Os filtros opcionais levam tipo explícito: um parâmetro que só
+  // aparece dentro de `IS NULL` não tem coluna ao lado de onde o
+  // Postgres possa inferir o tipo, e a consulta falha ao preparar com
+  // "could not determine data type of parameter".
+  //
+  // CAST(...) em vez de `::` porque a camada de binds nomeados varre a
+  // string atrás de `:nome`, e `:de::timestamp` a faria enxergar um
+  // segundo bind chamado `timestamp`.
   return consultar<Atualizacao>(
     `SELECT a.id, a.projeto_id, a.autor_id, u.nome AS autor_nome, a.data_ref,
             a.descricao, a.ultimas_entregas, a.proximas_entregas, a.criado_em
        FROM projeto_atualizacoes a
        LEFT JOIN usuarios u ON u.id = a.autor_id
       WHERE a.projeto_id = :projetoId
-      ORDER BY a.data_ref DESC`,
+        AND (CAST(:busca AS text) IS NULL
+             OR a.descricao ILIKE CAST(:curinga AS text)
+             OR a.ultimas_entregas ILIKE CAST(:curinga AS text)
+             OR a.proximas_entregas ILIKE CAST(:curinga AS text)
+             OR u.nome ILIKE CAST(:curinga AS text))
+        AND (CAST(:de AS timestamp) IS NULL OR a.data_ref >= CAST(:de AS timestamp))
+        AND (CAST(:ate AS timestamp) IS NULL OR a.data_ref <= CAST(:ate AS timestamp))
+      ORDER BY a.data_ref DESC
+      LIMIT CAST(:limite AS integer)`,
+    {
+      projetoId,
+      busca: temBusca ? busca : null,
+      curinga: temBusca ? `%${busca}%` : "%",
+      de: filtro.de ?? null,
+      ate: filtro.ate ?? null,
+      limite: filtro.limite ?? 200,
+    },
+  );
+}
+
+/** Quantas atualizações existem ao todo, para a tela saber se truncou. */
+export async function contarAtualizacoes(projetoId: string): Promise<number> {
+  const r = await consultarUm<{ total: number }>(
+    `SELECT COUNT(*)::int AS total FROM projeto_atualizacoes WHERE projeto_id = :projetoId`,
     { projetoId },
   );
+  return r?.total ?? 0;
 }
 
 export async function listarAtencoes(projetoId: string): Promise<Atencao[]> {
@@ -289,19 +532,85 @@ export async function listarAtencoes(projetoId: string): Promise<Atencao[]> {
 
 // ---------------------------------------------------------------- escrita
 
+/**
+ * Um projeto é o mesmo registro esteja ele no backlog ou em execução.
+ *
+ * Os campos são os mesmos nos dois estados de propósito: quem registra
+ * uma ideia e quem abre um projeto preenchem a mesma coisa, e dois
+ * formulários diferentes fariam a promoção perder dado ou pedir de novo
+ * o que já tinha sido informado.
+ *
+ * A priorização é opcional em qualquer estado — projeto já aprovado não
+ * precisa de score, e demanda recém-registrada ainda não tem.
+ */
 export interface DadosProjeto {
   nome: string;
   objetivo?: string | null | undefined;
   sponsorId?: string | null | undefined;
   gerenteId?: string | null | undefined;
   status?: ProjectStatus | undefined;
-  inicio: Date;
-  fim: Date;
+  usaDiasUteis?: boolean | undefined;
+  areaDemandante?: string | null | undefined;
+  justificativa?: string | null | undefined;
+  valor?: number | null | undefined;
+  esforco?: number | null | undefined;
+  alcance?: number | null | undefined;
+  confianca?: number | null | undefined;
 }
 
 function validarProjeto(d: DadosProjeto): void {
   if (d.nome.trim().length < 3) throw new ErroDominio("Informe o nome do projeto");
-  if (d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
+}
+
+/**
+ * Recalcula o período do projeto a partir das tarefas.
+ *
+ * O prazo do projeto não é digitado: ele É o intervalo do cronograma.
+ * Deixar os dois campos editáveis criava a contradição de um projeto
+ * que termina em março com tarefa entregando em maio — e nenhum dos
+ * dois números estava errado, só discordavam.
+ *
+ * Projeto sem tarefa fica com o dia de hoje nas duas pontas: as
+ * colunas são NOT NULL e a primeira tarefa corrige na hora.
+ */
+async function recalcularPeriodo(projetoId: string): Promise<void> {
+  await executar(
+    `UPDATE projetos p
+        SET inicio = COALESCE(t.ini, CURRENT_DATE),
+            fim = COALESCE(t.fim, CURRENT_DATE),
+            atualizado_em = LOCALTIMESTAMP
+       FROM (SELECT MIN(inicio) AS ini, MAX(fim) AS fim
+               FROM projeto_tarefas
+              WHERE projeto_id = :projetoId AND ativo = 1) t
+      WHERE p.id = :projetoId`,
+    { projetoId },
+  );
+}
+
+/**
+ * Propaga o cronograma e depois fecha o período do projeto, nesta
+ * ordem.
+ *
+ * A ordem importa: `recalcularPeriodo` lê MIN/MAX das tarefas, e rodar
+ * antes do reagendamento gravaria o período das datas velhas — que é
+ * exatamente o sintoma de "mudei a tarefa e o cabeçalho não acompanhou".
+ *
+ * Toda mutação de cronograma passa por aqui. Deixar a propagação a cargo
+ * de quem edita significa que uma rota nova esquece de chamar e as
+ * sucessoras param de andar sem ninguém perceber.
+ */
+async function propagarCronograma(projetoId: string): Promise<void> {
+  await reagendarProjeto(projetoId);
+  await recalcularPeriodo(projetoId);
+}
+
+/** Mesma coisa, quando só se tem a tarefa em mãos. */
+async function propagarCronogramaDaTarefa(tarefaId: string): Promise<void> {
+  const t = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
+    { id: tarefaId },
+  );
+  if (t) await propagarCronograma(t.projetoId);
 }
 
 /**
@@ -312,12 +621,25 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
   validarProjeto(d);
 
   const id = novoId();
+  const status = d.status ?? "planejamento";
+
+  // Nasce no fim da fila quando entra pelo backlog. A posição é
+  // calculada no próprio INSERT para não abrir uma janela em que duas
+  // criações simultâneas leiam o mesmo máximo.
   await executar(
     `INSERT INTO projetos
        (id, nome, objetivo, sponsor_id, gerente_id, status, inicio, fim,
+        usa_dias_uteis, area_demandante, justificativa,
+        valor, esforco, alcance, confianca, ordem_backlog,
         criado_em, atualizado_em)
      VALUES
-       (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status, :inicio, :fim,
+       (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status,
+        CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :area, :justificativa,
+        :valor, :esforco, :alcance, :confianca,
+        CASE WHEN :status = 'backlog'
+             THEN (SELECT COALESCE(MAX(ordem_backlog), 0) + 1
+                     FROM projetos WHERE status = 'backlog')
+             ELSE NULL END,
         LOCALTIMESTAMP, LOCALTIMESTAMP)`,
     {
       id,
@@ -327,9 +649,14 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
       // Sem gerente informado, assume quem criou: projeto órfão não tem
       // quem responda por ele na visão de diretoria.
       gerenteId: d.gerenteId ?? ctx.id,
-      status: d.status ?? "planejamento",
-      inicio: d.inicio,
-      fim: d.fim,
+      status,
+      usaDiasUteis: deBool(d.usaDiasUteis ?? true),
+      area: d.areaDemandante?.trim() ?? null,
+      justificativa: d.justificativa?.trim() ?? null,
+      valor: d.valor ?? null,
+      esforco: d.esforco ?? null,
+      alcance: d.alcance ?? null,
+      confianca: d.confianca ?? null,
     },
   );
   return id;
@@ -347,7 +674,11 @@ export async function atualizarProjeto(
     `UPDATE projetos
         SET nome = :nome, objetivo = :objetivo, sponsor_id = :sponsorId,
             gerente_id = :gerenteId, status = COALESCE(:status, status),
-            inicio = :inicio, fim = :fim, atualizado_em = LOCALTIMESTAMP
+            usa_dias_uteis = COALESCE(:usaDiasUteis, usa_dias_uteis),
+            area_demandante = :area, justificativa = :justificativa,
+            valor = :valor, esforco = :esforco,
+            alcance = :alcance, confianca = :confianca,
+            atualizado_em = LOCALTIMESTAMP
       WHERE id = :id`,
     {
       id,
@@ -356,11 +687,20 @@ export async function atualizarProjeto(
       sponsorId: d.sponsorId ?? null,
       gerenteId: d.gerenteId ?? null,
       status: d.status ?? null,
-      inicio: d.inicio,
-      fim: d.fim,
+      usaDiasUteis: d.usaDiasUteis === undefined ? null : deBool(d.usaDiasUteis),
+      area: d.areaDemandante?.trim() ?? null,
+      justificativa: d.justificativa?.trim() ?? null,
+      valor: d.valor ?? null,
+      esforco: d.esforco ?? null,
+      alcance: d.alcance ?? null,
+      confianca: d.confianca ?? null,
     },
   );
   if (n === 0) throw new ErroDominio(`Projeto ${id} não encontrado`);
+
+  // Trocar o regime de dias muda a aritmética do cronograma inteiro: as
+  // mesmas durações passam a cair em datas diferentes.
+  if (d.usaDiasUteis !== undefined) await propagarCronograma(id);
 }
 
 export interface DadosTarefa {
@@ -429,6 +769,7 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
     }
   });
 
+  await propagarCronograma(d.projetoId);
   return id;
 }
 
@@ -491,9 +832,19 @@ export async function atualizarTarefa(
       }
     }
   });
+
+  await propagarCronogramaDaTarefa(id);
 }
 
-/** Move a tarefa no kanban. Atalho para o arrastar-e-soltar. */
+/**
+ * Move a tarefa no kanban. Atalho para o arrastar-e-soltar.
+ *
+ * Entrar em "doing" leva o progresso a 10%: quem começou a trabalhar
+ * não está mais em 0%, e deixar zerado fazia o percentual do projeto
+ * ignorar tudo o que estava em andamento. O valor só é aplicado quando
+ * a tarefa está zerada ou voltando de concluída — tarefa que já
+ * registrava 60% não pode regredir por causa de um arrasto.
+ */
 export async function moverTarefa(
   ctx: ContextoUsuario,
   id: string,
@@ -501,14 +852,20 @@ export async function moverTarefa(
 ): Promise<void> {
   await exigirAcessoTarefa(ctx, id, "mover tarefas deste projeto");
   const concluida = quadro === "done";
+  const emAndamento = quadro === "doing";
+
   await executar(
     `UPDATE projeto_tarefas
         SET quadro = :quadro,
-            progresso = CASE WHEN :concluida = 1 THEN 100 ELSE progresso END,
+            progresso = CASE
+                          WHEN :concluida = 1 THEN 100
+                          WHEN :emAndamento = 1 AND (progresso = 0 OR progresso = 100) THEN 10
+                          ELSE progresso
+                        END,
             concluido_em = CASE WHEN :concluida = 1
                                 THEN COALESCE(concluido_em, LOCALTIMESTAMP) ELSE NULL END
       WHERE id = :id`,
-    { id, quadro, concluida: deBool(concluida) },
+    { id, quadro, concluida: deBool(concluida), emAndamento: deBool(emAndamento) },
   );
 }
 
@@ -530,6 +887,15 @@ export async function moverTarefa(
  */
 export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<void> {
   await exigirAcessoTarefa(ctx, id, "excluir tarefas deste projeto");
+
+  // O projeto precisa ser lido antes: depois da desativação a tarefa
+  // continua existindo, mas propagar a partir dela vira busca inútil.
+  const t = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
+    { id },
+  );
+  if (!t) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+
   const n = await executar(
     `WITH RECURSIVE arvore AS (
        SELECT id FROM projeto_tarefas WHERE id = :id
@@ -541,6 +907,10 @@ export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<v
     { id },
   );
   if (n === 0) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+
+  // Sumir com a predecessora solta as sucessoras: elas podem voltar para
+  // a própria âncora, e o cronograma encurta legitimamente.
+  await propagarCronograma(t.projetoId);
 }
 
 /**
@@ -578,6 +948,44 @@ export async function criarRisco(ctx: ContextoUsuario, d: DadosRisco): Promise<s
   return id;
 }
 
+/**
+ * Edita um risco já cadastrado.
+ *
+ * Risco muda de leitura ao longo do projeto — a probabilidade cai
+ * quando a mitigação começa a funcionar, o impacto sobe quando o
+ * cronograma aperta. Sem edição, o jeito de corrigir era cadastrar
+ * outro e conviver com os dois, o que inflava a contagem de riscos
+ * abertos que a diretoria enxerga.
+ */
+export async function atualizarRisco(
+  ctx: ContextoUsuario,
+  id: string,
+  d: Omit<DadosRisco, "projetoId">,
+): Promise<void> {
+  await exigirAcessoRegistro(ctx, "projeto_riscos", id, "alterar riscos deste projeto", "Risco");
+
+  if (d.descricao.trim().length < 5) throw new ErroDominio("Descreva o risco");
+
+  const n = await executar(
+    `UPDATE projeto_riscos
+        SET descricao = :descricao,
+            probabilidade = :probabilidade,
+            impacto = :impacto,
+            mitigacao = :mitigacao,
+            status = COALESCE(:status, status)
+      WHERE id = :id`,
+    {
+      id,
+      descricao: d.descricao.trim(),
+      probabilidade: d.probabilidade,
+      impacto: d.impacto,
+      mitigacao: d.mitigacao?.trim() ?? null,
+      status: d.status ?? null,
+    },
+  );
+  if (n === 0) throw new ErroDominio(`Risco ${id} não encontrado`);
+}
+
 export interface DadosAtualizacao {
   projetoId: string;
   dataRef: Date;
@@ -606,6 +1014,44 @@ export async function criarAtualizacao(ctx: ContextoUsuario, d: DadosAtualizacao
     },
   );
   return id;
+}
+
+/**
+ * Corrige um acompanhamento já publicado.
+ *
+ * O autor original não é alterado: quem escreveu continua respondendo
+ * pelo que escreveu, mesmo que outra pessoa corrija uma data ou um
+ * texto truncado depois.
+ */
+export async function atualizarAtualizacao(
+  ctx: ContextoUsuario,
+  id: string,
+  d: Omit<DadosAtualizacao, "projetoId">,
+): Promise<void> {
+  await exigirAcessoRegistro(
+    ctx,
+    "projeto_atualizacoes",
+    id,
+    "alterar atualizações deste projeto",
+    "Acompanhamento",
+  );
+
+  const n = await executar(
+    `UPDATE projeto_atualizacoes
+        SET data_ref = :dataRef,
+            descricao = :descricao,
+            ultimas_entregas = :ultimas,
+            proximas_entregas = :proximas
+      WHERE id = :id`,
+    {
+      id,
+      dataRef: d.dataRef,
+      descricao: d.descricao?.trim() ?? null,
+      ultimas: d.ultimasEntregas?.trim() ?? null,
+      proximas: d.proximasEntregas?.trim() ?? null,
+    },
+  );
+  if (n === 0) throw new ErroDominio(`Acompanhamento ${id} não encontrado`);
 }
 
 export interface DadosAtencao {
@@ -637,21 +1083,81 @@ export async function criarAtencao(ctx: ContextoUsuario, d: DadosAtencao): Promi
   return id;
 }
 
-export async function resolverAtencao(ctx: ContextoUsuario, id: string): Promise<void> {
-  // O acesso é por projeto, e o ponto de atenção só sabe o próprio id:
-  // precisa descobrir a que projeto pertence antes de decidir.
-  const a = await consultarUm<{ projetoId: string }>(
-    `SELECT projeto_id FROM projeto_atencoes WHERE id = :id`,
-    { id },
+/** Edita o ponto de atenção sem mexer no status: quem resolve é outro caminho. */
+export async function atualizarAtencao(
+  ctx: ContextoUsuario,
+  id: string,
+  d: Omit<DadosAtencao, "projetoId">,
+): Promise<void> {
+  await exigirAcessoRegistro(
+    ctx,
+    "projeto_atencoes",
+    id,
+    "alterar pontos de atenção deste projeto",
+    "Ponto de atenção",
   );
-  if (!a) throw new ErroDominio(`Ponto de atenção ${id} não encontrado`);
-  await exigirAcessoProjeto(ctx, a.projetoId, "resolver pontos de atenção deste projeto");
+
+  if (d.titulo.trim().length < 5) throw new ErroDominio("Informe o título do ponto de atenção");
+
+  const n = await executar(
+    `UPDATE projeto_atencoes
+        SET titulo = :titulo,
+            descricao = :descricao,
+            decisao_necessaria = :decisao,
+            responsavel_decisao_id = :responsavelId
+      WHERE id = :id`,
+    {
+      id,
+      titulo: d.titulo.trim(),
+      descricao: d.descricao?.trim() ?? null,
+      decisao: d.decisaoNecessaria?.trim() ?? null,
+      responsavelId: d.responsavelDecisaoId ?? null,
+    },
+  );
+  if (n === 0) throw new ErroDominio(`Ponto de atenção ${id} não encontrado`);
+}
+
+export async function resolverAtencao(ctx: ContextoUsuario, id: string): Promise<void> {
+  await exigirAcessoRegistro(
+    ctx,
+    "projeto_atencoes",
+    id,
+    "resolver pontos de atenção deste projeto",
+    "Ponto de atenção",
+  );
 
   await executar(
     `UPDATE projeto_atencoes SET status = 'resolvido', resolvido_em = LOCALTIMESTAMP
       WHERE id = :id`,
     { id },
   );
+}
+
+/**
+ * Reabre um ponto de atenção fechado por engano.
+ *
+ * Resolver era caminho de mão única: um clique errado apagava o item da
+ * lista de pendências sem volta, e a única saída era cadastrar de novo,
+ * perdendo a data de abertura original — que é justamente o número que
+ * diz há quanto tempo a decisão está parada.
+ *
+ * `resolvido_em` volta a NULL porque a data de resolução de um item
+ * reaberto não descreve mais nada.
+ */
+export async function reabrirAtencao(ctx: ContextoUsuario, id: string): Promise<void> {
+  await exigirAcessoRegistro(
+    ctx,
+    "projeto_atencoes",
+    id,
+    "reabrir pontos de atenção deste projeto",
+    "Ponto de atenção",
+  );
+
+  const n = await executar(
+    `UPDATE projeto_atencoes SET status = 'aberto', resolvido_em = NULL WHERE id = :id`,
+    { id },
+  );
+  if (n === 0) throw new ErroDominio(`Ponto de atenção ${id} não encontrado`);
 }
 
 // ---------------------------------------------------------------- rollup
@@ -666,9 +1172,44 @@ export interface TarefaCalculada extends Tarefa {
   fimEfetivo: Date;
   /** Quantidade de folhas sob esta tarefa. */
   totalFolhas: number;
+  /**
+   * Esforço em horas: o da própria tarefa se folha, a SOMA das filhas
+   * se mãe.
+   *
+   * Não confundir com o intervalo entre `inicioEfetivo` e `fimEfetivo`.
+   * Duas filhas de 8h no mesmo dia dão 16h de esforço num intervalo de
+   * um dia só — os dois números medem coisas diferentes, e é o esforço
+   * que responde "quanto trabalho tem aqui dentro".
+   */
+  esforcoHoras: number;
 }
 
 const DIA_MS = 86_400_000;
+
+/** Jornada usada para converter horas em dias corridos de cronograma. */
+export const HORAS_POR_DIA = 8;
+
+/**
+ * Esforço de uma folha, em horas.
+ *
+ * Prioriza o que o usuário digitou. Tarefa antiga, criada antes de a
+ * duração existir, cai no calendário — cada dia corrido conta como uma
+ * jornada, que é a melhor aproximação disponível.
+ *
+ * Alocação não entra aqui de propósito: 8h a 50% continuam sendo 8h de
+ * trabalho, só espalhadas por dois dias. Quem mede esforço quer as
+ * horas; quem monta a barra da grade quer os dias, e isso é
+ * `duracaoParaDias`.
+ */
+function esforcoDaFolha(t: Tarefa): number {
+  if (t.duracao !== null && t.duracao > 0) {
+    return t.duracaoUnidade === "dias" ? t.duracao * HORAS_POR_DIA : t.duracao;
+  }
+  const inicio = new Date(t.inicio).setHours(0, 0, 0, 0);
+  const fim = new Date(t.fim).setHours(0, 0, 0, 0);
+  const dias = Math.max(1, Math.round((fim - inicio) / DIA_MS) + 1);
+  return dias * HORAS_POR_DIA;
+}
 
 /**
  * Calcula o rollup das tarefas mãe a partir das folhas.
@@ -706,6 +1247,7 @@ export function calcularRollup(tarefas: Tarefa[]): TarefaCalculada[] {
         inicioEfetivo: new Date(t.inicio),
         fimEfetivo: new Date(t.fim),
         totalFolhas: 1,
+        esforcoHoras: esforcoDaFolha(t),
       };
       cache.set(t.id, r);
       return r;
@@ -728,6 +1270,7 @@ export function calcularRollup(tarefas: Tarefa[]): TarefaCalculada[] {
       inicioEfetivo: new Date(Math.min(...calc.map((c) => c.inicioEfetivo.getTime()))),
       fimEfetivo: new Date(Math.max(...calc.map((c) => c.fimEfetivo.getTime()))),
       totalFolhas: calc.reduce((s, c) => s + c.totalFolhas, 0),
+      esforcoHoras: calc.reduce((s, c) => s + c.esforcoHoras, 0),
     };
     cache.set(t.id, r);
     return r;
@@ -736,25 +1279,113 @@ export function calcularRollup(tarefas: Tarefa[]): TarefaCalculada[] {
   return tarefas.map(resolver);
 }
 
+// ------------------------------------------- predecessora de tarefa mãe
+
+/**
+ * Traduz um id qualquer para as folhas que ele representa.
+ *
+ * Depender de uma tarefa mãe é legítimo e é o que o MS Project chama de
+ * dependência de tarefa de resumo: significa "só começo quando aquele
+ * bloco inteiro terminar". Só que mãe não participa do grafo — as datas
+ * dela são derivadas do rollup na leitura, e o reagendamento e o CPM só
+ * trabalham com folhas.
+ *
+ * Antes, a aresta que apontava para uma mãe era simplesmente descartada,
+ * e a dependência aparecia na tela sem produzir efeito nenhum: a
+ * sucessora não andava e o CPM ainda anunciava folga onde não havia.
+ * Expandir para as folhas descendentes preserva a intenção e mantém o
+ * grafo correto.
+ */
+function expansorDeFolhas(
+  ids: string[],
+  paiDe: Map<string, string | null>,
+  temFilhas: (id: string) => boolean,
+): (id: string) => string[] {
+  const filhasDe = new Map<string, string[]>();
+  for (const id of ids) {
+    const pai = paiDe.get(id);
+    if (pai) filhasDe.set(pai, [...(filhasDe.get(pai) ?? []), id]);
+  }
+
+  const cache = new Map<string, string[]>();
+
+  function resolver(id: string, emCurso: Set<string>): string[] {
+    const pronto = cache.get(id);
+    if (pronto) return pronto;
+    // Ciclo em pai_id devolve a própria tarefa em vez de entrar em laço.
+    if (emCurso.has(id)) return [id];
+    if (!temFilhas(id)) return [id];
+
+    emCurso.add(id);
+    const folhas = (filhasDe.get(id) ?? []).flatMap((f) => resolver(f, emCurso));
+    emCurso.delete(id);
+
+    cache.set(id, folhas);
+    return folhas;
+  }
+
+  return (id) => resolver(id, new Set());
+}
+
 // ------------------------------------------------------- edição inline
 
 export type UnidadeDuracao = "horas" | "dias";
 
-/** Jornada usada para converter horas em dias corridos de cronograma. */
-export const HORAS_POR_DIA = 8;
+/**
+ * Fator de alocação do recurso, como fração de uma jornada.
+ *
+ * Nulo, zero ou fora de 1–100 caem em 100%: alocação não informada
+ * significa dedicação integral, que é o comportamento que o usuário
+ * espera de uma tarefa recém-criada.
+ */
+function fatorAlocacao(alocacaoPct: number | null | undefined): number {
+  if (alocacaoPct === null || alocacaoPct === undefined) return 1;
+  if (!Number.isFinite(alocacaoPct) || alocacaoPct <= 0) return 1;
+  return Math.min(alocacaoPct, 100) / 100;
+}
 
 /**
  * Duração informada pelo usuário para dias de calendário da tarefa.
+ *
+ * Dois fatores esticam o calendário sem mudar o esforço. A alocação diz
+ * quanto da capacidade da pessoa vai para ESTA tarefa; a capacidade
+ * diária diz quanto do dia dela sobra para projeto, depois da
+ * sustentação. Quem está 50% em operação entrega 4h/dia, e uma tarefa
+ * de 8h ocupa dois dias.
+ *
+ * Ignorar a capacidade fazia o cronograma prometer o dobro da
+ * velocidade real de quem não é dedicado integral — e o erro só
+ * aparecia quando a entrega atrasava.
+ *
  * Arredonda para cima: 4h e 8h ocupam o mesmo dia na grade.
  */
-export function duracaoParaDias(duracao: number, unidade: UnidadeDuracao): number {
-  const dias = unidade === "horas" ? duracao / HORAS_POR_DIA : duracao;
-  return Math.max(1, Math.ceil(dias));
+export function duracaoParaDias(
+  duracao: number,
+  unidade: UnidadeDuracao,
+  alocacaoPct?: number | null | undefined,
+  /** Horas/dia que a pessoa tem para projeto. Sem valor, jornada cheia. */
+  capacidadeDiaria?: number | null | undefined,
+): number {
+  const horas = unidade === "horas" ? duracao : duracao * HORAS_POR_DIA;
+  const base = capacidadeDiaria && capacidadeDiaria > 0 ? capacidadeDiaria : HORAS_POR_DIA;
+  return Math.max(1, Math.ceil(horas / (base * fatorAlocacao(alocacaoPct))));
 }
 
-/** Caminho inverso, para exibir a duração de tarefa que só tem datas. */
-export function diasParaDuracao(dias: number, unidade: UnidadeDuracao): number {
-  return unidade === "horas" ? dias * HORAS_POR_DIA : dias;
+/**
+ * Caminho inverso, para exibir a duração de tarefa que só tem datas.
+ * Usa a mesma capacidade, senão o valor exibido não volta a produzir as
+ * mesmas datas quando o usuário reeditar o campo.
+ */
+export function diasParaDuracao(
+  dias: number,
+  unidade: UnidadeDuracao,
+  alocacaoPct?: number | null | undefined,
+  capacidadeDiaria?: number | null | undefined,
+): number {
+  const base = capacidadeDiaria && capacidadeDiaria > 0 ? capacidadeDiaria : HORAS_POR_DIA;
+  const horas = dias * base * fatorAlocacao(alocacaoPct);
+  if (unidade === "horas") return Math.round(horas);
+  return Math.round((horas / HORAS_POR_DIA) * 100) / 100;
 }
 
 export interface CampoTarefa {
@@ -765,12 +1396,134 @@ export interface CampoTarefa {
   /** Quando vem, recalcula `fim` a partir do início. */
   duracao?: number | undefined;
   duracaoUnidade?: UnidadeDuracao | undefined;
+  /**
+   * Manda gravar a data mesmo em conflito, cortando as dependências que
+   * a impediam. É a segunda saída do diálogo de conflito.
+   */
+  forcarData?: boolean | undefined;
+}
+
+/** Predecessora que impede a data proposta, com o que a tela precisa mostrar. */
+export interface PredecessoraEmConflito {
+  id: string;
+  nome: string;
+  /** Término efetivo: o próprio, ou o da última folha se for tarefa mãe. */
+  fim: Date;
+  /** true quando é esta que empurra o mínimo para frente. */
+  bloqueia: boolean;
+}
+
+export interface ConflitoData {
+  /** Primeira data que respeita todas as dependências. */
+  minimoPermitido: Date;
+  /** Data que o usuário tentou gravar, ecoada para o texto do diálogo. */
+  propostoEm: Date;
+  predecessoras: PredecessoraEmConflito[];
+}
+
+/** Recurso que passou do próprio teto de projeto no período. Avisa, não impede. */
+export interface AvisoAlocacao {
+  recursoId: string;
+  recursoNome: string;
+  /** Soma das alocações no período, incluindo esta tarefa. */
+  percentualTotal: number;
+  /**
+   * Teto da pessoa: o quanto da jornada dela é dedicado a projeto. Vem
+   * junto porque "120%" só significa alguma coisa ao lado do limite que
+   * foi ultrapassado — quem está 50% em sustentação estoura em 50.
+   */
+  tetoPct: number;
+  /** Quantas outras tarefas concorrem com esta. */
+  tarefasConcorrentes: number;
+}
+
+/**
+ * Resposta da edição inline.
+ *
+ * Devolve os valores efetivamente gravados, e não um `ok` seco, porque
+ * a grade precisa repintar início, fim e duração sem recarregar o
+ * projeto inteiro a cada tecla — e porque em conflito nada foi gravado,
+ * e a tela tem de saber disso para não mostrar um número que o banco
+ * não tem.
+ */
+export interface ResultadoCampo {
+  /** false quando houve conflito de data: nada foi gravado. */
+  ok: boolean;
+  conflito?: ConflitoData | undefined;
+  inicio?: Date | undefined;
+  fim?: Date | undefined;
+  duracao?: number | undefined;
+  duracaoUnidade?: UnidadeDuracao | undefined;
+  /** Superalocação detectada. Não impede a gravação. */
+  avisos?: AvisoAlocacao[] | undefined;
+}
+
+/** Aritmética de dias do projeto, resolvida uma vez por chamada. */
+interface CalendarioProjeto {
+  somar: (inicio: Date, dias: number) => Date;
+  contar: (inicio: Date, fim: Date) => number;
+  normalizar: (d: Date) => Date;
+}
+
+function meiaNoite(d: Date): Date {
+  const c = new Date(d);
+  c.setHours(0, 0, 0, 0);
+  return c;
+}
+
+/**
+ * Carrega a aritmética de datas conforme o regime do projeto.
+ *
+ * Em dias corridos é conta de calendário; em dias úteis vem do mesmo
+ * `expediente`/`feriados` que o SLA usa, carregado de uma vez para não
+ * consultar o banco a cada par de datas.
+ */
+async function calendarioDoProjeto(usaDiasUteis: boolean): Promise<CalendarioProjeto> {
+  if (!usaDiasUteis) {
+    return {
+      normalizar: meiaNoite,
+      somar: (inicio, dias) => {
+        const c = meiaNoite(inicio);
+        c.setDate(c.getDate() + dias - 1);
+        return c;
+      },
+      contar: (inicio, fim) =>
+        Math.max(
+          1,
+          Math.round((meiaNoite(fim).getTime() - meiaNoite(inicio).getTime()) / DIA_MS) + 1,
+        ),
+    };
+  }
+
+  const sla = await import("@/integrations/postgres/sla.server");
+  const [somar, contar, normalizar] = await Promise.all([
+    sla.somadorDeDiasUteis(),
+    sla.contadorDeDiasUteis(),
+    sla.normalizadorDeDiaUtil(),
+  ]);
+  return { somar, contar, normalizar };
+}
+
+/** Linha lida antes de gravar a edição inline. */
+interface LinhaCampoAtual {
+  projetoId: string;
+  inicio: Date;
+  fim: Date;
+  duracao: number | null;
+  duracaoUnidade: string | null;
+  alocacaoPct: number | null;
+  usaDiasUteis: boolean;
 }
 
 /**
  * Atualiza campos isolados, sem tocar em vínculos. É o que a edição
  * inline do cronograma usa: salvar a tarefa inteira a cada saída de
  * campo apagaria responsáveis e predecessoras que não vieram no payload.
+ *
+ * Regra central: `inicio` e `duracao` são entrada, `fim` é sempre
+ * derivado. Validar a data digitada contra o `fim` antigo era o que
+ * produzia "término anterior ao início" ao empurrar uma tarefa para o
+ * futuro — o término ainda não tinha sido recalculado.
  *
  * Recusa alteração em tarefa que tem filhas: os valores do pai são
  * derivados, e gravá-los criaria um número que o rollup contradiz.
@@ -779,53 +1532,125 @@ export async function atualizarCampoTarefa(
   ctx: ContextoUsuario,
   id: string,
   d: CampoTarefa,
-): Promise<void> {
+): Promise<ResultadoCampo> {
   await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
 
   const filhas = await consultarUm<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
+    `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
     { id },
   );
+
+  /**
+   * Tarefa mãe tem datas e progresso derivados do rollup, mas o nome é
+   * dela. Recusar a edição inteira obrigava a pessoa a excluir e
+   * recriar o agrupador só para corrigir uma palavra — e a grade
+   * deixava o campo editável, então o erro só aparecia depois de
+   * digitar.
+   */
   if ((filhas?.total ?? 0) > 0) {
-    throw new ErroDominio("Tarefa com subtarefas tem datas e progresso calculados a partir delas.");
+    const mexeNoCronograma =
+      d.inicio !== undefined ||
+      d.fim !== undefined ||
+      d.duracao !== undefined ||
+      d.duracaoUnidade !== undefined ||
+      d.progresso !== undefined;
+
+    if (mexeNoCronograma) {
+      throw new ErroDominio(
+        "Tarefa com subtarefas tem datas e progresso calculados a partir delas.",
+      );
+    }
+
+    if (d.nome === undefined) return { ok: true };
+
+    const n = await executar(`UPDATE projeto_tarefas SET nome = :nome WHERE id = :id`, {
+      id,
+      nome: d.nome.trim(),
+    });
+    if (n === 0) throw new ErroDominio(`Tarefa ${id} não encontrada`);
+    return { ok: true };
   }
 
-  const atual = await consultarUm<{ inicio: Date; fim: Date; duracaoUnidade: string | null }>(
-    `SELECT inicio, fim, duracao_unidade FROM projeto_tarefas WHERE id = :id`,
+  // O regime de dias vem do projeto, não da tarefa: um cronograma com
+  // metade das tarefas em dia útil e metade em dia corrido não teria
+  // como ser lido.
+  const atual = await consultarUm<LinhaCampoAtual>(
+    `SELECT t.projeto_id, t.inicio, t.fim, t.duracao, t.duracao_unidade, t.alocacao_pct,
+            (p.usa_dias_uteis = 1) AS usa_dias_uteis
+       FROM projeto_tarefas t
+       JOIN projetos p ON p.id = t.projeto_id
+      WHERE t.id = :id`,
     { id },
   );
   if (!atual) throw new ErroDominio(`Tarefa ${id} não encontrada`);
 
-  const inicio = d.inicio ?? new Date(atual.inicio);
+  const cal = await calendarioDoProjeto(atual.usaDiasUteis);
 
-  // Duração manda no término: quem digita "16h" espera que o fim ande,
-  // não que o sistema reclame de incoerência com a data antiga.
-  let fim = d.fim ?? new Date(atual.fim);
-  let duracao: number | null = null;
-  let unidade: UnidadeDuracao | null = null;
+  // Capacidade real de quem executa: quem está parte do dia em
+  // sustentação rende menos por dia, e é isso que decide quantos dias a
+  // tarefa ocupa. Sem responsável, cai na jornada padrão.
+  const { capacidadeDiariaDaTarefa } = await import("@/repositories/recursos.repo");
+  const capacidade = await capacidadeDiariaDaTarefa(id);
+
+  const inicioProposto = d.inicio ?? new Date(atual.inicio);
+
+  // Conflito é checado antes de qualquer escrita. Gravar e deixar o
+  // reagendamento corrigir depois apagaria a data em silêncio, e é
+  // justamente o silêncio que o diálogo existe para evitar.
+  if (d.inicio !== undefined) {
+    const conflito = await conflitoDeData(id, inicioProposto);
+    if (conflito) {
+      if (!d.forcarData) return { ok: false, conflito };
+      await removerPredecessoras(
+        id,
+        conflito.predecessoras.filter((p) => p.bloqueia).map((p) => p.id),
+      );
+    }
+  }
+
+  const inicio = cal.normalizar(inicioProposto);
+  const alocacao = atual.alocacaoPct;
+  const unidadeAnterior: UnidadeDuracao = atual.duracaoUnidade === "dias" ? "dias" : "horas";
+  const unidade: UnidadeDuracao = d.duracaoUnidade ?? unidadeAnterior;
+
+  let fim: Date;
+  let duracao: number;
 
   if (d.duracao !== undefined) {
+    // Duração manda no término: quem digita "16h" espera que o fim ande,
+    // não que o sistema reclame de incoerência com a data antiga.
     if (!Number.isFinite(d.duracao) || d.duracao <= 0) {
       throw new ErroDominio("Duração deve ser maior que zero");
     }
-    const anterior = atual.duracaoUnidade === "dias" ? "dias" : "horas";
-    unidade = d.duracaoUnidade ?? anterior;
     duracao = d.duracao;
+    fim = cal.somar(inicio, duracaoParaDias(duracao, unidade, alocacao, capacidade));
+  } else if (d.fim !== undefined) {
+    // Término digitado à mão: é o único caminho em que o fim é entrada,
+    // e aí é a duração que passa a ser derivada.
+    fim = cal.normalizar(d.fim);
+    if (fim < inicio) throw new ErroDominio("Data de término anterior ao início");
+    duracao = diasParaDuracao(cal.contar(inicio, fim), unidade, alocacao, capacidade);
+  } else {
+    // Nenhuma das duas veio: o intervalo é preservado e reancorado no
+    // novo início. É o caso do arrastar da barra e o da edição de nome
+    // ou progresso, em que nada de cronograma deveria mudar.
+    const dias =
+      atual.duracao !== null && atual.duracao > 0
+        ? duracaoParaDias(atual.duracao, unidadeAnterior, alocacao, capacidade)
+        : Math.max(1, cal.contar(cal.normalizar(atual.inicio), meiaNoite(atual.fim)));
 
-    fim = new Date(inicio);
-    fim.setDate(fim.getDate() + duracaoParaDias(d.duracao, unidade) - 1);
-  } else if (d.duracaoUnidade !== undefined) {
-    // Só trocou a unidade de exibição: converte o valor guardado.
-    unidade = d.duracaoUnidade;
-    const diasAtuais =
-      Math.round(
-        (new Date(fim).setHours(0, 0, 0, 0) - new Date(inicio).setHours(0, 0, 0, 0)) / 86_400_000,
-      ) + 1;
-    duracao = diasParaDuracao(Math.max(1, diasAtuais), d.duracaoUnidade);
+    fim = cal.somar(inicio, dias);
+    duracao =
+      atual.duracao !== null && atual.duracao > 0 && d.duracaoUnidade === undefined
+        ? atual.duracao
+        : diasParaDuracao(dias, unidade, alocacao, capacidade);
   }
 
-  if (fim < inicio) throw new ErroDominio("Data de término anterior ao início");
+  const avisos = await avisosDeAlocacao(id, inicio, fim, alocacao);
 
+  // O quadro só se mexe quando o progresso veio no payload. Sem esta
+  // guarda, renomear uma tarefa concluída a devolvia para "doing".
+  const mexeuProgresso = d.progresso !== undefined;
   const concluida = d.progresso === 100;
 
   await executar(
@@ -834,12 +1659,16 @@ export async function atualizarCampoTarefa(
             progresso = COALESCE(:progresso, progresso),
             inicio = :inicio,
             fim = :fim,
-            duracao = COALESCE(:duracao, duracao),
-            duracao_unidade = COALESCE(:unidade, duracao_unidade),
-            quadro = CASE WHEN :concluida = 1 THEN 'done'
-                          WHEN quadro = 'done' THEN 'doing' ELSE quadro END,
-            concluido_em = CASE WHEN :concluida = 1
-                                THEN COALESCE(concluido_em, LOCALTIMESTAMP) ELSE NULL END
+            duracao = :duracao,
+            duracao_unidade = :unidade,
+            quadro = CASE WHEN :mexeuProgresso = 0 THEN quadro
+                          WHEN :concluida = 1 THEN 'done'
+                          WHEN quadro = 'done' THEN 'doing'
+                          ELSE quadro END,
+            concluido_em = CASE WHEN :mexeuProgresso = 0 THEN concluido_em
+                                WHEN :concluida = 1
+                                THEN COALESCE(concluido_em, LOCALTIMESTAMP)
+                                ELSE NULL END
       WHERE id = :id`,
     {
       id,
@@ -849,8 +1678,147 @@ export async function atualizarCampoTarefa(
       fim,
       duracao,
       unidade,
+      mexeuProgresso: deBool(mexeuProgresso),
       concluida: deBool(concluida),
     },
+  );
+
+  // Empurra as sucessoras e fecha o período do projeto. Sem esta
+  // chamada a data da tarefa muda e o resto do cronograma fica parado.
+  await propagarCronograma(atual.projetoId);
+
+  // Relê: a passada topológica pode ter empurrado esta mesma tarefa se
+  // as predecessoras dela exigirem mais do que a âncora digitada.
+  const gravada = await consultarUm<{ inicio: Date; fim: Date }>(
+    `SELECT inicio, fim FROM projeto_tarefas WHERE id = :id`,
+    { id },
+  );
+
+  return {
+    ok: true,
+    inicio: gravada ? new Date(gravada.inicio) : inicio,
+    fim: gravada ? new Date(gravada.fim) : fim,
+    duracao,
+    duracaoUnidade: unidade,
+    avisos: avisos.length > 0 ? avisos : undefined,
+  };
+}
+
+/** Linha da checagem de superalocação. */
+interface LinhaAlocacao {
+  recursoId: string;
+  recursoNome: string;
+  /** Teto de projeto da pessoa, em pontos percentuais da jornada. */
+  tetoPct: number;
+  totalOutras: number;
+  tarefasConcorrentes: number;
+}
+
+/**
+ * Capacidade diária de projeto por tarefa, para o projeto inteiro.
+ *
+ * O reagendamento percorre todas as folhas; consultar por tarefa
+ * transformaria a passada numa enxurrada de consultas. Vale o MENOR
+ * entre os responsáveis: quem tem menos tempo determina o ritmo.
+ */
+async function capacidadesDoProjeto(projetoId: string): Promise<Map<string, number>> {
+  const linhas = await consultar<{ tarefaId: string; horas: number }>(
+    `SELECT tr.tarefa_id,
+            MIN(r.horas_dia * r.disponibilidade_projetos::numeric / 100) AS horas
+       FROM tarefa_responsaveis tr
+       JOIN projeto_tarefas t ON t.id = tr.tarefa_id
+       JOIN recursos r ON r.id = tr.recurso_id AND r.ativo = 1
+      WHERE t.projeto_id = :projetoId AND t.ativo = 1
+      GROUP BY tr.tarefa_id`,
+    { projetoId },
+  );
+
+  const mapa = new Map<string, number>();
+  for (const l of linhas) {
+    // Disponibilidade zerada não é capacidade: dividir por ela deixaria
+    // a tarefa sem fim possível.
+    const horas = Number(l.horas);
+    if (Number.isFinite(horas) && horas > 0) mapa.set(l.tarefaId, horas);
+  }
+  return mapa;
+}
+
+/**
+ * Recursos que passam do próprio teto no período da tarefa.
+ *
+ * O teto é `disponibilidade_projetos`, não 100%: quem está metade do dia
+ * em sustentação estoura com muito menos alocação de projeto, e comparar
+ * todo mundo contra 100 escondia exatamente o caso que mais aperta.
+ *
+ * A janela é o intervalo inteiro, não dia a dia: duas tarefas que se
+ * tocam em um único dia já disputam a mesma pessoa, e a precisão diária
+ * custaria uma varredura de calendário por recurso sem mudar a decisão
+ * de quem lê o aviso.
+ *
+ * Tarefa mãe fica de fora — quem executa são as filhas, e contá-la
+ * dobraria a alocação de todo mundo.
+ *
+ * É aviso, não bloqueio: cronograma se monta estourando capacidade de
+ * propósito, para depois negociar. Barrar aqui só ensinaria o usuário a
+ * apagar o responsável para conseguir salvar.
+ */
+async function avisosDeAlocacao(
+  tarefaId: string,
+  inicio: Date,
+  fim: Date,
+  alocacaoPropria: number | null,
+): Promise<AvisoAlocacao[]> {
+  const linhas = await consultar<LinhaAlocacao>(
+    `SELECT r.id AS recurso_id,
+            r.nome AS recurso_nome,
+            r.disponibilidade_projetos AS teto_pct,
+            COALESCE(SUM(COALESCE(o.alocacao_pct, 100)), 0)::int AS total_outras,
+            COUNT(o.id)::int AS tarefas_concorrentes
+       FROM tarefa_responsaveis tr
+       JOIN recursos r ON r.id = tr.recurso_id
+       LEFT JOIN tarefa_responsaveis tro
+              ON tro.recurso_id = tr.recurso_id AND tro.tarefa_id <> tr.tarefa_id
+       LEFT JOIN projeto_tarefas o
+              ON o.id = tro.tarefa_id
+             AND o.ativo = 1
+             AND o.quadro <> 'done'
+             AND o.inicio <= :fim
+             AND o.fim >= :inicio
+             AND NOT EXISTS (SELECT 1 FROM projeto_tarefas f
+                              WHERE f.pai_id = o.id AND f.ativo = 1)
+      WHERE tr.tarefa_id = :id
+      GROUP BY r.id, r.nome, r.disponibilidade_projetos`,
+    { id: tarefaId, inicio, fim },
+  );
+
+  const propria = alocacaoPropria === null ? 100 : alocacaoPropria;
+
+  return linhas
+    .map((l) => ({
+      recursoId: l.recursoId,
+      recursoNome: l.recursoNome,
+      percentualTotal: l.totalOutras + propria,
+      tetoPct: l.tetoPct,
+      tarefasConcorrentes: l.tarefasConcorrentes,
+    }))
+    .filter((a) => a.percentualTotal > a.tetoPct);
+}
+
+/** Corta vínculos específicos. Usado pela saída "manter a data" do diálogo. */
+async function removerPredecessoras(tarefaId: string, predecessoraIds: string[]): Promise<void> {
+  const unicas = [...new Set(predecessoraIds)];
+  if (unicas.length === 0) return;
+
+  const binds: Record<string, unknown> = { id: tarefaId };
+  const chaves = unicas.map((p, i) => {
+    binds[`p${i}`] = p;
+    return `:p${i}`;
+  });
+
+  await executar(
+    `DELETE FROM tarefa_predecessoras
+      WHERE tarefa_id = :id AND predecessora_id IN (${chaves.join(",")})`,
+    binds,
   );
 }
 
@@ -885,21 +1853,28 @@ export async function inserirAbaixo(
         WHERE projeto_id = :projetoId AND ordem > :ordem`,
       { projetoId: ref.projetoId, ordem: ref.ordem },
     );
+    // Nasce com duração explícita de uma jornada: tarefa sem duração
+    // gravada obriga o reagendamento a inferir do intervalo, e o
+    // primeiro arrasto da barra a deformaria.
     await tx.executar(
       `INSERT INTO projeto_tarefas
-         (id, projeto_id, pai_id, nome, inicio, fim, progresso, quadro, marco, ordem)
-       VALUES (:id, :projetoId, :paiId, 'Nova tarefa', :inicio, :fim, 0, 'backlog', 0, :ordem)`,
+         (id, projeto_id, pai_id, nome, inicio, fim, progresso, quadro, marco,
+          duracao, duracao_unidade, ordem)
+       VALUES (:id, :projetoId, :paiId, 'Nova tarefa', :inicio, :fim, 0, 'backlog', 0,
+               :duracao, 'horas', :ordem)`,
       {
         id,
         projetoId: ref.projetoId,
         paiId,
         inicio: ref.inicio,
-        fim: ref.fim,
+        fim: ref.inicio,
+        duracao: HORAS_POR_DIA,
         ordem: ref.ordem + 1,
       },
     );
   });
 
+  await propagarCronograma(ref.projetoId);
   return id;
 }
 
@@ -964,13 +1939,19 @@ export async function salvarBaseline(
     await tx.executar(
       `INSERT INTO projeto_baselines (id, projeto_id, versao, descricao, autor_id, criado_em)
        VALUES (:id, :projetoId, :versao, :descricao, :autorId, LOCALTIMESTAMP)`,
-      { id, projetoId, versao, descricao: descricao?.trim() ?? null, autorId: ctx.id },
+      {
+        id,
+        projetoId,
+        versao,
+        descricao: descricao?.trim() ?? null,
+        autorId: ctx.id,
+      },
     );
 
     // INSERT SELECT: copia o cronograma inteiro numa ida só.
     await tx.executar(
       `INSERT INTO baseline_tarefas (baseline_id, tarefa_id, nome, inicio, fim)
-              SELECT :id, id, nome, inicio, fim
+       SELECT :id, id, nome, inicio, fim
          FROM projeto_tarefas WHERE projeto_id = :projetoId AND ativo = 1`,
       { id, projetoId },
     );
@@ -978,7 +1959,6 @@ export async function salvarBaseline(
 
   return id;
 }
-
 // ------------------------------------------------------------------- CPM
 
 export interface DadosCpm {
@@ -1002,7 +1982,9 @@ function duracaoEmDias(inicio: Date, fim: Date): number {
  * Caminho crítico pelo método CPM.
  *
  * Só folhas participam: tarefa mãe é resumo, e incluí-la duplicaria a
- * duração das filhas no cálculo.
+ * duração das filhas no cálculo. Dependência declarada sobre uma mãe é
+ * expandida para as folhas dela — descartá-la anunciava folga onde a
+ * tarefa na verdade estava presa.
  *
  * A duração vem das datas, não o contrário. Num CPM clássico a duração
  * dirige o cronograma; aqui as datas são definidas pelo usuário e o CPM
@@ -1012,20 +1994,37 @@ function duracaoEmDias(inicio: Date, fim: Date): number {
 export function calcularCpm(
   tarefas: TarefaCalculada[],
   predecessoras: Record<string, string[]>,
+  /**
+   * Como contar dias entre duas datas. O padrão é dias corridos; o
+   * chamador passa a contagem em dias úteis quando o projeto trabalha
+   * assim.
+   *
+   * Sem isso, uma folga de "3 dias" poderia incluir um fim de semana e
+   * prometer uma margem que não existe.
+   */
+  contarDias: (inicio: Date, fim: Date) => number = duracaoEmDias,
 ): Map<string, DadosCpm> {
   const folhas = tarefas.filter((t) => !t.ehPai);
   const porId = new Map(folhas.map((t) => [t.id, t]));
   const saida = new Map<string, DadosCpm>();
   if (folhas.length === 0) return saida;
 
-  // Predecessoras que apontam para tarefa inexistente ou para um pai são
-  // descartadas: manteriam o grafo preso num nó que nunca resolve.
+  const ehPaiPorId = new Map(tarefas.map((t) => [t.id, t.ehPai]));
+  const paiDe = new Map(tarefas.map((t) => [t.id, t.paiId]));
+  const emFolhas = expansorDeFolhas(
+    tarefas.map((t) => t.id),
+    paiDe,
+    (id) => ehPaiPorId.get(id) ?? false,
+  );
+
+  // Predecessora que aponta para tarefa inexistente é descartada;
+  // a que aponta para uma mãe vira o conjunto de folhas dela.
   const pred = new Map<string, string[]>();
   for (const t of folhas) {
-    pred.set(
-      t.id,
-      (predecessoras[t.id] ?? []).filter((p) => porId.has(p) && p !== t.id),
-    );
+    const expandidas = (predecessoras[t.id] ?? [])
+      .flatMap((p) => emFolhas(p))
+      .filter((p) => porId.has(p) && p !== t.id);
+    pred.set(t.id, [...new Set(expandidas)]);
   }
 
   const suc = new Map<string, string[]>();
@@ -1034,7 +2033,7 @@ export function calcularCpm(
   }
 
   const dur = new Map<string, number>();
-  for (const t of folhas) dur.set(t.id, duracaoEmDias(t.inicioEfetivo, t.fimEfetivo));
+  for (const t of folhas) dur.set(t.id, contarDias(t.inicioEfetivo, t.fimEfetivo));
 
   // Ordenação topológica. Ciclo em predecessora é possível — o banco só
   // impede a auto-referência —, então a marca de visitado corta o laço e
@@ -1090,7 +2089,7 @@ export function calcularCpm(
     if (!t.ehPai) continue;
     const filhas = tarefas.filter((x) => x.paiId === t.id);
     saida.set(t.id, {
-      duracaoDias: duracaoEmDias(t.inicioEfetivo, t.fimEfetivo),
+      duracaoDias: contarDias(t.inicioEfetivo, t.fimEfetivo),
       folgaDias: 0,
       critica: filhas.some((f) => saida.get(f.id)?.critica ?? false),
     });
@@ -1129,7 +2128,7 @@ export async function atualizarVinculosTarefa(
 
   if (d.responsaveis && d.responsaveis.length > 0) {
     const filhas = await consultarUm<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
+      `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
       { id },
     );
     if ((filhas?.total ?? 0) > 0) {
@@ -1165,6 +2164,10 @@ export async function atualizarVinculosTarefa(
       }
     }
   });
+
+  // Vincular uma predecessora sem propagar deixava a sucessora na data
+  // antiga até alguém tocar em outra coisa.
+  if (d.predecessoras) await propagarCronograma(tarefa.projetoId);
 }
 
 /** Recusa recurso inexistente ou desativado antes de gravar o vínculo. */
@@ -1188,6 +2191,11 @@ async function validarRecursos(ids: string[]): Promise<void> {
 /**
  * Predecessora precisa ser do mesmo projeto e não pode fechar ciclo —
  * o CPM entraria em laço e o cronograma perderia o sentido.
+ *
+ * Tarefa mãe é aceita: vale como "espero o bloco inteiro terminar", e o
+ * grafo expande para as folhas dela na hora de calcular. O que se
+ * recusa é a própria ancestralidade — depender da mãe de quem se é
+ * filha significa esperar a si mesmo.
  */
 async function validarPredecessoras(id: string, projetoId: string, novas: string[]): Promise<void> {
   if (novas.includes(id)) throw new ErroDominio("Uma tarefa não pode depender de si mesma.");
@@ -1208,11 +2216,31 @@ async function validarPredecessoras(id: string, projetoId: string, novas: string
     throw new ErroDominio("Predecessora precisa ser uma tarefa do mesmo projeto.");
   }
 
+  // Ancestral como predecessora: a mãe só termina quando esta filha
+  // terminar, então esperar por ela é esperar por si mesma.
+  const ancestrais = await consultar<{ id: string }>(
+    `WITH RECURSIVE subida AS (
+       SELECT pai_id AS id FROM projeto_tarefas WHERE id = :id AND pai_id IS NOT NULL
+       UNION ALL
+       SELECT t.pai_id FROM projeto_tarefas t
+        JOIN subida s ON t.id = s.id
+       WHERE t.pai_id IS NOT NULL
+     )
+     SELECT id FROM subida`,
+    { id },
+  );
+  const conjuntoAncestrais = new Set(ancestrais.map((a) => a.id));
+  if (unicas.some((p) => conjuntoAncestrais.has(p))) {
+    throw new ErroDominio(
+      "Uma tarefa não pode depender da própria tarefa mãe: a mãe só termina quando ela terminar.",
+    );
+  }
+
   // Grafo atual do projeto, com as arestas propostas no lugar das antigas.
   const arestas = await consultar<{ tarefaId: string; predecessoraId: string }>(
     `SELECT tp.tarefa_id, tp.predecessora_id
        FROM tarefa_predecessoras tp
-              JOIN projeto_tarefas t ON t.id = tp.tarefa_id
+       JOIN projeto_tarefas t ON t.id = tp.tarefa_id
       WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
     { projetoId },
   );
@@ -1284,10 +2312,13 @@ export async function aninharTarefa(
 ): Promise<void> {
   await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
 
-  const t = await consultarUm<{ projetoId: string; paiId: string | null; ordem: number }>(
-    `SELECT projeto_id, pai_id, ordem FROM projeto_tarefas WHERE id = :id`,
-    { id },
-  );
+  const t = await consultarUm<{
+    projetoId: string;
+    paiId: string | null;
+    ordem: number;
+  }>(`SELECT projeto_id, pai_id, ordem FROM projeto_tarefas WHERE id = :id`, {
+    id,
+  });
   if (!t) throw new ErroDominio(`Tarefa ${id} não encontrada`);
 
   if (direcao === "dentro") {
@@ -1310,10 +2341,24 @@ export async function aninharTarefa(
       throw new ErroDominio("Não há tarefa acima no mesmo nível para receber esta como subtarefa.");
     }
 
+    // A futura mãe não pode continuar dependendo desta tarefa, e esta
+    // não pode depender da futura mãe: os dois casos viram espera
+    // circular assim que o vínculo é expandido para as folhas.
+    await executar(
+      `DELETE FROM tarefa_predecessoras
+        WHERE (tarefa_id = :filha AND predecessora_id = :mae)
+           OR (tarefa_id = :mae AND predecessora_id = :filha)`,
+      { filha: id, mae: anterior.id },
+    );
+
     await executar(`UPDATE projeto_tarefas SET pai_id = :paiId WHERE id = :id`, {
       id,
       paiId: anterior.id,
     });
+
+    // A antiga folha virou mãe: sai do reagendamento e do CPM, e o
+    // período do projeto passa a somar por outro caminho.
+    await propagarCronograma(t.projetoId);
     return;
   }
 
@@ -1341,6 +2386,8 @@ export async function aninharTarefa(
       ordem: mae.ordem + 1,
     });
   });
+
+  await propagarCronograma(t.projetoId);
 }
 
 // ------------------------------------------------------------ lembretes
@@ -1366,7 +2413,9 @@ interface LinhaProjetoSemAtualizacao extends Omit<ProjetoSemAtualizacao, "avisad
  * Projetos que passaram do prazo de acompanhamento semanal.
  *
  * Só entram os que estão vivos: cobrar atualização de projeto concluído
- * ou cancelado é ruído que ensina o gerente a ignorar o aviso.
+ * ou cancelado é ruído que ensina o gerente a ignorar o aviso. Demanda
+ * em backlog também fica de fora — ela ainda não foi priorizada, e
+ * cobrar andamento do que ninguém começou é o mesmo ruído.
  *
  * O `avisado_hoje` sai da própria fila de notificações — assim o
  * lembrete diário não depende de coluna nova nem de estado em memória,
@@ -1396,4 +2445,277 @@ export async function projetosSemAtualizacao(
     { diasMinimos },
   );
   return linhas.map((l) => ({ ...l, avisadoHoje: paraBool(l.avisadoHoje) }));
+}
+
+// -------------------------------------------------------- reagendamento
+
+/** Linha usada pela passada topológica do reagendamento. */
+interface LinhaReagendamento {
+  id: string;
+  paiId: string | null;
+  inicio: Date;
+  fim: Date;
+  duracao: number | null;
+  duracaoUnidade: string | null;
+  alocacaoPct: number | null;
+  temFilhas: number;
+}
+
+/**
+ * Recalcula início e fim de todas as folhas a partir das predecessoras.
+ *
+ * A passada é sobre o projeto inteiro, não só sobre a tarefa mudada.
+ * Propagação incremental — o que o MS Project faz — exigiria saber quem
+ * mexeu no quê e parar na hora certa; a passada completa é
+ * determinística, roda em milissegundos para centenas de tarefas e não
+ * tem como deixar o cronograma meio atualizado.
+ *
+ * A data que o usuário digitou vira âncora de "não antes de", igual à
+ * restrição que o Project cria: a tarefa nunca é puxada para trás, só
+ * empurrada para frente pelas predecessoras. Conflito de verdade — data
+ * anterior ao que a dependência permite — é barrado antes, na edição.
+ *
+ * Só folhas entram. Tarefa mãe tem datas derivadas do rollup na leitura;
+ * gravá-las aqui criaria um número que o rollup contradiz. Dependência
+ * declarada sobre uma mãe é expandida para as folhas dela — descartá-la
+ * deixava a sucessora parada na data antiga.
+ */
+export async function reagendarProjeto(projetoId: string): Promise<void> {
+  const [tarefas, arestas, projeto] = await Promise.all([
+    consultar<LinhaReagendamento>(
+      `SELECT t.id, t.pai_id, t.inicio, t.fim, t.duracao, t.duracao_unidade, t.alocacao_pct,
+              (SELECT COUNT(*) FROM projeto_tarefas f
+                WHERE f.pai_id = t.id AND f.ativo = 1)::int AS tem_filhas
+         FROM projeto_tarefas t
+        WHERE t.projeto_id = :projetoId AND t.ativo = 1
+        ORDER BY t.ordem`,
+      { projetoId },
+    ),
+    consultar<{ tarefaId: string; predecessoraId: string }>(
+      `SELECT tp.tarefa_id, tp.predecessora_id
+         FROM tarefa_predecessoras tp
+         JOIN projeto_tarefas t ON t.id = tp.tarefa_id
+        WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
+      { projetoId },
+    ),
+    consultarUm<{ usaDiasUteis: boolean }>(
+      `SELECT (usa_dias_uteis = 1) AS usa_dias_uteis FROM projetos WHERE id = :id`,
+      { id: projetoId },
+    ),
+  ]);
+
+  const folhas: LinhaReagendamento[] = tarefas.filter((t) => t.temFilhas === 0);
+  if (folhas.length === 0) return;
+
+  const cal = await calendarioDoProjeto(projeto?.usaDiasUteis ?? true);
+
+  // Capacidade de todas as folhas numa consulta só: uma ida ao banco
+  // por tarefa transformaria a passada topológica em centenas de
+  // consultas a cada tecla salva.
+  const capacidadePorTarefa = await capacidadesDoProjeto(projetoId);
+
+  const temFilhasPorId = new Map(tarefas.map((t) => [t.id, t.temFilhas > 0]));
+  const paiDe = new Map(tarefas.map((t) => [t.id, t.paiId]));
+  const emFolhas = expansorDeFolhas(
+    tarefas.map((t) => t.id),
+    paiDe,
+    (id) => temFilhasPorId.get(id) ?? false,
+  );
+
+  const pred = new Map<string, string[]>();
+  const porId = new Map<string, LinhaReagendamento>(folhas.map((t) => [t.id, t]));
+  for (const t of folhas) pred.set(t.id, []);
+
+  // As duas pontas são expandidas: vínculo declarado numa mãe vale para
+  // as folhas dela, dos dois lados da seta.
+  for (const a of arestas) {
+    for (const alvo of emFolhas(a.tarefaId)) {
+      if (!porId.has(alvo)) continue;
+      for (const origem of emFolhas(a.predecessoraId)) {
+        if (!porId.has(origem) || origem === alvo) continue;
+        const lista = pred.get(alvo);
+        if (lista && !lista.includes(origem)) lista.push(origem);
+      }
+    }
+  }
+
+  // Ordenação topológica. Ciclo é possível — a validação impede criar,
+  // mas dado antigo pode ter — e a marca de visitado corta o laço em vez
+  // de travar a tela inteira.
+  const ordem: string[] = [];
+  const estado = new Map<string, 0 | 1 | 2>();
+  function visitar(id: string) {
+    if ((estado.get(id) ?? 0) !== 0) return;
+    estado.set(id, 1);
+    for (const p of pred.get(id) ?? []) visitar(p);
+    estado.set(id, 2);
+    ordem.push(id);
+  }
+  for (const t of folhas) visitar(t.id);
+
+  const agenda = new Map<string, { inicio: Date; fim: Date }>();
+  for (const id of ordem) {
+    const t = porId.get(id);
+    if (!t) continue;
+
+    let inicio = cal.normalizar(t.inicio);
+    for (const p of pred.get(id) ?? []) {
+      const anterior = agenda.get(p);
+      if (!anterior) continue;
+      // Sucessora começa no dia útil seguinte ao término: somar 2 dias
+      // conta o próprio dia do fim como o primeiro.
+      const seguinte = cal.somar(anterior.fim, 2);
+      if (seguinte > inicio) inicio = seguinte;
+    }
+
+    const dias = duracaoDaTarefa(t, cal, capacidadePorTarefa.get(id) ?? null);
+    agenda.set(id, { inicio, fim: cal.somar(inicio, dias) });
+  }
+
+  // Só grava o que mudou: um UPDATE por tarefa em cronograma de 300
+  // linhas seria 300 idas ao banco a cada tecla salva.
+  const mudancas = folhas.filter((t) => {
+    const a = agenda.get(t.id);
+    if (!a) return false;
+    return (
+      a.inicio.getTime() !== cal.normalizar(t.inicio).getTime() ||
+      a.fim.getTime() !== meiaNoite(t.fim).getTime()
+    );
+  });
+  if (mudancas.length === 0) return;
+
+  await emTransacao(async (tx) => {
+    for (const t of mudancas) {
+      const a = agenda.get(t.id);
+      if (!a) continue;
+      await tx.executar(`UPDATE projeto_tarefas SET inicio = :inicio, fim = :fim WHERE id = :id`, {
+        id: t.id,
+        inicio: a.inicio,
+        fim: a.fim,
+      });
+    }
+  });
+}
+
+/**
+ * Duração da tarefa em dias, para o reagendamento.
+ *
+ * Prefere o que o usuário digitou, com as mesmas correções de alocação
+ * e de capacidade que a edição inline aplica — se as contas
+ * divergissem, a passada topológica desfaria na gravação seguinte o fim
+ * que a tela acabou de mostrar.
+ *
+ * Tarefa antiga sem duração gravada mantém o intervalo que já tinha,
+ * para não encolher sozinha.
+ */
+function duracaoDaTarefa(
+  t: {
+    inicio: Date;
+    fim: Date;
+    duracao: number | null;
+    duracaoUnidade: string | null;
+    alocacaoPct: number | null;
+  },
+  cal: CalendarioProjeto,
+  capacidadeDiaria: number | null,
+): number {
+  if (t.duracao !== null && t.duracao > 0) {
+    return duracaoParaDias(
+      t.duracao,
+      t.duracaoUnidade === "dias" ? "dias" : "horas",
+      t.alocacaoPct,
+      capacidadeDiaria,
+    );
+  }
+  return Math.max(1, cal.contar(cal.normalizar(t.inicio), meiaNoite(t.fim)));
+}
+
+/** Linha de predecessora usada na checagem de conflito. */
+interface LinhaPredecessora {
+  id: string;
+  nome: string;
+  fim: Date;
+}
+
+/**
+ * Verifica se uma data proposta cabe nas dependências da tarefa.
+ *
+ * Devolve `null` quando cabe. Quando não cabe, devolve o mínimo
+ * permitido e as predecessoras que mandam — com id, não só nome, porque
+ * a tela precisa poder cortar exatamente o vínculo que atrapalha.
+ *
+ * Para predecessora que é tarefa mãe, o término considerado é o da
+ * última folha dela, não a coluna `fim` da própria linha: as datas do
+ * pai são derivadas do rollup na leitura e o valor gravado pode estar
+ * defasado. É o mesmo motivo que faz o reagendamento expandir a aresta.
+ *
+ * Cada predecessora é avaliada individualmente e marcada em `bloqueia`.
+ * Devolver só a mais tardia faria a saída "manter a data" cortar um
+ * vínculo e esbarrar no seguinte, abrindo o mesmo diálogo em sequência.
+ */
+export async function conflitoDeData(
+  tarefaId: string,
+  inicioProposto: Date,
+): Promise<ConflitoData | null> {
+  // A recursão desce a árvore de cada predecessora e agrega pelo id da
+  // raiz: uma linha por vínculo declarado, com o fim real do bloco.
+  const linhas = await consultar<LinhaPredecessora>(
+    `WITH RECURSIVE descendencia AS (
+       SELECT pr.id AS raiz_id, pr.nome AS raiz_nome, pr.id AS no_id
+         FROM tarefa_predecessoras tp
+         JOIN projeto_tarefas pr ON pr.id = tp.predecessora_id AND pr.ativo = 1
+        WHERE tp.tarefa_id = :id
+       UNION ALL
+       SELECT d.raiz_id, d.raiz_nome, f.id
+         FROM descendencia d
+         JOIN projeto_tarefas f ON f.pai_id = d.no_id AND f.ativo = 1
+     )
+     SELECT d.raiz_id AS id, d.raiz_nome AS nome, MAX(t.fim) AS fim
+       FROM descendencia d
+       JOIN projeto_tarefas t ON t.id = d.no_id
+      GROUP BY d.raiz_id, d.raiz_nome`,
+    { id: tarefaId },
+  );
+  if (linhas.length === 0) return null;
+
+  const projeto = await consultarUm<{ usaDiasUteis: boolean }>(
+    `SELECT (p.usa_dias_uteis = 1) AS usa_dias_uteis
+       FROM projeto_tarefas t
+       JOIN projetos p ON p.id = t.projeto_id
+      WHERE t.id = :id`,
+    { id: tarefaId },
+  );
+
+  const cal = await calendarioDoProjeto(projeto?.usaDiasUteis ?? true);
+  const proposto = meiaNoite(inicioProposto);
+
+  // Mínimo de cada predecessora: o dia seguinte ao término dela, na
+  // contagem que o projeto usa.
+  const avaliadas = linhas.map((l) => ({
+    id: l.id,
+    nome: l.nome,
+    fim: new Date(l.fim),
+    minimo: cal.somar(new Date(l.fim), 2),
+  }));
+
+  const primeira = avaliadas[0];
+  if (!primeira) return null;
+
+  const minimoPermitido = avaliadas.reduce(
+    (maior, a) => (a.minimo > maior ? a.minimo : maior),
+    primeira.minimo,
+  );
+
+  if (proposto >= minimoPermitido) return null;
+
+  return {
+    minimoPermitido,
+    propostoEm: proposto,
+    predecessoras: avaliadas.map((a) => ({
+      id: a.id,
+      nome: a.nome,
+      fim: a.fim,
+      bloqueia: a.minimo > proposto,
+    })),
+  };
 }

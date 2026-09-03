@@ -10,7 +10,7 @@ import {
   Section,
   Text,
 } from "@react-email/components";
-import type { TemplateEntry } from "./registry";
+import type { DadosTemplate, TemplateEntry } from "./registry";
 
 interface Props {
   assunto?: string;
@@ -51,7 +51,7 @@ const Email = ({ assunto, corpo, rodape }: Props) => {
 
 export const template = {
   component: Email,
-  subject: (data: Record<string, any>) => (data["assunto"] as string) || "Notificação YpperConnect",
+  subject: (data: DadosTemplate) => (data["assunto"] as string) || "Notificação YpperConnect",
   displayName: "Notificação ITSM",
   previewData: {
     assunto: "[INC-1042] Status alterado para Em atendimento",
@@ -66,7 +66,10 @@ const brand = {
   fontSize: "12px",
   letterSpacing: "2px",
   textTransform: "uppercase" as const,
-  color: "#6366f1",
+  // Equivale ao --primary do tema claro, oklch(0.55 0.12 195). Hex fixo
+  // porque cliente de e-mail não lê variável CSS nem entende oklch, e
+  // fundo branco pede o tom escuro: o do tema black some no papel.
+  color: "#008687",
   margin: "0 0 6px",
   fontWeight: 700,
 };

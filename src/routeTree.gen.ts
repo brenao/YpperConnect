@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdministracaoRouteImport } from './routes/administracao'
 import { Route as AssistenteRouteImport } from './routes/assistente'
+import { Route as BacklogRouteImport } from './routes/backlog'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
 import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
@@ -37,6 +38,11 @@ const AdministracaoRoute = AdministracaoRouteImport.update({
 const AssistenteRoute = AssistenteRouteImport.update({
   id: '/assistente',
   path: '/assistente',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BacklogRoute = BacklogRouteImport.update({
+  id: '/backlog',
+  path: '/backlog',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CatalogoRoute = CatalogoRouteImport.update({
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/administracao': typeof AdministracaoRoute
   '/assistente': typeof AssistenteRoute
+  '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/administracao': typeof AdministracaoRoute
   '/assistente': typeof AssistenteRoute
+  '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/administracao': typeof AdministracaoRoute
   '/assistente': typeof AssistenteRoute
+  '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/'
     | '/administracao'
     | '/assistente'
+    | '/backlog'
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | '/'
     | '/administracao'
     | '/assistente'
+    | '/backlog'
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | '/'
     | '/administracao'
     | '/assistente'
+    | '/backlog'
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
@@ -199,6 +211,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdministracaoRoute: typeof AdministracaoRoute
   AssistenteRoute: typeof AssistenteRoute
+  BacklogRoute: typeof BacklogRoute
   CatalogoRoute: typeof CatalogoRoute
   ChamadosRoute: typeof ChamadosRoute
   ConhecimentoRoute: typeof ConhecimentoRoute
@@ -233,6 +246,13 @@ declare module '@tanstack/react-router' {
       path: '/assistente'
       fullPath: '/assistente'
       preLoaderRoute: typeof AssistenteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/backlog': {
+      id: '/backlog'
+      path: '/backlog'
+      fullPath: '/backlog'
+      preLoaderRoute: typeof BacklogRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/catalogo': {
@@ -319,6 +339,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdministracaoRoute: AdministracaoRoute,
   AssistenteRoute: AssistenteRoute,
+  BacklogRoute: BacklogRoute,
   CatalogoRoute: CatalogoRoute,
   ChamadosRoute: ChamadosRoute,
   ConhecimentoRoute: ConhecimentoRoute,

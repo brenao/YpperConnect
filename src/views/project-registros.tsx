@@ -6,9 +6,20 @@
  * dentro para a grade continuar sendo o assunto principal.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, MessageSquarePlus, Plus, ShieldAlert } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  MessageSquarePlus,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Search,
+  ShieldAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,7 +46,14 @@ import { doInput, fmt, paraInput } from "@/lib/datas";
 import { cn } from "@/lib/utils";
 import type { Atencao, Atualizacao, Risco } from "@/repositories/projetos.repo";
 import { listarUsuariosFn } from "@/services/cadastros.functions";
-import type { AtencaoInput, AtualizacaoInput, RiscoInput } from "@/services/projetos.functions";
+import type {
+  AtencaoInput,
+  AtencaoUpdateInput,
+  AtualizacaoInput,
+  AtualizacaoUpdateInput,
+  RiscoInput,
+  RiscoUpdateInput,
+} from "@/services/projetos.functions";
 
 const SEM = "__nenhum__";
 
@@ -55,13 +73,17 @@ export function PainelRiscos({
   riscos,
   editavel,
   salvando,
+  atualizando,
   onSalvar,
+  onEditar,
 }: {
   projetoId: string;
   riscos: Risco[];
   editavel: boolean;
   salvando: boolean;
+  atualizando: boolean;
   onSalvar: (v: RiscoInput) => void;
+  onEditar: (v: RiscoUpdateInput) => void;
 }) {
   const abertos = riscos.filter((r) => r.status !== "mitigado");
 
@@ -77,7 +99,12 @@ export function PainelRiscos({
           ) : null}
         </h2>
         {editavel ? (
-          <RiscoDialog projetoId={projetoId} onSalvar={onSalvar} salvando={salvando} />
+          <RiscoDialog
+            projetoId={projetoId}
+            onSalvar={onSalvar}
+            onEditar={onEditar}
+            salvando={salvando}
+          />
         ) : null}
       </div>
 
@@ -89,17 +116,33 @@ export function PainelRiscos({
       ) : (
         <ul className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
           {riscos.map((r) => (
-            <li key={r.id} className="rounded-lg border border-border p-2.5">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Badge variant="outline" className={cn("text-[10px]", nivelStyle[r.probabilidade])}>
-                  prob. {r.probabilidade}
-                </Badge>
-                <Badge variant="outline" className={cn("text-[10px]", nivelStyle[r.impacto])}>
-                  impacto {r.impacto}
-                </Badge>
-                <Badge variant="outline" className="text-[10px]">
-                  {r.status}
-                </Badge>
+            <li key={r.id} className="group/item rounded-lg border border-border p-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge
+                    variant="outline"
+                    className={cn("text-[10px]", nivelStyle[r.probabilidade])}
+                  >
+                    prob. {r.probabilidade}
+                  </Badge>
+                  <Badge variant="outline" className={cn("text-[10px]", nivelStyle[r.impacto])}>
+                    impacto {r.impacto}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px]">
+                    {r.status}
+                  </Badge>
+                </div>
+                {/* Só aparece no hover: a leitura do risco é o assunto, o
+                    botão é exceção. */}
+                {editavel ? (
+                  <RiscoDialog
+                    projetoId={projetoId}
+                    risco={r}
+                    onSalvar={onSalvar}
+                    onEditar={onEditar}
+                    salvando={atualizando}
+                  />
+                ) : null}
               </div>
               <p className="mt-1.5 text-xs">{r.descricao}</p>
               {r.mitigacao ? (
@@ -120,17 +163,25 @@ export function PainelAtencoes({
   atencoes,
   editavel,
   salvando,
+  atualizando,
   resolvendo,
+  reabrindo,
   onSalvar,
+  onEditar,
   onResolver,
+  onReabrir,
 }: {
   projetoId: string;
   atencoes: Atencao[];
   editavel: boolean;
   salvando: boolean;
+  atualizando: boolean;
   resolvendo: boolean;
+  reabrindo: boolean;
   onSalvar: (v: AtencaoInput) => void;
+  onEditar: (v: AtencaoUpdateInput) => void;
   onResolver: (id: string) => void;
+  onReabrir: (id: string) => void;
 }) {
   const abertas = atencoes.filter((a) => a.status === "aberto");
 
@@ -144,7 +195,12 @@ export function PainelAtencoes({
           ) : null}
         </h2>
         {editavel ? (
-          <AtencaoDialog projetoId={projetoId} onSalvar={onSalvar} salvando={salvando} />
+          <AtencaoDialog
+            projetoId={projetoId}
+            onSalvar={onSalvar}
+            onEditar={onEditar}
+            salvando={salvando}
+          />
         ) : null}
       </div>
 
@@ -164,16 +220,43 @@ export function PainelAtencoes({
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="text-xs font-medium">{a.titulo}</p>
-                {editavel && a.status === "aberto" ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-5 shrink-0 text-[11px]"
-                    disabled={resolvendo}
-                    onClick={() => onResolver(a.id)}
-                  >
-                    Resolver
-                  </Button>
+                {editavel ? (
+                  <span className="flex shrink-0 items-center gap-0.5">
+                    <AtencaoDialog
+                      projetoId={projetoId}
+                      atencao={a}
+                      onSalvar={onSalvar}
+                      onEditar={onEditar}
+                      salvando={atualizando}
+                    />
+                    {a.status === "aberto" ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-5 text-[11px]"
+                        disabled={resolvendo}
+                        onClick={() => onResolver(a.id)}
+                      >
+                        Resolver
+                      </Button>
+                    ) : (
+                      /* Resolver era caminho sem volta: um clique errado
+                         tirava o item da lista e a única saída era
+                         cadastrar de novo, perdendo a data de abertura —
+                         que é o número que diz há quanto tempo a decisão
+                         está parada. */
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-5 gap-1 text-[11px]"
+                        disabled={reabrindo}
+                        title="Reabrir este ponto de atenção"
+                        onClick={() => onReabrir(a.id)}
+                      >
+                        <RotateCcw className="size-3" /> Reabrir
+                      </Button>
+                    )}
+                  </span>
                 ) : null}
               </div>
               {a.descricao ? (
@@ -199,31 +282,96 @@ export function PainelAtencoes({
 
 // ---------------------------------------------------------- atualizações
 
+/** Primeira linha de texto do registro, para a versão recolhida. */
+function resumoDaAtualizacao(a: Atualizacao): string {
+  const texto = a.descricao?.trim() || a.ultimasEntregas?.trim() || a.proximasEntregas?.trim();
+  if (!texto) return "Sem descrição";
+  const primeira = texto.split(/(?<=[.!?])\s|\n/)[0] ?? texto;
+  return primeira.length > 90 ? `${primeira.slice(0, 90)}…` : primeira;
+}
+
+/**
+ * Histórico de acompanhamento.
+ *
+ * Só a atualização mais recente vem aberta; as anteriores ficam em uma
+ * linha cada e expandem no clique. O registro é semanal e não para de
+ * crescer — em um ano são cinquenta entradas por projeto, e mostrar
+ * todas abertas transformava o painel num paredão em que ninguém achava
+ * a informação de ontem.
+ *
+ * A busca vai ao banco em vez de filtrar o que está em memória: a tela
+ * carrega apenas a janela recente, então filtrar aqui só encontraria o
+ * que já está visível.
+ */
 export function PainelAtualizacoes({
   projetoId,
   atualizacoes,
+  total,
+  busca,
+  buscando,
+  verTodas,
   diasSemAtualizar,
   editavel,
   salvando,
+  atualizando,
+  onBusca,
+  onVerTodas,
   onSalvar,
+  onEditar,
 }: {
   projetoId: string;
   atualizacoes: Atualizacao[];
+  total: number;
+  busca: string;
+  buscando: boolean;
+  verTodas: boolean;
   diasSemAtualizar: number | null;
   editavel: boolean;
   salvando: boolean;
+  atualizando: boolean;
+  onBusca: (texto: string) => void;
+  onVerTodas: () => void;
   onSalvar: (v: AtualizacaoInput) => void;
+  onEditar: (v: AtualizacaoUpdateInput) => void;
 }) {
   const atrasada = diasSemAtualizar === null || diasSemAtualizar > 7;
+
+  // Quais registros antigos o usuário abriu nesta sessão de leitura.
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+
+  function alternar(id: string) {
+    setExpandidas((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+  }
+
+  const buscaAtiva = busca.trim().length > 0;
+  const primeiroId = atualizacoes[0]?.id;
+
+  // O campo de busca só aparece quando há histórico suficiente para
+  // justificá-lo: com três registros ele é ruído.
+  const mostrarBusca = total > 5 || buscaAtiva;
+  const truncado = !verTodas && !buscaAtiva && total > atualizacoes.length;
 
   return (
     <section className={cn("panel flex flex-col p-4", atrasada ? "border-warning/40" : "")}>
       <div className="flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <CalendarClock className="size-4 text-primary" /> Acompanhamento
+          {total > 0 ? (
+            <span className="font-mono text-xs text-muted-foreground">{total}</span>
+          ) : null}
         </h2>
         {editavel ? (
-          <AtualizacaoDialog projetoId={projetoId} onSalvar={onSalvar} salvando={salvando} />
+          <AtualizacaoDialog
+            projetoId={projetoId}
+            onSalvar={onSalvar}
+            onEditar={onEditar}
+            salvando={salvando}
+          />
         ) : null}
       </div>
 
@@ -243,46 +391,130 @@ export function PainelAtualizacoes({
         </p>
       ) : null}
 
-      {atualizacoes.length === 0 ? (
+      {mostrarBusca ? (
+        <div className="relative mt-3">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={busca}
+            onChange={(e) => onBusca(e.target.value)}
+            placeholder="Buscar no histórico..."
+            className="h-8 pl-7 text-xs"
+          />
+        </div>
+      ) : null}
+
+      {buscando ? (
+        <p className="mt-3 text-xs text-muted-foreground">Buscando...</p>
+      ) : atualizacoes.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">
-          Projeto sem acompanhamento some do radar da diretoria.
+          {buscaAtiva
+            ? "Nenhum acompanhamento encontrado para essa busca."
+            : "Projeto sem acompanhamento some do radar da diretoria."}
         </p>
       ) : (
-        <ol className="mt-3 max-h-56 space-y-3 overflow-y-auto pr-1">
-          {atualizacoes.map((a) => (
-            <li key={a.id} className="border-l-2 border-border pl-3">
-              <p className="font-mono text-[11px] text-muted-foreground">
-                {fmt(a.dataRef)}
-                {a.autorNome ? ` · ${a.autorNome}` : ""}
-              </p>
-              {a.descricao ? <p className="mt-0.5 text-xs">{a.descricao}</p> : null}
-              {a.ultimasEntregas ? (
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  <strong className="text-foreground">Entregue:</strong> {a.ultimasEntregas}
-                </p>
-              ) : null}
-              {a.proximasEntregas ? (
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  <strong className="text-foreground">A seguir:</strong> {a.proximasEntregas}
-                </p>
-              ) : null}
-            </li>
-          ))}
+        <ol className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+          {atualizacoes.map((a) => {
+            // A mais recente já vem aberta: é ela que responde "como está
+            // o projeto agora", que é a pergunta de quem abre a tela.
+            const aberta = a.id === primeiroId || expandidas.has(a.id);
+
+            return (
+              <li key={a.id} className="border-l-2 border-border pl-3">
+                <div className="flex items-start justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => alternar(a.id)}
+                    className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                  >
+                    {aberta ? (
+                      <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="font-mono text-[11px] text-muted-foreground">
+                      {fmt(a.dataRef)}
+                    </span>
+                    {a.autorNome ? (
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        · {a.autorNome}
+                      </span>
+                    ) : null}
+                  </button>
+                  {editavel ? (
+                    <AtualizacaoDialog
+                      projetoId={projetoId}
+                      atualizacao={a}
+                      onSalvar={onSalvar}
+                      onEditar={onEditar}
+                      salvando={atualizando}
+                    />
+                  ) : null}
+                </div>
+
+                {aberta ? (
+                  <div className="mt-0.5 pl-4">
+                    {a.descricao ? <p className="text-xs">{a.descricao}</p> : null}
+                    {a.ultimasEntregas ? (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        <strong className="text-foreground">Entregue:</strong> {a.ultimasEntregas}
+                      </p>
+                    ) : null}
+                    {a.proximasEntregas ? (
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        <strong className="text-foreground">A seguir:</strong> {a.proximasEntregas}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => alternar(a.id)}
+                    className="block w-full truncate pl-4 text-left text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    {resumoDaAtualizacao(a)}
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ol>
       )}
+
+      {truncado ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-2 h-7 text-xs"
+          onClick={onVerTodas}
+          disabled={buscando}
+        >
+          Ver todas as {total}
+        </Button>
+      ) : null}
     </section>
   );
 }
 
 // -------------------------------------------------------------- diálogos
 
+/**
+ * Um diálogo só para criar e editar.
+ *
+ * Duplicar o formulário garantiria que um campo novo entrasse em um e
+ * fosse esquecido no outro. A presença do registro decide o modo: sem
+ * ele é cadastro, com ele é edição, e o gatilho muda de forma junto.
+ */
 function RiscoDialog({
   projetoId,
+  risco,
   onSalvar,
+  onEditar,
   salvando,
 }: {
   projetoId: string;
+  risco?: Risco;
   onSalvar: (v: RiscoInput) => void;
+  onEditar: (v: RiscoUpdateInput) => void;
   salvando: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -290,34 +522,59 @@ function RiscoDialog({
   const [probabilidade, setProbabilidade] = useState<"alta" | "media" | "baixa">("media");
   const [impacto, setImpacto] = useState<"alto" | "medio" | "baixo">("medio");
   const [mitigacao, setMitigacao] = useState("");
+  const [status, setStatus] = useState<"aberto" | "monitorado" | "mitigado">("aberto");
+
+  // Recarrega ao abrir, não ao montar: o registro pode ter mudado
+  // enquanto o diálogo estava fechado.
+  useEffect(() => {
+    if (!open) return;
+    setDescricao(risco?.descricao ?? "");
+    setProbabilidade(risco?.probabilidade ?? "media");
+    setImpacto(risco?.impacto ?? "medio");
+    setMitigacao(risco?.mitigacao ?? "");
+    setStatus(risco?.status ?? "aberto");
+  }, [open, risco]);
 
   function salvar() {
     if (descricao.trim().length < 5) {
       toast.error("Descreva o risco.");
       return;
     }
-    onSalvar({
-      projetoId,
+
+    const comum = {
       descricao: descricao.trim(),
       probabilidade,
       impacto,
       mitigacao: mitigacao.trim() || null,
-    });
-    setDescricao("");
-    setMitigacao("");
+    };
+
+    if (risco) onEditar({ id: risco.id, ...comum, status });
+    else onSalvar({ projetoId, ...comum });
+
     setOpen(false);
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs">
-          <Plus className="size-3" /> Risco
-        </Button>
+        {risco ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-5 shrink-0 text-muted-foreground"
+            title="Editar risco"
+          >
+            <Pencil className="size-3" />
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs">
+            <Plus className="size-3" /> Risco
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Registrar risco</DialogTitle>
+          <DialogTitle>{risco ? "Editar risco" : "Registrar risco"}</DialogTitle>
           <DialogDescription>
             Risco é o que ainda não aconteceu mas pode comprometer o projeto.
           </DialogDescription>
@@ -363,6 +620,25 @@ function RiscoDialog({
               </Select>
             </div>
           </div>
+
+          {/* O status só aparece na edição: risco nasce aberto, e o
+              campo no cadastro seria uma pergunta com uma resposta só. */}
+          {risco ? (
+            <div className="grid gap-2">
+              <Label>Situação</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="aberto">Aberto</SelectItem>
+                  <SelectItem value="monitorado">Monitorado</SelectItem>
+                  <SelectItem value="mitigado">Mitigado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
           <div className="grid gap-2">
             <Label>Plano de mitigação</Label>
             <Textarea
@@ -374,8 +650,11 @@ function RiscoDialog({
           </div>
         </div>
         <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={salvando}>
+            Cancelar
+          </Button>
           <Button onClick={salvar} disabled={salvando}>
-            Registrar
+            {salvando ? "Salvando..." : risco ? "Salvar" : "Registrar"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -385,11 +664,15 @@ function RiscoDialog({
 
 function AtencaoDialog({
   projetoId,
+  atencao,
   onSalvar,
+  onEditar,
   salvando,
 }: {
   projetoId: string;
+  atencao?: Atencao;
   onSalvar: (v: AtencaoInput) => void;
+  onEditar: (v: AtencaoUpdateInput) => void;
   salvando: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -404,34 +687,54 @@ function AtencaoDialog({
     enabled: open,
   });
 
+  useEffect(() => {
+    if (!open) return;
+    setTitulo(atencao?.titulo ?? "");
+    setDescricao(atencao?.descricao ?? "");
+    setDecisao(atencao?.decisaoNecessaria ?? "");
+    setResponsavel(atencao?.responsavelDecisaoId ?? SEM);
+  }, [open, atencao]);
+
   function salvar() {
     if (titulo.trim().length < 5) {
       toast.error("Informe o título.");
       return;
     }
-    onSalvar({
-      projetoId,
+
+    const comum = {
       titulo: titulo.trim(),
       descricao: descricao.trim() || null,
       decisaoNecessaria: decisao.trim() || null,
       responsavelDecisaoId: responsavel === SEM ? null : responsavel,
-    });
-    setTitulo("");
-    setDescricao("");
-    setDecisao("");
+    };
+
+    if (atencao) onEditar({ id: atencao.id, ...comum });
+    else onSalvar({ projetoId, ...comum });
+
     setOpen(false);
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs">
-          <Plus className="size-3" /> Atenção
-        </Button>
+        {atencao ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-5 shrink-0 text-muted-foreground"
+            title="Editar ponto de atenção"
+          >
+            <Pencil className="size-3" />
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs">
+            <Plus className="size-3" /> Atenção
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Ponto de atenção</DialogTitle>
+          <DialogTitle>{atencao ? "Editar ponto de atenção" : "Ponto de atenção"}</DialogTitle>
           <DialogDescription>
             Algo que trava o projeto e depende de decisão de alguém.
           </DialogDescription>
@@ -469,8 +772,11 @@ function AtencaoDialog({
           </div>
         </div>
         <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={salvando}>
+            Cancelar
+          </Button>
           <Button onClick={salvar} disabled={salvando}>
-            Registrar
+            {salvando ? "Salvando..." : atencao ? "Salvar" : "Registrar"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -480,11 +786,15 @@ function AtencaoDialog({
 
 function AtualizacaoDialog({
   projetoId,
+  atualizacao,
   onSalvar,
+  onEditar,
   salvando,
 }: {
   projetoId: string;
+  atualizacao?: Atualizacao;
   onSalvar: (v: AtualizacaoInput) => void;
+  onEditar: (v: AtualizacaoUpdateInput) => void;
   salvando: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -493,34 +803,56 @@ function AtualizacaoDialog({
   const [ultimas, setUltimas] = useState("");
   const [proximas, setProximas] = useState("");
 
+  useEffect(() => {
+    if (!open) return;
+    setDataRef(paraInput(atualizacao ? new Date(atualizacao.dataRef) : new Date()));
+    setDescricao(atualizacao?.descricao ?? "");
+    setUltimas(atualizacao?.ultimasEntregas ?? "");
+    setProximas(atualizacao?.proximasEntregas ?? "");
+  }, [open, atualizacao]);
+
   function salvar() {
     if (descricao.trim().length < 5 && ultimas.trim().length < 5) {
       toast.error("Descreva o andamento ou o que foi entregue.");
       return;
     }
-    onSalvar({
-      projetoId,
+
+    const comum = {
       dataRef: doInput(dataRef),
       descricao: descricao.trim() || null,
       ultimasEntregas: ultimas.trim() || null,
       proximasEntregas: proximas.trim() || null,
-    });
-    setDescricao("");
-    setUltimas("");
-    setProximas("");
+    };
+
+    if (atualizacao) onEditar({ id: atualizacao.id, ...comum });
+    else onSalvar({ projetoId, ...comum });
+
     setOpen(false);
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs">
-          <MessageSquarePlus className="size-3" /> Atualizar
-        </Button>
+        {atualizacao ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-5 shrink-0 text-muted-foreground"
+            title="Editar acompanhamento"
+          >
+            <Pencil className="size-3" />
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs">
+            <MessageSquarePlus className="size-3" /> Atualizar
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Atualização de status</DialogTitle>
+          <DialogTitle>
+            {atualizacao ? "Editar acompanhamento" : "Atualização de status"}
+          </DialogTitle>
           <DialogDescription>
             Registro semanal do andamento. É o que a diretoria lê.
           </DialogDescription>
@@ -544,8 +876,11 @@ function AtualizacaoDialog({
           </div>
         </div>
         <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={salvando}>
+            Cancelar
+          </Button>
           <Button onClick={salvar} disabled={salvando}>
-            Registrar
+            {salvando ? "Salvando..." : atualizacao ? "Salvar" : "Registrar"}
           </Button>
         </DialogFooter>
       </DialogContent>

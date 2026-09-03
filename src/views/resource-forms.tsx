@@ -35,21 +35,42 @@ import {
 /** Radix não aceita SelectItem com value vazio. */
 const SEM = "__nenhum__";
 
+/** Jornada padrão. Fora do formulário: todo mundo trabalha 8h. */
+const HORAS_DIA_PADRAO = 8;
+
+/**
+ * Papéis oferecidos na lista.
+ *
+ * É rótulo descritivo — diz o que a pessoa faz, aparece ao lado do nome
+ * na escolha do responsável e na alocação. NÃO concede acesso: quem vê
+ * o quê é perfil, em Perfis de acesso. Misturar os dois criaria alguém
+ * marcado como "Gerente de portfólio" que não enxerga projeto nenhum.
+ */
+const PAPEIS = [
+  "Analista",
+  "Analista de Infraestrutura",
+  "Analista de Sistemas",
+  "Desenvolvedor",
+  "DBA",
+  "Suporte técnico",
+  "Coordenador",
+  "Gerente de Projetos",
+  "Consultor externo",
+] as const;
+
 interface Form {
   nome: string;
   usuarioId: string;
   papel: string;
   equipeId: string;
-  horasDia: string;
   disponibilidade: number;
 }
 
 const vazio: Form = {
   nome: "",
   usuarioId: SEM,
-  papel: "",
+  papel: SEM,
   equipeId: SEM,
-  horasDia: "8",
   disponibilidade: 50,
 };
 
@@ -76,9 +97,11 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
         ? {
             nome: resource.nome,
             usuarioId: resource.usuarioId ?? SEM,
-            papel: resource.papel ?? "",
+            // Papel gravado fora da lista (cadastro antigo, texto livre)
+            // continua aparecendo: a lista o inclui dinamicamente em vez
+            // de apagar o que já estava lá.
+            papel: resource.papel ?? SEM,
             equipeId: resource.equipeId ?? SEM,
-            horasDia: String(resource.horasDia),
             disponibilidade: resource.disponibilidadeProjetos,
           }
         : vazio,
@@ -104,25 +127,29 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
   });
 
   const salvando = criar.isPending || atualizar.isPending;
-  const horas = Number(form.horasDia) || 0;
+
+  // A jornada só é editável na exceção; o cálculo continua usando a do
+  // recurso para não mentir sobre quem tem meio período.
+  const horas = resource?.horasDia ?? HORAS_DIA_PADRAO;
   const capacidade = Math.round(((horas * form.disponibilidade) / 100) * 10) / 10;
+
+  /** Aceita o valor digitado, mas trava na faixa válida. */
+  function definirDisponibilidade(valor: number) {
+    if (!Number.isFinite(valor)) return;
+    setForm((f) => ({ ...f, disponibilidade: Math.min(100, Math.max(0, Math.round(valor))) }));
+  }
 
   function salvar() {
     if (form.nome.trim().length < 3) {
       toast.error("Informe o nome do recurso.");
       return;
     }
-    if (horas <= 0 || horas > 24) {
-      toast.error("Jornada deve estar entre 1 e 24 horas.");
-      return;
-    }
 
     const payload: RecursoInput = {
       nome: form.nome.trim(),
       usuarioId: form.usuarioId === SEM ? null : form.usuarioId,
-      papel: form.papel.trim() || null,
+      papel: form.papel === SEM ? null : form.papel,
       equipeId: form.equipeId === SEM ? null : form.equipeId,
-      horasDia: horas,
       disponibilidadeProjetos: form.disponibilidade,
     };
 
@@ -134,7 +161,7 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
     }
   }
 
-  /** Preencher o usuário sugere o nome, se ainda estiver vazio. */
+  /** Preencher o usuário sugere nome e equipe, se ainda estiverem vazios. */
   function aoEscolherUsuario(v: string) {
     const u = usuarios.data?.find((x) => x.id === v);
     setForm((f) => ({
@@ -145,21 +172,29 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
     }));
   }
 
+  // Papel legado que não está na lista entra como opção própria, senão o
+  // Select abriria sem seleção e salvaria null sem ninguém pedir.
+  const papeis =
+    form.papel !== SEM && !PAPEIS.includes(form.papel as (typeof PAPEIS)[number])
+      ? [form.papel, ...PAPEIS]
+      : [...PAPEIS];
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {trigger ?? (
-          <Button size="sm" className="gap-2">
-            <Plus className="size-4" /> Novo recurso
+          <Button size="sm" variant="outline" className="gap-2">
+            <Plus className="size-4" /> Externo
           </Button>
         )}
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{resource ? "Editar recurso" : "Novo recurso"}</DialogTitle>
+          <DialogTitle>{resource ? "Editar recurso" : "Novo recurso externo"}</DialogTitle>
           <DialogDescription>
-            Define quanto da jornada da pessoa fica disponível para projetos. O restante permanece
-            no atendimento de chamados.
+            {resource
+              ? "Define quanto da jornada da pessoa fica disponível para projetos. O restante permanece no atendimento de chamados."
+              : "Para consultoria e terceiros sem conta no sistema. Quem já tem usuário entra por “Adicionar de usuários”, sem redigitar nada."}
           </DialogDescription>
         </DialogHeader>
 
@@ -181,6 +216,12 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
                   ))}
               </SelectContent>
             </Select>
+            {form.usuarioId === SEM ? (
+              <p className="text-xs text-muted-foreground">
+                Sem vínculo, a pessoa não enxerga os projetos em que tem tarefa — é por ele que o
+                sistema reconhece quem executa.
+              </p>
+            ) : null}
           </div>
 
           <div className="grid gap-2">
@@ -195,14 +236,20 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor="res-papel">Papel</Label>
-              <Input
-                id="res-papel"
-                maxLength={120}
-                value={form.papel}
-                onChange={(e) => setForm({ ...form, papel: e.target.value })}
-                placeholder="Ex.: Analista de Infraestrutura"
-              />
+              <Label>Papel</Label>
+              <Select value={form.papel} onValueChange={(v) => setForm({ ...form, papel: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SEM}>Não definido</SelectItem>
+                  {papeis.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {p}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid gap-2">
               <Label>Equipe</Label>
@@ -225,34 +272,41 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
             </div>
           </div>
 
+          {/* Barra e número editam o mesmo valor: a barra serve ao ajuste
+              grosso, o campo ao número exato que veio de uma conversa
+              ("ele fica 30% em projeto"). */}
           <div className="grid gap-2">
-            <Label htmlFor="res-horas">Jornada diária (horas)</Label>
-            <Input
-              id="res-horas"
-              type="number"
-              min={1}
-              max={24}
-              step={0.5}
-              value={form.horasDia}
-              onChange={(e) => setForm({ ...form, horasDia: e.target.value })}
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between">
-              <Label>Disponibilidade para projetos</Label>
-              <span className="font-mono text-sm">{form.disponibilidade}%</span>
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="res-disp">Disponibilidade para projetos</Label>
+              <span className="flex items-center gap-1">
+                <Input
+                  id="res-disp"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={form.disponibilidade}
+                  onChange={(e) => definirDisponibilidade(Number(e.target.value))}
+                  className="h-8 w-16 text-right font-mono"
+                />
+                <span className="text-sm text-muted-foreground">%</span>
+              </span>
             </div>
             <Slider
               min={0}
               max={100}
               step={5}
               value={[form.disponibilidade]}
-              onValueChange={([v]) => setForm({ ...form, disponibilidade: v ?? 0 })}
+              onValueChange={([v]) => definirDisponibilidade(v ?? 0)}
             />
             <p className="text-xs text-muted-foreground">
               Capacidade para projetos: <strong>{capacidade}h/dia</strong>. O restante (
               {Math.round((horas - capacidade) * 10) / 10}h) fica para atendimento.
+              {horas !== HORAS_DIA_PADRAO ? ` Jornada de ${horas}h.` : ""}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              É este número que define quantos dias uma tarefa ocupa no cronograma: quem está metade
+              do dia em sustentação leva o dobro do tempo na mesma tarefa.
             </p>
           </div>
         </div>

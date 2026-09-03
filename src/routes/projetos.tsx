@@ -47,6 +47,7 @@ const statusStyle: Record<ProjectStatus, string> = {
   paralisado: "bg-warning/12 text-warning border-warning/30",
   cancelado: "bg-muted text-muted-foreground border-border",
   concluido: "bg-success/12 text-success border-success/30",
+  backlog: "bg-muted text-muted-foreground border-border",
 };
 
 type Saude = "no_prazo" | "atencao" | "atrasado" | "encerrado";

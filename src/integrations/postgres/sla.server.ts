@@ -219,3 +219,125 @@ export async function minutosUteisEntre(
 
   return total;
 }
+
+// ------------------------------------------------------- dias úteis
+
+/**
+ * Camada de dias, para o cronograma de projetos.
+ *
+ * O SLA raciocina em minutos dentro das faixas de expediente; o
+ * cronograma raciocina em dias inteiros. As duas leituras saem do mesmo
+ * `expediente` e dos mesmos `feriados` de propósito: um calendário
+ * paralelo acabaria discordando do outro sobre o mesmo feriado, e
+ * ninguém saberia qual está certo.
+ *
+ * Um dia é útil quando tem ao menos uma faixa de expediente e não é
+ * feriado. Sábado sem faixa cadastrada não é dia útil; sábado com faixa
+ * é — quem manda é o cadastro, não o nome do dia.
+ */
+
+/** Versão pura, para poder ser testada sem banco. */
+function ehDiaUtilNoCalendario(d: Date, cal: Calendario): boolean {
+  return faixasDoDia(d, cal).length > 0;
+}
+
+function proximoDiaUtilNoCalendario(d: Date, cal: Calendario): Date {
+  const cursor = new Date(d);
+  cursor.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 3650; i++) {
+    if (ehDiaUtilNoCalendario(cursor, cal)) return cursor;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  throw new Error("Nenhum dia útil nos próximos 10 anos: verifique expediente e feriados");
+}
+
+/**
+ * Data de término de uma tarefa que começa em `inicio` e dura `dias`
+ * dias úteis.
+ *
+ * O dia de início conta como o primeiro: tarefa de 1 dia começa e
+ * termina no mesmo dia. É a convenção do MS Project e a que o usuário
+ * espera ao digitar "8h" numa tarefa.
+ *
+ * Se `inicio` cair em dia não útil, escorrega para o próximo — não faz
+ * sentido uma tarefa começar num domingo que ninguém trabalha.
+ */
+function somarDiasUteisNoCalendario(inicio: Date, dias: number, cal: Calendario): Date {
+  if (dias < 1) throw new Error("Duração em dias úteis deve ser pelo menos 1");
+
+  const cursor = proximoDiaUtilNoCalendario(inicio, cal);
+  let restantes = dias - 1;
+
+  for (let i = 0; i < 3650 && restantes > 0; i++) {
+    cursor.setDate(cursor.getDate() + 1);
+    if (ehDiaUtilNoCalendario(cursor, cal)) restantes--;
+  }
+
+  if (restantes > 0) {
+    throw new Error("Cálculo de prazo excedeu 10 anos: verifique expediente e feriados");
+  }
+  return cursor;
+}
+
+/** Dias úteis entre duas datas, início e fim inclusive. */
+function diasUteisEntreNoCalendario(inicio: Date, fim: Date, cal: Calendario): number {
+  const cursor = new Date(inicio);
+  cursor.setHours(0, 0, 0, 0);
+  const limite = new Date(fim);
+  limite.setHours(0, 0, 0, 0);
+
+  let total = 0;
+  for (let i = 0; i < 3650 && cursor <= limite; i++) {
+    if (ehDiaUtilNoCalendario(cursor, cal)) total++;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return total;
+}
+
+export async function ehDiaUtil(d: Date): Promise<boolean> {
+  return ehDiaUtilNoCalendario(d, await carregarCalendario());
+}
+
+export async function proximoDiaUtil(d: Date): Promise<Date> {
+  return proximoDiaUtilNoCalendario(d, await carregarCalendario());
+}
+
+export async function somarDiasUteis(inicio: Date, dias: number): Promise<Date> {
+  return somarDiasUteisNoCalendario(inicio, dias, await carregarCalendario());
+}
+
+export async function diasUteisEntre(inicio: Date, fim: Date): Promise<number> {
+  return diasUteisEntreNoCalendario(inicio, fim, await carregarCalendario());
+}
+
+/** Exposto para teste: permite exercitar a aritmética sem banco. */
+export const _internos = {
+  ehDiaUtilNoCalendario,
+  proximoDiaUtilNoCalendario,
+  somarDiasUteisNoCalendario,
+  diasUteisEntreNoCalendario,
+};
+
+/**
+ * Contador de dias úteis com o calendário já carregado.
+ *
+ * O `calcularCpm` é síncrono e roda em laço sobre todas as tarefas —
+ * não pode esperar uma consulta a cada par de datas. Esta função carrega
+ * o calendário uma vez e devolve uma função pura que o usa.
+ */
+export async function contadorDeDiasUteis(): Promise<(inicio: Date, fim: Date) => number> {
+  const cal = await carregarCalendario();
+  return (inicio, fim) => diasUteisEntreNoCalendario(inicio, fim, cal);
+}
+
+/** Somador de dias úteis com o calendário já carregado. */
+export async function somadorDeDiasUteis(): Promise<(inicio: Date, dias: number) => Date> {
+  const cal = await carregarCalendario();
+  return (inicio, dias) => somarDiasUteisNoCalendario(inicio, dias, cal);
+}
+
+/** Empurra para o próximo dia útil, com o calendário já carregado. */
+export async function normalizadorDeDiaUtil(): Promise<(d: Date) => Date> {
+  const cal = await carregarCalendario();
+  return (d) => proximoDiaUtilNoCalendario(d, cal);
+}

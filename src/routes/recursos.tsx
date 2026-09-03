@@ -1,17 +1,33 @@
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, Loader2, Pencil, Search } from "lucide-react";
+import { Eye, EyeOff, Loader2, Pencil, Search, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { ResourceDialog } from "@/views/resource-forms";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import type { Recurso } from "@/repositories/recursos.repo";
 import { capacidadeProjeto } from "@/services/resource-utils";
-import { listarRecursosFn, definirRecursoAtivoFn } from "@/services/recursos.functions";
+import {
+  listarRecursosFn,
+  definirRecursoAtivoFn,
+  usuariosSemRecursoFn,
+  criarRecursosDeUsuariosFn,
+} from "@/services/recursos.functions";
 import { usuarioAtualFn } from "@/services/cadastros.functions";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +53,9 @@ export const Route = createFileRoute("/recursos")({
   component: Recursos,
 });
 
+/** Mesma chave que o repositório exige para escrever. */
+const FEATURE_RECURSO_EDITAR = "recurso.editar";
+
 function Recursos() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
@@ -45,7 +64,12 @@ function Recursos() {
   const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
   const q = useQuery({ queryKey: ["recursos"], queryFn: () => listarRecursosFn() });
 
-  const isTi = usuario.data ? usuario.data.admin || usuario.data.equipeId !== null : false;
+  // Antes bastava ter equipe — a mesma regra de TI que já saiu de
+  // projetos. Capacidade de projeto não é assunto de quem atende
+  // chamado: quem administra é quem tem a funcionalidade no perfil.
+  const u = usuario.data;
+  const podeEditar = u ? u.admin || u.funcionalidades.includes(FEATURE_RECURSO_EDITAR) : false;
+
   const recursos: Recurso[] = useMemo(() => q.data?.recursos ?? [], [q.data]);
 
   /** Carga vinda das tarefas de projeto, indexada por recurso. */
@@ -129,10 +153,24 @@ function Recursos() {
               {conflitos}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Recursos acima de 100% da capacidade
+              Recursos acima da própria capacidade
             </p>
           </div>
         </section>
+
+        {/* Recurso é o que liga a pessoa à tarefa. Sem nenhum cadastrado,
+            ninguém consegue ser responsável — e o cronograma inteiro
+            fica sem dono. Vale dizer isso de frente. */}
+        {!q.isPending && recursos.length === 0 ? (
+          <div className="panel border-warning/40 p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Nenhum recurso cadastrado.</p>
+            <p className="mt-1">
+              Sem recursos não há quem atribuir às tarefas, e ninguém enxerga os projetos em que
+              trabalha. Use <strong>Adicionar de usuários</strong> para trazer quem já está no
+              sistema.
+            </p>
+          </div>
+        ) : null}
 
         {semAlocacao && recursos.length > 0 ? (
           <div className="panel border-warning/40 p-4 text-sm text-muted-foreground">
@@ -165,7 +203,14 @@ function Recursos() {
             {mostrarInativos ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
             {mostrarInativos ? "Ocultar inativos" : "Mostrar inativos"}
           </Button>
-          {isTi ? <ResourceDialog /> : null}
+          {podeEditar ? (
+            <>
+              <DialogoAdicionarUsuarios />
+              {/* Cadastro avulso fica secundário: serve ao externo sem
+                  login, que é a exceção. */}
+              <ResourceDialog />
+            </>
+          ) : null}
         </div>
 
         {q.isPending ? (
@@ -191,7 +236,7 @@ function Recursos() {
                         {r.equipeNome ? ` · ${r.equipeNome}` : ""}
                       </p>
                     </div>
-                    {isTi ? (
+                    {podeEditar ? (
                       <div className="flex shrink-0 gap-1">
                         <ResourceDialog
                           resource={r}
@@ -225,8 +270,11 @@ function Recursos() {
                         Inativo
                       </Badge>
                     ) : null}
+                    {/* Sem vínculo, a pessoa não vê os projetos em que
+                        trabalha: é por `usuario_id` que o acesso
+                        descobre "tenho tarefa aqui". */}
                     {r.usuarioId ? null : (
-                      <Badge variant="outline" className="text-xs">
+                      <Badge variant="outline" className="border-warning/40 text-xs text-warning">
                         Sem vínculo no sistema
                       </Badge>
                     )}
@@ -256,7 +304,8 @@ function Recursos() {
                     </div>
                     <Progress value={Math.min(100, pct)} />
                     <p className="text-xs text-muted-foreground">
-                      Jornada {r.horasDia}h · {r.disponibilidadeProjetos}% para projetos
+                      {r.disponibilidadeProjetos}% para projetos
+                      {r.horasDia !== 8 ? ` · jornada de ${r.horasDia}h` : ""}
                       {carga?.projetos ? ` · ${carga.projetos} projeto(s)` : ""}
                     </p>
                   </div>
@@ -264,14 +313,160 @@ function Recursos() {
               );
             })}
 
-            {visiveis.length === 0 ? (
+            {visiveis.length === 0 && recursos.length > 0 ? (
               <p className="panel col-span-full px-5 py-10 text-center text-sm text-muted-foreground">
-                Nenhum recurso cadastrado.
+                Nenhum recurso corresponde à busca.
               </p>
             ) : null}
           </div>
         )}
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * Traz quem já está no sistema para a lista de recursos.
+ *
+ * Existe porque cadastrar a mesma pessoa em dois lugares é a origem da
+ * divergência entre os dois cadastros: alguém muda de equipe no AD e o
+ * recurso continua na antiga. Nome, equipe e vínculo vêm do usuário; a
+ * única decisão aqui é a disponibilidade, e ela se ajusta depois por
+ * pessoa.
+ */
+function DialogoAdicionarUsuarios() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [disponibilidade, setDisponibilidade] = useState(50);
+
+  const q = useQuery({
+    queryKey: ["usuarios-sem-recurso"],
+    queryFn: () => usuariosSemRecursoFn(),
+    enabled: open,
+  });
+
+  const criar = useMutation({
+    mutationFn: (v: { usuarioIds: string[]; disponibilidadeProjetos: number }) =>
+      criarRecursosDeUsuariosFn({ data: v }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["recursos"] });
+      qc.invalidateQueries({ queryKey: ["usuarios-sem-recurso"] });
+      toast.success(`${r.criados} recurso(s) criado(s)`);
+      setMarcados(new Set());
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error("Não foi possível cadastrar", { description: e.message }),
+  });
+
+  const usuarios = useMemo(() => q.data?.usuarios ?? [], [q.data]);
+  const visiveis = useMemo(() => {
+    const t = busca.trim().toLowerCase();
+    if (!t) return usuarios;
+    return usuarios.filter((u) =>
+      `${u.nome} ${u.email} ${u.departamento ?? ""} ${u.equipeNome ?? ""}`
+        .toLowerCase()
+        .includes(t),
+    );
+  }, [usuarios, busca]);
+
+  function alternar(id: string) {
+    setMarcados((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" className="gap-2">
+          <UserPlus className="size-4" /> Adicionar de usuários
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Adicionar recursos</DialogTitle>
+          <DialogDescription>
+            Usuários que ainda não são recursos. Nome e equipe vêm do cadastro; a disponibilidade
+            pode ser ajustada depois, por pessoa.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="disp-lote">Disponibilidade para projetos (%)</Label>
+            <Input
+              id="disp-lote"
+              type="number"
+              min={0}
+              max={100}
+              value={disponibilidade}
+              onChange={(e) => setDisponibilidade(Math.round(Number(e.target.value)))}
+              className="w-24"
+            />
+            <p className="text-xs text-muted-foreground">
+              Capacidade de {((8 * disponibilidade) / 100).toFixed(1)}h/dia. O restante fica no
+              atendimento de chamados.
+            </p>
+          </div>
+
+          <Input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar usuário..."
+          />
+
+          {q.isPending ? (
+            <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Carregando...
+            </p>
+          ) : visiveis.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {usuarios.length === 0
+                ? "Todos os usuários ativos já são recursos."
+                : "Nenhum usuário corresponde à busca."}
+            </p>
+          ) : (
+            <ul className="max-h-64 space-y-1 overflow-y-auto pr-1">
+              {visiveis.map((u) => (
+                <li key={u.id}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md p-2 hover:bg-secondary/40">
+                    <Checkbox checked={marcados.has(u.id)} onCheckedChange={() => alternar(u.id)} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">{u.nome}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {u.equipeNome ?? "Sem equipe"}
+                        {u.departamento ? ` · ${u.departamento}` : ""}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={criar.isPending}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={marcados.size === 0 || criar.isPending}
+            onClick={() =>
+              criar.mutate({
+                usuarioIds: [...marcados],
+                disponibilidadeProjetos: disponibilidade,
+              })
+            }
+          >
+            {criar.isPending ? "Cadastrando..." : `Adicionar ${marcados.size || ""}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

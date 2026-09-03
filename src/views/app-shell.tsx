@@ -6,6 +6,7 @@ import {
   BookOpen,
   Boxes,
   GanttChartSquare,
+  Inbox,
   ShieldCheck,
   Sparkles,
   PieChart,
@@ -24,6 +25,7 @@ import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functio
 const nav = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
   { to: "/chamados", label: "Chamados", icon: Ticket },
+  { to: "/backlog", label: "Backlog de demandas", icon: Inbox },
   { to: "/projetos", label: "Projetos e cronograma", icon: GanttChartSquare },
   { to: "/recursos", label: "Recursos e capacidade", icon: Users },
   { to: "/diretoria", label: "Visão diretoria", icon: PieChart },

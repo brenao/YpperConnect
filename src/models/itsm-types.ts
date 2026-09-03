@@ -106,7 +106,13 @@ export interface Resource {
   disponibilidadeProjetos: number;
 }
 
-export type ProjectStatus = "planejamento" | "execucao" | "paralisado" | "cancelado" | "concluido";
+/**
+ * `backlog` é a etapa anterior ao planejamento: demanda registrada que
+ * ainda não foi priorizada. Não cobra acompanhamento, não ocupa
+ * capacidade e não tem prazo — porque ainda não foi decidida.
+ */
+export type ProjectStatus =
+  "backlog" | "planejamento" | "execucao" | "paralisado" | "cancelado" | "concluido";
 
 export interface ProjectUpdate {
   id: string;
@@ -175,6 +181,7 @@ export interface Project {
 }
 
 export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
+  backlog: "Backlog",
   planejamento: "Planejamento",
   execucao: "Em execução",
   paralisado: "Paralisado",
@@ -272,6 +279,12 @@ export const APP_MODULES: AppModule[] = [
     grupo: "Operação",
   },
   {
+    key: "/backlog",
+    label: "Backlog de projetos",
+    descricao: "Projetos aguardando priorização, com pontuação e matriz de decisão.",
+    grupo: "Projetos",
+  },
+  {
     key: "/projetos",
     label: "Projetos e cronograma",
     descricao: "Cadastro de projetos, tarefas e Gantt.",
@@ -358,6 +371,29 @@ export const APP_FEATURES: AppFeature[] = [
     key: "projeto.editar",
     label: "Editar cronograma",
     descricao: "Criar e alterar tarefas, riscos e atualizações.",
+    grupo: "Projetos",
+  },
+  /**
+   * Os dois papéis abaixo são de LEITURA e ampliam o que a pessoa
+   * enxerga do portfólio. Não dão direito de edição: quem escreve é o
+   * gerente, o patrocinador e quem tem tarefa atribuída, e essa regra é
+   * do projeto, não do perfil.
+   *
+   * As chaves são lidas em `current-user.server.ts`; mudar o texto
+   * delas aqui exige mudar lá junto.
+   */
+  {
+    key: "projetos.visao_diretoria",
+    label: "Ver todos os projetos",
+    descricao: "Visão de diretoria: enxerga o portfólio inteiro, sem poder editar.",
+    grupo: "Projetos",
+  },
+  {
+    key: "projetos.portfolio",
+    label: "Ver projetos da equipe",
+    descricao:
+      "Gestor de portfólio: enxerga os projetos da própria equipe, sem poder editar. " +
+      "Depende da equipe cadastrada no usuário.",
     grupo: "Projetos",
   },
   {
