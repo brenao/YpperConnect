@@ -112,6 +112,8 @@ export interface ProjectTasksProps {
   progressoReal: number;
   editavel: boolean;
   onDetalhe: (t: Tarefa) => void;
+  /** Abre o diálogo de tarefa nova. Fica junto da grade, não no topo. */
+  onNovaTarefa?: (() => void) | undefined;
 }
 
 export function ProjectTasks({
@@ -125,6 +127,7 @@ export function ProjectTasks({
   progressoReal,
   editavel,
   onDetalhe,
+  onNovaTarefa,
 }: ProjectTasksProps) {
   const [unidade, setUnidade] = useState<Unidade>("horas");
 
@@ -221,6 +224,14 @@ export function ProjectTasks({
         </p>
 
         <div className="flex items-center gap-2">
+          {/* Criar tarefa é ação da grade, e por isso mora nela. No
+              cabeçalho da página ficava longe do que altera, e distante
+              até de estar visível quando outra aba está aberta. */}
+          {editavel && onNovaTarefa ? (
+            <Button size="sm" className="mr-1 gap-2" onClick={onNovaTarefa}>
+              <Plus className="size-4" /> Nova tarefa
+            </Button>
+          ) : null}
           <span className="text-xs text-muted-foreground">Duração em</span>
           <div className="flex items-center rounded-md border border-border p-0.5">
             {(["horas", "dias"] as Unidade[]).map((u) => (

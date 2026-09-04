@@ -194,6 +194,43 @@ export const atualizarTarefaFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+/**
+ * Troca só a situação, direto da lista.
+ *
+ * Separada de `atualizarProjetoFn` porque aquela reescreve o cadastro
+ * inteiro: mandá-la com payload parcial apagaria objetivo, patrocinador
+ * e priorização.
+ */
+export const definirStatusProjetoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => z.object({ id: z.string(), status: z.enum(STATUS) }).parse(d))
+  .handler(async ({ data }) => {
+    const { definirStatusProjeto } = await import("@/repositories/projetos.repo");
+    await definirStatusProjeto(await ctx(), data.id, data.status);
+    return { ok: true };
+  });
+
+/**
+ * O que impede a exclusão, para a tela decidir o que oferecer.
+ *
+ * Consultado ao abrir o diálogo: mostrar "Excluir" e só depois dizer que
+ * não dá seria pior do que já mostrar o caminho certo, que é cancelar.
+ */
+export const impedimentosDeExclusaoFn = createServerFn({ method: "GET" })
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { impedimentosDeExclusao } = await import("@/repositories/projetos.repo");
+    return impedimentosDeExclusao(await ctx(), data.id);
+  });
+
+/** Só apaga projeto vazio. Com histórico, o caminho é cancelar. */
+export const excluirProjetoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { excluirProjeto } = await import("@/repositories/projetos.repo");
+    await excluirProjeto(await ctx(), data.id);
+    return { ok: true };
+  });
+
 export const moverTarefaFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => z.object({ id: z.string(), quadro: z.enum(QUADROS) }).parse(d))
   .handler(async ({ data }) => {

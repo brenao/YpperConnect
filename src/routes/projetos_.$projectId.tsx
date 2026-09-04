@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { ProjectDialog } from "@/views/project-dialogs";
@@ -305,26 +305,14 @@ function DetalheProjeto() {
       subtitle={`${projeto.gerenteNome ?? "Sem gerente"} · ${fmt(projeto.inicio)} — ${fmt(projeto.fim)}`}
       actions={
         editavel ? (
-          <span className="flex gap-2">
-            <ProjectDialog
-              project={projeto}
-              trigger={
-                <Button variant="outline" size="sm">
-                  Editar projeto
-                </Button>
-              }
-            />
-            <Button
-              size="sm"
-              className="gap-2"
-              onClick={() => {
-                setEditando(undefined);
-                setTarefaAberta(true);
-              }}
-            >
-              <Plus className="size-4" /> Nova tarefa
-            </Button>
-          </span>
+          <ProjectDialog
+            project={projeto}
+            trigger={
+              <Button variant="outline" size="sm">
+                Editar projeto
+              </Button>
+            }
+          />
         ) : undefined
       }
     >
@@ -464,6 +452,10 @@ function DetalheProjeto() {
               editavel={editavel}
               onDetalhe={(t) => {
                 setEditando(t);
+                setTarefaAberta(true);
+              }}
+              onNovaTarefa={() => {
+                setEditando(undefined);
                 setTarefaAberta(true);
               }}
             />

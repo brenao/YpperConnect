@@ -428,40 +428,27 @@ export function ProjectDialog({
             </div>
           </div>
 
-          {project ? (
-            <div className="grid gap-2">
-              <Label>Situação</Label>
-              <Select
-                value={form.status}
-                onValueChange={(v) => setForm({ ...form, status: v as ProjectStatus })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {PROJECT_STATUS_LABEL[s]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : (
-            <p className="rounded-lg border border-border bg-surface p-3 text-xs text-muted-foreground">
-              {noBacklog ? (
-                <>
-                  O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e
-                  aí começa o cronograma.
-                </>
-              ) : (
-                <>
-                  O projeto nasce em <strong>Planejamento</strong>. Mude para Execução quando o
-                  cronograma estiver definido.
-                </>
-              )}
-            </p>
-          )}
+          {/* A situação não está aqui: ela é o campo que mais muda depois
+              que o projeto existe, e vive no próprio card da lista, a um
+              clique. Editar em dois lugares só criaria divergência. */}
+          <p className="rounded-lg border border-border bg-surface p-3 text-xs text-muted-foreground">
+            {project ? (
+              <>
+                Situação atual: <strong>{PROJECT_STATUS_LABEL[project.status]}</strong>. Para
+                alterá-la, use o seletor no card do projeto.
+              </>
+            ) : noBacklog ? (
+              <>
+                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e aí
+                começa o cronograma.
+              </>
+            ) : (
+              <>
+                O projeto nasce em <strong>Planejamento</strong>. Mude para Execução quando o
+                cronograma estiver definido.
+              </>
+            )}
+          </p>
         </div>
 
         <DialogFooter>

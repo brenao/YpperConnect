@@ -25,7 +25,6 @@ import { PriorityBadge } from "@/views/badges";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  PRIORITY_LABEL,
   PROJECT_STATUS_LABEL,
   STATUS_LABEL,
   TYPE_LABEL,
@@ -63,6 +62,29 @@ export const Route = createFileRoute("/diretoria")({
   }),
   component: Diretoria,
 });
+
+/**
+ * Estilo do balão dos gráficos.
+ *
+ * O Recharts desenha o tooltip com fundo branco e texto escuro por
+ * padrão, o que some no tema escuro — era o "total : 1" ilegível. Aqui
+ * fundo, borda E texto saem das variáveis do tema, então os dois temas
+ * ficam certos sem condicional.
+ *
+ * `itemStyle` e `labelStyle` precisam ser explícitos: o `contentStyle`
+ * sozinho pinta a caixa e deixa o conteúdo com a cor embutida da
+ * biblioteca.
+ */
+const TOOLTIP_ESTILO = {
+  contentStyle: {
+    background: "var(--card)",
+    border: "1px solid var(--border)",
+    borderRadius: 12,
+    color: "var(--foreground)",
+  },
+  labelStyle: { color: "var(--foreground)", fontWeight: 600 },
+  itemStyle: { color: "var(--foreground)" },
+} as const;
 
 function Kpi({
   label,
@@ -139,6 +161,23 @@ function Barras({
 /** Radix não aceita SelectItem com value vazio. */
 const TODOS = "__todos__";
 
+/**
+ * Ordem de leitura do portfólio, a mesma da lista de projetos.
+ *
+ * É a ordem da atenção que cada situação merece: o que está em execução
+ * primeiro, o que já encerrou por último. Ordenar por qualquer outro
+ * critério — alfabético, ou a ordem em que os campos aparecem no objeto
+ * — coloca "concluído" perto do topo, que é o oposto do que interessa a
+ * quem abre a tela para decidir alguma coisa.
+ */
+const ORDEM_STATUS: ProjectStatus[] = [
+  "execucao",
+  "planejamento",
+  "paralisado",
+  "concluido",
+  "cancelado",
+];
+
 function Diretoria() {
   const [periodo, setPeriodo] = useState<DateRange | undefined>(undefined);
   const [filtroGerente, setFiltroGerente] = useState(TODOS);
@@ -183,6 +222,36 @@ function Diretoria() {
   // divergir do que o banco devolveu.
   const mesAtual = d?.carteira.find((m) => m.atual)?.rotulo;
 
+  /**
+   * Distribuição do portfólio, já na ordem de atenção.
+   *
+   * "Parados" agrupa paralisados; o backend não separa cancelado de
+   * paralisado neste agregado. Enquanto for assim, o gráfico mostra o
+   * que ele tem — inventar uma fatia de cancelados a partir de outro
+   * número daria um total que não fecha.
+   */
+  const distribuicao = useMemo(() => {
+    if (!d) return [];
+    return [
+      { situacao: "Execução", total: d.projetos.emExecucao, cor: "var(--chart-2)" },
+      { situacao: "Planejamento", total: d.projetos.planejamento, cor: "var(--chart-1)" },
+      { situacao: "Parados", total: d.projetos.parados, cor: "var(--chart-3)" },
+      { situacao: "Concluídos", total: d.projetos.concluidos, cor: "var(--chart-4)" },
+    ];
+  }, [d]);
+
+  /** Portfólio ordenado pela mesma régua das outras telas. */
+  const portfolioOrdenado = useMemo(() => {
+    const lista = portfolio.data ?? [];
+    return [...lista].sort((a, b) => {
+      const pa = ORDEM_STATUS.indexOf(a.status as ProjectStatus);
+      const pb = ORDEM_STATUS.indexOf(b.status as ProjectStatus);
+      if (pa !== pb) return (pa < 0 ? 99 : pa) - (pb < 0 ? 99 : pb);
+      // Dentro da mesma situação, o que termina antes vem primeiro.
+      return new Date(a.fim).getTime() - new Date(b.fim).getTime();
+    });
+  }, [portfolio.data]);
+
   return (
     <AppShell
       title="Visão diretoria"
@@ -212,129 +281,15 @@ function Diretoria() {
             <Loader2 className="size-4 animate-spin" /> Consultando o banco...
           </p>
         ) : (
-          <Tabs defaultValue="chamados">
+          /* Projetos primeiro: é a pauta da diretoria. Chamados são a
+             operação do dia, importante mas não o que se leva para uma
+             reunião de conselho. */
+          <Tabs defaultValue="projetos">
             <TabsList>
-              <TabsTrigger value="chamados">Chamados</TabsTrigger>
               <TabsTrigger value="projetos">Projetos</TabsTrigger>
               <TabsTrigger value="portfolio">Portfólio</TabsTrigger>
+              <TabsTrigger value="chamados">Chamados</TabsTrigger>
             </TabsList>
-
-            {/* --------------------------------------------------- chamados */}
-            <TabsContent value="chamados" className="mt-4 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <Kpi
-                  label="Chamados criados"
-                  value={d.chamados.criados}
-                  hint={`${d.chamados.atendidos} atendidos`}
-                />
-                <Kpi
-                  label="Backlog em aberto"
-                  value={d.chamados.backlog}
-                  hint={`${d.chamados.vencidos} fora do prazo`}
-                  tone="text-warning"
-                />
-                <Kpi
-                  label="Aderência ao SLA"
-                  value={`${d.chamados.aderencia}%`}
-                  hint="dos atendidos fecharam no prazo"
-                  tone="text-success"
-                />
-                <Kpi
-                  label="Tempo médio de solução"
-                  value={`${d.chamados.tempoMedioSolucaoH}h`}
-                  hint="horas de relógio, da abertura ao fechamento"
-                />
-              </div>
-
-              <Panel
-                title="Chamados criados × atendidos"
-                description="Abertura e encerramento por dia. Linhas separando indicam backlog crescendo."
-              >
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={d.serie}>
-                      <CartesianGrid stroke="var(--border)" vertical={false} />
-                      <XAxis dataKey="dia" stroke="var(--muted-foreground)" fontSize={11} />
-                      <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                      <Tooltip
-                        contentStyle={{
-                          background: "var(--card)",
-                          border: "1px solid var(--border)",
-                          borderRadius: 12,
-                        }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Line
-                        type="monotone"
-                        dataKey="criados"
-                        name="Criados"
-                        stroke="var(--chart-4)"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="atendidos"
-                        name="Atendidos"
-                        stroke="var(--chart-2)"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </Panel>
-
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Panel title="Por prioridade" description="Conforme a matriz impacto × urgência.">
-                  <div className="space-y-3">
-                    {d.prioridade.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Sem dados no período.</p>
-                    ) : (
-                      d.prioridade.map((p) => (
-                        <div
-                          key={p.chave}
-                          className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2"
-                        >
-                          <PriorityBadge value={p.chave as Priority} full />
-                          <span className="font-mono text-sm">
-                            {p.total}
-                            <span className="ml-2 text-xs text-muted-foreground">
-                              {p.atendidos} atendidos
-                            </span>
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </Panel>
-
-                <Panel title="Por classificação" description="Criados e atendidos por tipo.">
-                  <Barras dados={d.tipo} rotulo={(k) => TYPE_LABEL[k as RecordType] ?? k} />
-                </Panel>
-
-                <Panel title="Por status" description="Distribuição da fila no período.">
-                  <Barras dados={d.status} rotulo={(k) => STATUS_LABEL[k as TicketStatus] ?? k} />
-                </Panel>
-
-                <Panel title="Por equipe" description="Carga distribuída entre os times.">
-                  <Barras dados={d.equipe} rotulo={(k) => k} />
-                </Panel>
-              </div>
-
-              <div className="panel flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
-                <span className="text-muted-foreground">
-                  {d.chamados.comPrimeiroRetorno} de {d.chamados.criados} chamados receberam
-                  primeiro retorno da TI.
-                </span>
-                <Link
-                  to="/chamados"
-                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                >
-                  Ver fila completa <ArrowUpRight className="size-3.5" />
-                </Link>
-              </div>
-            </TabsContent>
 
             {/* --------------------------------------------------- projetos */}
             <TabsContent value="projetos" className="mt-4 space-y-4">
@@ -360,19 +315,13 @@ function Diretoria() {
                   </Link>
                 </div>
               ) : (
-                <Panel title="Distribuição do portfólio" description="Projetos por situação.">
+                <Panel
+                  title="Distribuição do portfólio"
+                  description="Projetos por situação, do que está andando para o que já encerrou."
+                >
                   <div className="h-56">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={[
-                          { situacao: "Planejamento", total: d.projetos.planejamento },
-                          { situacao: "Execução", total: d.projetos.emExecucao },
-                          { situacao: "Parados", total: d.projetos.parados },
-                          { situacao: "Concluídos", total: d.projetos.concluidos },
-                        ]}
-                        layout="vertical"
-                        margin={{ left: 24 }}
-                      >
+                      <BarChart data={distribuicao} layout="vertical" margin={{ left: 24 }}>
                         <XAxis type="number" hide allowDecimals={false} />
                         <YAxis
                           type="category"
@@ -383,15 +332,12 @@ function Diretoria() {
                         />
                         <Tooltip
                           cursor={{ fill: "var(--muted)" }}
-                          contentStyle={{
-                            background: "var(--card)",
-                            border: "1px solid var(--border)",
-                            borderRadius: 12,
-                          }}
+                          formatter={(v: number) => [v, "Projetos"]}
+                          {...TOOLTIP_ESTILO}
                         />
                         <Bar dataKey="total" radius={6}>
-                          {[0, 1, 2, 3].map((i) => (
-                            <Cell key={i} fill={`var(--chart-${i + 1})`} />
+                          {distribuicao.map((item) => (
+                            <Cell key={item.situacao} fill={item.cor} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -424,13 +370,7 @@ function Diretoria() {
                       />
                       <XAxis dataKey="rotulo" stroke="var(--muted-foreground)" fontSize={11} />
                       <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                      <Tooltip
-                        contentStyle={{
-                          background: "var(--card)",
-                          border: "1px solid var(--border)",
-                          borderRadius: 12,
-                        }}
-                      />
+                      <Tooltip {...TOOLTIP_ESTILO} />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
                       {/* Divisa entre o que aconteceu e o que é promessa. */}
                       {mesAtual ? (
@@ -572,15 +512,7 @@ function Diretoria() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={TODOS}>Todas</SelectItem>
-                      {(
-                        [
-                          "planejamento",
-                          "execucao",
-                          "paralisado",
-                          "cancelado",
-                          "concluido",
-                        ] as ProjectStatus[]
-                      ).map((st) => (
+                      {ORDEM_STATUS.map((st) => (
                         <SelectItem key={st} value={st}>
                           {PROJECT_STATUS_LABEL[st]}
                         </SelectItem>
@@ -594,7 +526,7 @@ function Diretoria() {
                 <p className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" /> Carregando portfólio...
                 </p>
-              ) : (portfolio.data ?? []).length === 0 ? (
+              ) : portfolioOrdenado.length === 0 ? (
                 <div className="panel p-6 text-center text-sm text-muted-foreground">
                   Nenhum projeto com esses filtros.
                 </div>
@@ -611,63 +543,185 @@ function Diretoria() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(portfolio.data ?? []).map((p) => (
-                        <tr key={p.id} className="border-b border-border/60">
-                          <td className="px-4 py-2">
-                            <Link
-                              to="/projetos/$projectId"
-                              params={{ projectId: p.id }}
-                              className="hover:underline"
-                            >
-                              {p.nome}
-                            </Link>
-                            <span className="block text-[11px] text-muted-foreground">
-                              {p.gerenteNome ?? "Sem gerente"}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2">
-                            <Badge variant="outline" className="text-[10px]">
-                              {PROJECT_STATUS_LABEL[p.status as ProjectStatus]}
-                            </Badge>
-                          </td>
-                          <td
+                      {portfolioOrdenado.map((p) => {
+                        const encerrado = p.status === "concluido" || p.status === "cancelado";
+                        return (
+                          <tr
+                            key={p.id}
                             className={cn(
-                              "px-4 py-2 font-mono text-xs",
-                              p.atrasado ? "text-destructive" : "text-muted-foreground",
+                              "border-b border-border/60",
+                              // Encerrado continua na tabela, mas recuado:
+                              // é histórico, não pendência.
+                              encerrado ? "opacity-60" : "",
                             )}
                           >
-                            {new Date(p.fim).toLocaleDateString("pt-BR")}
-                          </td>
-                          <td className="px-4 py-2">
-                            <span className="flex items-center gap-2">
-                              <span className="font-mono text-xs">{p.progresso}%</span>
-                              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
-                                <span
-                                  className="block h-full rounded-full bg-primary/70"
-                                  style={{ width: `${p.progresso}%` }}
-                                />
+                            <td className="px-4 py-2">
+                              <Link
+                                to="/projetos/$projectId"
+                                params={{ projectId: p.id }}
+                                className="hover:underline"
+                              >
+                                {p.nome}
+                              </Link>
+                              <span className="block text-[11px] text-muted-foreground">
+                                {p.gerenteNome ?? "Sem gerente"}
                               </span>
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-xs">
-                            {p.diasSemAtualizar === null ? (
-                              <span className="text-destructive">nunca atualizado</span>
-                            ) : p.diasSemAtualizar > 14 ? (
-                              <span className="text-destructive">{p.diasSemAtualizar} dias</span>
-                            ) : p.diasSemAtualizar > 7 ? (
-                              <span className="text-warning">{p.diasSemAtualizar} dias</span>
-                            ) : (
-                              <span className="text-muted-foreground">
-                                {p.diasSemAtualizar} dias
+                            </td>
+                            <td className="px-4 py-2">
+                              <Badge variant="outline" className="text-[10px]">
+                                {PROJECT_STATUS_LABEL[p.status as ProjectStatus]}
+                              </Badge>
+                            </td>
+                            <td
+                              className={cn(
+                                "px-4 py-2 font-mono text-xs",
+                                p.atrasado ? "text-destructive" : "text-muted-foreground",
+                              )}
+                            >
+                              {new Date(p.fim).toLocaleDateString("pt-BR")}
+                            </td>
+                            <td className="px-4 py-2">
+                              <span className="flex items-center gap-2">
+                                <span className="font-mono text-xs">{p.progresso}%</span>
+                                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                                  <span
+                                    className="block h-full rounded-full bg-primary/70"
+                                    style={{ width: `${p.progresso}%` }}
+                                  />
+                                </span>
                               </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td className="px-4 py-2 text-xs">
+                              {p.diasSemAtualizar === null ? (
+                                <span className="text-destructive">nunca atualizado</span>
+                              ) : p.diasSemAtualizar > 14 ? (
+                                <span className="text-destructive">{p.diasSemAtualizar} dias</span>
+                              ) : p.diasSemAtualizar > 7 ? (
+                                <span className="text-warning">{p.diasSemAtualizar} dias</span>
+                              ) : (
+                                <span className="text-muted-foreground">
+                                  {p.diasSemAtualizar} dias
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
+            </TabsContent>
+
+            {/* --------------------------------------------------- chamados */}
+            <TabsContent value="chamados" className="mt-4 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <Kpi
+                  label="Chamados criados"
+                  value={d.chamados.criados}
+                  hint={`${d.chamados.atendidos} atendidos`}
+                />
+                <Kpi
+                  label="Backlog em aberto"
+                  value={d.chamados.backlog}
+                  hint={`${d.chamados.vencidos} fora do prazo`}
+                  tone="text-warning"
+                />
+                <Kpi
+                  label="Aderência ao SLA"
+                  value={`${d.chamados.aderencia}%`}
+                  hint="dos atendidos fecharam no prazo"
+                  tone="text-success"
+                />
+                <Kpi
+                  label="Tempo médio de solução"
+                  value={`${d.chamados.tempoMedioSolucaoH}h`}
+                  hint="horas de relógio, da abertura ao fechamento"
+                />
+              </div>
+
+              <Panel
+                title="Chamados criados × atendidos"
+                description="Abertura e encerramento por dia. Linhas separando indicam backlog crescendo."
+              >
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={d.serie}>
+                      <CartesianGrid stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="dia" stroke="var(--muted-foreground)" fontSize={11} />
+                      <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
+                      <Tooltip {...TOOLTIP_ESTILO} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Line
+                        type="monotone"
+                        dataKey="criados"
+                        name="Criados"
+                        stroke="var(--chart-4)"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="atendidos"
+                        name="Atendidos"
+                        stroke="var(--chart-2)"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </Panel>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Panel title="Por prioridade" description="Conforme a matriz impacto × urgência.">
+                  <div className="space-y-3">
+                    {d.prioridade.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Sem dados no período.</p>
+                    ) : (
+                      d.prioridade.map((p) => (
+                        <div
+                          key={p.chave}
+                          className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2"
+                        >
+                          <PriorityBadge value={p.chave as Priority} full />
+                          <span className="font-mono text-sm">
+                            {p.total}
+                            <span className="ml-2 text-xs text-muted-foreground">
+                              {p.atendidos} atendidos
+                            </span>
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </Panel>
+
+                <Panel title="Por classificação" description="Criados e atendidos por tipo.">
+                  <Barras dados={d.tipo} rotulo={(k) => TYPE_LABEL[k as RecordType] ?? k} />
+                </Panel>
+
+                <Panel title="Por status" description="Distribuição da fila no período.">
+                  <Barras dados={d.status} rotulo={(k) => STATUS_LABEL[k as TicketStatus] ?? k} />
+                </Panel>
+
+                <Panel title="Por equipe" description="Carga distribuída entre os times.">
+                  <Barras dados={d.equipe} rotulo={(k) => k} />
+                </Panel>
+              </div>
+
+              <div className="panel flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
+                <span className="text-muted-foreground">
+                  {d.chamados.comPrimeiroRetorno} de {d.chamados.criados} chamados receberam
+                  primeiro retorno da TI.
+                </span>
+                <Link
+                  to="/chamados"
+                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                >
+                  Ver fila completa <ArrowUpRight className="size-3.5" />
+                </Link>
+              </div>
             </TabsContent>
           </Tabs>
         )}

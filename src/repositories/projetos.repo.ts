@@ -16,6 +16,16 @@ import type { ProjectStatus } from "@/models/itsm-types";
  * array não sobrevive a banco relacional sem virar linha.
  */
 
+/**
+ * O status vem de `itsm-types` e é reexportado aqui.
+ *
+ * Já esteve declarado nos dois lugares, e a cópia daqui ficava para
+ * trás a cada valor novo — o `backlog` quebrou o build três vezes por
+ * causa disso. Uma fonte só, reexportada para quem já importava do
+ * repositório não precisar mudar.
+ */
+export type { ProjectStatus };
+
 export type QuadroTarefa = "backlog" | "todo" | "doing" | "done";
 export type NivelRisco = "alta" | "media" | "baixa";
 export type NivelImpacto = "alto" | "medio" | "baixo";
@@ -313,6 +323,11 @@ async function exigirAcessoRegistro(
  * Quem está no backlog fica de fora: aparece na tela própria, com a
  * ordem e a pontuação que só fazem sentido lá. Misturar os dois faria a
  * contagem de projetos crescer com o que ainda não foi decidido.
+ *
+ * A ordem é a da atenção que cada situação merece, não a alfabética:
+ * em execução primeiro, encerrados por último. Ordenar pelo texto do
+ * status colocava "cancelado" no topo, que é o oposto do que interessa
+ * a quem abre a tela.
  */
 export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComProgresso[]> {
   const f = filtroVisibilidadeProjetos(ctx);
@@ -354,7 +369,15 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
                     FROM projeto_atualizacoes GROUP BY projeto_id) u
               ON u.projeto_id = p.id
       WHERE p.status <> 'backlog' AND (${f.clausula})
-      ORDER BY p.status, p.fim`,
+      ORDER BY CASE p.status
+                 WHEN 'execucao' THEN 1
+                 WHEN 'planejamento' THEN 2
+                 WHEN 'paralisado' THEN 3
+                 WHEN 'concluido' THEN 4
+                 WHEN 'cancelado' THEN 5
+                 ELSE 6
+               END,
+               p.fim`,
     f.binds,
   );
 }
@@ -701,6 +724,119 @@ export async function atualizarProjeto(
   // Trocar o regime de dias muda a aritmética do cronograma inteiro: as
   // mesmas durações passam a cair em datas diferentes.
   if (d.usaDiasUteis !== undefined) await propagarCronograma(id);
+}
+
+/**
+ * O que impede um projeto de ser apagado.
+ *
+ * Vazio é vazio: sem tarefa, risco, ponto de atenção, acompanhamento ou
+ * baseline. Qualquer um desses é trabalho de alguém, e apagá-lo junto
+ * seria destruir registro sem aviso.
+ *
+ * A tarefa entra mesmo desativada. `ativo = 0` significa que ela saiu do
+ * cronograma, não que nunca existiu — e a baseline pode estar apontando
+ * para ela.
+ */
+export interface ImpedimentosExclusao {
+  tarefas: number;
+  riscos: number;
+  atencoes: number;
+  atualizacoes: number;
+  baselines: number;
+}
+
+export async function impedimentosDeExclusao(
+  ctx: ContextoUsuario,
+  projetoId: string,
+): Promise<ImpedimentosExclusao> {
+  await exigirLeituraProjeto(ctx, projetoId);
+
+  const r = await consultarUm<ImpedimentosExclusao>(
+    `SELECT (SELECT COUNT(*) FROM projeto_tarefas WHERE projeto_id = :id)::int AS tarefas,
+            (SELECT COUNT(*) FROM projeto_riscos WHERE projeto_id = :id)::int AS riscos,
+            (SELECT COUNT(*) FROM projeto_atencoes WHERE projeto_id = :id)::int AS atencoes,
+            (SELECT COUNT(*) FROM projeto_atualizacoes WHERE projeto_id = :id)::int AS atualizacoes,
+            (SELECT COUNT(*) FROM projeto_baselines WHERE projeto_id = :id)::int AS baselines`,
+    { id: projetoId },
+  );
+
+  return r ?? { tarefas: 0, riscos: 0, atencoes: 0, atualizacoes: 0, baselines: 0 };
+}
+
+/**
+ * Apaga o projeto, e só enquanto ele estiver vazio.
+ *
+ * Existe para o cadastro errado — nome trocado, duplicado por clique
+ * duplo, projeto que nasceu por engano. É a janela em que ninguém
+ * perdeu nada ao apagar.
+ *
+ * Assim que houver tarefa, risco, decisão ou acompanhamento, o caminho
+ * passa a ser cancelar: aquilo é registro do que aconteceu, e um
+ * projeto que sumiu do banco deixa quem procura sem resposta. Foi por
+ * isso que `excluirTarefa` também nunca apagou de verdade.
+ *
+ * O DELETE é real, não desativação. Projeto vazio não tem histórico a
+ * preservar, e mantê-lo como "inativo" só encheria a lista de fantasmas
+ * que ninguém sabe por que estão ali.
+ */
+export async function excluirProjeto(ctx: ContextoUsuario, id: string): Promise<void> {
+  await exigirAcessoProjeto(ctx, id, "excluir este projeto");
+
+  const imp = await impedimentosDeExclusao(ctx, id);
+  const total = imp.tarefas + imp.riscos + imp.atencoes + imp.atualizacoes + imp.baselines;
+
+  if (total > 0) {
+    // A mensagem diz o que impede, não só que impediu: sem isso a pessoa
+    // fica procurando o que apagar sem saber onde.
+    const partes = [
+      imp.tarefas ? `${imp.tarefas} tarefa(s)` : "",
+      imp.riscos ? `${imp.riscos} risco(s)` : "",
+      imp.atencoes ? `${imp.atencoes} ponto(s) de atenção` : "",
+      imp.atualizacoes ? `${imp.atualizacoes} acompanhamento(s)` : "",
+      imp.baselines ? `${imp.baselines} baseline(s)` : "",
+    ].filter(Boolean);
+
+    throw new ErroDominio(
+      `Este projeto já tem ${partes.join(", ")}. Projeto com histórico não é apagado: ` +
+        `mude a situação para Cancelado.`,
+    );
+  }
+
+  const n = await executar(`DELETE FROM projetos WHERE id = :id`, { id });
+  if (n === 0) throw new ErroDominio(`Projeto ${id} não encontrado`);
+}
+
+/**
+ * Muda só a situação do projeto.
+ *
+ * A situação é o campo que mais muda depois que o projeto existe —
+ * entrou em execução, paralisou, encerrou —, e obrigar a abrir o
+ * formulário inteiro para trocar um seletor fazia com que ninguém
+ * mantivesse o status em dia. Sem status confiável, o semáforo do
+ * portfólio mente.
+ *
+ * Voltar para `backlog` não passa por aqui: tem regra própria em
+ * `devolverAoBacklog`, que recusa projeto com cronograma e recalcula a
+ * posição na fila.
+ */
+export async function definirStatusProjeto(
+  ctx: ContextoUsuario,
+  id: string,
+  status: ProjectStatus,
+): Promise<void> {
+  await exigirAcessoProjeto(ctx, id, "alterar a situação deste projeto");
+
+  if (status === "backlog") {
+    throw new ErroDominio(
+      "Para devolver ao backlog, use a ação própria: ela recoloca o projeto na fila de priorização.",
+    );
+  }
+
+  const n = await executar(
+    `UPDATE projetos SET status = :status, atualizado_em = LOCALTIMESTAMP WHERE id = :id`,
+    { id, status },
+  );
+  if (n === 0) throw new ErroDominio(`Projeto ${id} não encontrado`);
 }
 
 export interface DadosTarefa {
