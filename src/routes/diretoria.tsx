@@ -94,8 +94,8 @@ function Kpi({
 }: {
   label: string;
   value: string | number;
-  hint?: string;
-  tone?: string;
+  hint?: string | undefined;
+  tone?: string | undefined;
 }) {
   return (
     <div className="panel p-4">
@@ -223,20 +223,21 @@ function Diretoria() {
   const mesAtual = d?.carteira.find((m) => m.atual)?.rotulo;
 
   /**
-   * Distribuição do portfólio, já na ordem de atenção.
+   * Distribuição do portfólio, na ordem de atenção.
    *
-   * "Parados" agrupa paralisados; o backend não separa cancelado de
-   * paralisado neste agregado. Enquanto for assim, o gráfico mostra o
-   * que ele tem — inventar uma fatia de cancelados a partir de outro
-   * número daria um total que não fecha.
+   * Paralisado e cancelado aparecem separados: um pode voltar, o outro
+   * acabou, e juntá-los escondia quanto da carteira simplesmente morreu.
+   * O backlog entra no fim, com cor apagada, porque ainda não é carteira.
    */
   const distribuicao = useMemo(() => {
     if (!d) return [];
     return [
       { situacao: "Execução", total: d.projetos.emExecucao, cor: "var(--chart-2)" },
       { situacao: "Planejamento", total: d.projetos.planejamento, cor: "var(--chart-1)" },
-      { situacao: "Parados", total: d.projetos.parados, cor: "var(--chart-3)" },
+      { situacao: "Paralisados", total: d.projetos.paralisados, cor: "var(--chart-3)" },
       { situacao: "Concluídos", total: d.projetos.concluidos, cor: "var(--chart-4)" },
+      { situacao: "Cancelados", total: d.projetos.cancelados, cor: "var(--destructive)" },
+      { situacao: "No backlog", total: d.projetos.backlog, cor: "var(--muted-foreground)" },
     ];
   }, [d]);
 
@@ -293,14 +294,24 @@ function Diretoria() {
 
             {/* --------------------------------------------------- projetos */}
             <TabsContent value="projetos" className="mt-4 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <Kpi label="Projetos cadastrados" value={d.projetos.total} />
+              {/* "Cadastrados" conta o que foi decidido. O backlog vem
+                  numa caixa própria: são perguntas diferentes, e somá-las
+                  faria a diretoria ler como compromisso o que ainda é
+                  fila de espera. */}
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <Kpi label="Projetos ativos" value={d.projetos.total} hint="sem contar o backlog" />
                 <Kpi label="Em execução" value={d.projetos.emExecucao} tone="text-primary" />
                 <Kpi label="Atrasados" value={d.projetos.atrasados} tone="text-destructive" />
                 <Kpi label="Concluídos" value={d.projetos.concluidos} tone="text-success" />
+                <Kpi
+                  label="Aguardando decisão"
+                  value={d.projetos.backlog}
+                  hint="no backlog, sem consumir capacidade"
+                  tone={d.projetos.backlog > 0 ? "text-warning" : undefined}
+                />
               </div>
 
-              {d.projetos.total === 0 ? (
+              {d.projetos.total === 0 && d.projetos.backlog === 0 ? (
                 <div className="panel p-5 text-sm text-muted-foreground">
                   <p className="font-medium text-foreground">Nenhum projeto cadastrado.</p>
                   <p className="mt-1">
@@ -319,7 +330,7 @@ function Diretoria() {
                   title="Distribuição do portfólio"
                   description="Projetos por situação, do que está andando para o que já encerrou."
                 >
-                  <div className="h-56">
+                  <div className="h-72">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={distribuicao} layout="vertical" margin={{ left: 24 }}>
                         <XAxis type="number" hide allowDecimals={false} />
@@ -511,8 +522,8 @@ function Diretoria() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={TODOS}>Todas</SelectItem>
-                      {ORDEM_STATUS.map((st) => (
+                      <SelectItem value={TODOS}>Ativos (sem backlog)</SelectItem>
+                      {[...ORDEM_STATUS, "backlog" as ProjectStatus].map((st) => (
                         <SelectItem key={st} value={st}>
                           {PROJECT_STATUS_LABEL[st]}
                         </SelectItem>
