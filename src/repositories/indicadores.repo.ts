@@ -41,6 +41,16 @@ export interface VolumeDia {
 
 const ABERTOS = `c.status NOT IN ('resolvido','fechado')`;
 
+/**
+ * Projeto que já foi decidido.
+ *
+ * O backlog é fila de priorização: contá-lo como projeto infla todo
+ * indicador de carteira com o que ninguém aprovou ainda, e a diretoria
+ * lê "23 projetos" quando 15 são ideias. Onde a contagem quer dizer
+ * "trabalho assumido", o backlog fica fora.
+ */
+const DECIDIDO = `status <> 'backlog'`;
+
 export async function resumoPainel(): Promise<ResumoPainel> {
   const [chamados, conhecimento, projetos] = await Promise.all([
     consultarUm<{
@@ -325,23 +335,41 @@ export const chamadosPorEquipe = (p: PeriodoFiltro = {}) =>
   agrupar("COALESCE(eq.nome, 'Sem equipe')", p);
 
 export interface MetricasProjetos {
+  /** Projetos decididos: não inclui o backlog. */
   total: number;
   emExecucao: number;
   planejamento: number;
-  parados: number;
+  paralisados: number;
+  cancelados: number;
   concluidos: number;
   atrasados: number;
+  /** Fila de priorização. Contado à parte, nunca somado ao total. */
+  backlog: number;
 }
 
+/**
+ * Números do portfólio.
+ *
+ * `total` conta só o que foi decidido. O backlog vem numa chave própria
+ * porque é outra pergunta — "quanto trabalho assumimos" e "quanto está
+ * esperando decisão" são grandezas diferentes, e somá-las produzia um
+ * número que a diretoria lia como compromisso.
+ *
+ * Cancelado saiu de "parados": paralisado é projeto que pode voltar,
+ * cancelado é projeto que acabou. Agrupá-los escondia quanto da carteira
+ * simplesmente morreu.
+ */
 export async function metricasProjetos(): Promise<MetricasProjetos> {
   const r = await consultarUm<MetricasProjetos>(
-    `SELECT COUNT(*) AS total,
+    `SELECT COUNT(CASE WHEN ${DECIDIDO} THEN 1 END) AS total,
             COUNT(CASE WHEN status = 'execucao' THEN 1 END) AS em_execucao,
             COUNT(CASE WHEN status = 'planejamento' THEN 1 END) AS planejamento,
-            COUNT(CASE WHEN status IN ('paralisado','cancelado') THEN 1 END) AS parados,
+            COUNT(CASE WHEN status = 'paralisado' THEN 1 END) AS paralisados,
+            COUNT(CASE WHEN status = 'cancelado' THEN 1 END) AS cancelados,
             COUNT(CASE WHEN status = 'concluido' THEN 1 END) AS concluidos,
             COUNT(CASE WHEN status IN ('execucao','planejamento')
-                        AND fim < CURRENT_DATE THEN 1 END) AS atrasados
+                        AND fim < CURRENT_DATE THEN 1 END) AS atrasados,
+            COUNT(CASE WHEN status = 'backlog' THEN 1 END) AS backlog
        FROM projetos`,
   );
   return (
@@ -349,9 +377,11 @@ export async function metricasProjetos(): Promise<MetricasProjetos> {
       total: 0,
       emExecucao: 0,
       planejamento: 0,
-      parados: 0,
+      paralisados: 0,
+      cancelados: 0,
       concluidos: 0,
       atrasados: 0,
+      backlog: 0,
     }
   );
 }
@@ -388,6 +418,10 @@ interface LinhaMesCarteira extends Omit<MesCarteira, "atual"> {
  * Projeto ativo com `fim` no passado é contado no mês corrente: ele não
  * foi entregue, então somar no passado inflaria a barra de entregas de
  * um mês que não teve entrega nenhuma.
+ *
+ * Backlog não entra em "previstos": a data dele é o dia do cadastro, não
+ * uma promessa de entrega, e apareceria como um monte de entregas
+ * previstas para este mês.
  *
  * Cancelado usa `atualizado_em` por falta de coluna própria — para um
  * projeto cancelado, a última alteração é quase sempre o cancelamento.
@@ -437,6 +471,10 @@ export interface CargaGerente {
  *
  * Projeto sem gerente vira uma linha "Sem gerente" em vez de sumir: é
  * exatamente o caso que a diretoria precisa enxergar.
+ *
+ * Cancelado e backlog ficam de fora: a tabela responde "quanto cada um
+ * está carregando agora", e nem o que morreu nem o que ainda não
+ * começou pesam na agenda de ninguém.
  */
 export async function projetosPorGerente(): Promise<CargaGerente[]> {
   return consultar<CargaGerente>(
@@ -454,7 +492,7 @@ export async function projetosPorGerente(): Promise<CargaGerente[]> {
        LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
                     FROM projeto_atualizacoes GROUP BY projeto_id) a
               ON a.projeto_id = p.id
-      WHERE p.status <> 'cancelado'
+      WHERE p.status NOT IN ('cancelado', 'backlog')
       GROUP BY p.gerente_id, u.nome
       ORDER BY COUNT(*) DESC`,
   );
@@ -486,6 +524,14 @@ interface LinhaProjetoPortfolio extends Omit<ProjetoPortfolio, "atrasado"> {
 /**
  * Lista filtrável do portfólio, para a diretoria descer do número
  * agregado até o projeto que o explica.
+ *
+ * O backlog só aparece se pedido explicitamente pelo filtro de situação.
+ * Fora isso, a lista precisa bater com o total dos indicadores acima —
+ * uma tabela com mais linhas do que o número que ela detalha é o tipo de
+ * incoerência que faz a diretoria desconfiar do painel inteiro.
+ *
+ * A ordem é a da atenção que cada situação merece, não a alfabética:
+ * `ORDER BY p.status` colocava "cancelado" no topo.
  */
 export async function portfolio(f: FiltroPortfolio = {}): Promise<ProjetoPortfolio[]> {
   const cond: string[] = [];
@@ -498,6 +544,8 @@ export async function portfolio(f: FiltroPortfolio = {}): Promise<ProjetoPortfol
   if (f.status) {
     cond.push(`p.status = :status`);
     binds["status"] = f.status;
+  } else {
+    cond.push(`p.${DECIDIDO}`);
   }
   if (f.nome) {
     // ILIKE: busca por nome não deve depender de maiúscula.
@@ -523,7 +571,16 @@ export async function portfolio(f: FiltroPortfolio = {}): Promise<ProjetoPortfol
                     FROM projeto_atualizacoes GROUP BY projeto_id) a
               ON a.projeto_id = p.id
        ${where}
-      ORDER BY p.status, p.fim`,
+      ORDER BY CASE p.status
+                 WHEN 'execucao' THEN 1
+                 WHEN 'planejamento' THEN 2
+                 WHEN 'paralisado' THEN 3
+                 WHEN 'backlog' THEN 4
+                 WHEN 'concluido' THEN 5
+                 WHEN 'cancelado' THEN 6
+                 ELSE 7
+               END,
+               p.fim`,
     binds,
   );
   return linhas.map((l) => ({ ...l, atrasado: paraBool(l.atrasado) }));
