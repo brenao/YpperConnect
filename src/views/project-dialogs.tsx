@@ -23,7 +23,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
+import {
+  MOEDA_LABEL,
+  PROJECT_STATUS_LABEL,
+  formatarValor,
+  type Moeda,
+  type ProjectStatus,
+} from "@/models/itsm-types";
 import type { Projeto } from "@/repositories/projetos.repo";
 import {
   criarProjetoFn,
@@ -33,7 +39,12 @@ import {
 } from "@/services/projetos.functions";
 import { listarUsuariosFn } from "@/services/cadastros.functions";
 import { Switch } from "@/components/ui/switch";
-import { ESFORCOS, VALORES, calcularScore, type ModeloPriorizacao } from "@/services/priorizacao";
+import {
+  ESFORCOS,
+  VALORES,
+  calcularScore,
+  type ModeloPriorizacao,
+} from "@/services/priorizacao";
 import { cn } from "@/lib/utils";
 
 /** Radix não aceita SelectItem com value vazio. */
@@ -46,6 +57,12 @@ interface Form {
   gerenteId: string;
   status: ProjectStatus;
   usaDiasUteis: boolean;
+  /**
+   * Centavos, só dígitos. Guardar o valor formatado obrigaria a
+   * reinterpretar a máscara a cada tecla, e o cursor saltaria.
+   */
+  capex: string;
+  moeda: Moeda;
   areaDemandante: string;
   justificativa: string;
   valor: number | null;
@@ -61,6 +78,8 @@ const vazio = (status: ProjectStatus): Form => ({
   gerenteId: SEM,
   status,
   usaDiasUteis: true,
+  capex: "",
+  moeda: "BRL",
   areaDemandante: "",
   justificativa: "",
   valor: null,
@@ -115,6 +134,12 @@ export function ProjectDialog({
             gerenteId: project.gerenteId ?? SEM,
             status: project.status,
             usaDiasUteis: project.usaDiasUteis,
+            // Reais para centavos: 1500 gravado vira "150000" digitado.
+            capex:
+              project.capex === null
+                ? ""
+                : String(Math.round(Number(project.capex) * 100)),
+            moeda: project.moeda === "USD" ? "USD" : "BRL",
             areaDemandante: project.areaDemandante ?? "",
             justificativa: project.justificativa ?? "",
             valor: project.valor,
@@ -152,6 +177,39 @@ export function ProjectDialog({
   const salvando = criar.isPending || atualizar.isPending;
   const score = calcularScore(modelo, form);
 
+  /**
+   * Valor em unidades da moeda: os centavos digitados divididos por 100.
+   *
+   * Campo vazio devolve `null`, não zero — "não informado" e "sem
+   * desembolso" são afirmações diferentes.
+   */
+  const capexNumero = form.capex === "" ? null : Number(form.capex) / 100;
+
+  /**
+   * Máscara financeira: quem digita preenche os centavos primeiro.
+   *
+   * É como todo campo de valor se comporta: digitar 1, 5, 0, 0 mostra
+   * 15,00, e não 1500. Deixar o texto livre e formatar só na saída
+   * fazia a pessoa digitar "1.500" e descobrir depois que o sistema
+   * entendeu outra coisa.
+   *
+   * O teto de 15 dígitos existe porque a coluna é NUMERIC(14,2): sem
+   * ele, o banco recusaria o insert depois de a pessoa ter digitado.
+   */
+  function aoDigitarCapex(texto: string) {
+    const digitos = texto.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 15);
+    setForm((f) => ({ ...f, capex: digitos }));
+  }
+
+  /** O que aparece no campo: vazio continua vazio, para o placeholder. */
+  const capexExibido =
+    capexNumero === null
+      ? ""
+      : capexNumero.toLocaleString(form.moeda === "USD" ? "en-US" : "pt-BR", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+
   function salvar() {
     if (form.nome.trim().length < 3) {
       toast.error("Informe o nome do projeto.");
@@ -165,6 +223,10 @@ export function ProjectDialog({
       gerenteId: form.gerenteId === SEM ? null : form.gerenteId,
       status: form.status,
       usaDiasUteis: form.usaDiasUteis,
+      // Campo vazio é "não informado", não zero: zero significaria
+      // projeto aprovado sem desembolso, que é outra afirmação.
+      capex: capexNumero,
+      moeda: capexNumero === null ? null : form.moeda,
       areaDemandante: form.areaDemandante.trim() || null,
       justificativa: form.justificativa.trim() || null,
       valor: form.valor,
@@ -294,6 +356,42 @@ export function ProjectDialog({
             </p>
           </div>
 
+          {/* Investimento fica fora do bloco de priorização: é
+              informação de orçamento, não critério de fila. */}
+          <div className="grid gap-2">
+            <Label htmlFor="prj-capex">Investimento previsto (CAPEX)</Label>
+            <div className="flex gap-2">
+              <span className="relative flex-1">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                  {form.moeda === "USD" ? "US$" : "R$"}
+                </span>
+                <Input
+                  id="prj-capex"
+                  inputMode="numeric"
+                  value={capexExibido}
+                  onChange={(e) => aoDigitarCapex(e.target.value)}
+                  placeholder="0,00"
+                  className="pl-11 text-right font-mono"
+                />
+              </span>
+              <Select
+                value={form.moeda}
+                onValueChange={(v) => setForm({ ...form, moeda: v as Moeda })}
+              >
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(MOEDA_LABEL) as Moeda[]).map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {MOEDA_LABEL[m]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           {/* ------------------------------------------------ priorização */}
           <div className="grid gap-4 rounded-lg border border-border bg-surface p-3">
             <div className="grid gap-2">
@@ -387,7 +485,9 @@ export function ProjectDialog({
                       )}
                     >
                       <span className="block text-sm font-semibold">{e.rotulo}</span>
-                      <span className="block text-[11px] text-muted-foreground">{e.descricao}</span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        {e.descricao}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -439,8 +539,8 @@ export function ProjectDialog({
               </>
             ) : noBacklog ? (
               <>
-                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e aí
-                começa o cronograma.
+                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e
+                aí começa o cronograma.
               </>
             ) : (
               <>

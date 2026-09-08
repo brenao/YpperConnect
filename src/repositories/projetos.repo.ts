@@ -49,6 +49,12 @@ export interface Projeto {
    * domingo como dia de trabalho produz prazo que ninguém cumpre.
    */
   usaDiasUteis: boolean;
+  /**
+   * Investimento previsto e sua moeda. Nulos quando não informados —
+   * boa parte dos projetos é esforço interno sem desembolso.
+   */
+  capex: number | null;
+  moeda: string | null;
   /** Origem e priorização: preenchidos no backlog, mantidos depois. */
   areaDemandante: string | null;
   justificativa: string | null;
@@ -130,6 +136,7 @@ const SELECT_PROJETO = `
          p.gerente_id, ug.nome AS gerente_nome,
          p.status, p.inicio, p.fim,
          (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+         p.capex, p.moeda,
          p.area_demandante, p.justificativa,
          p.valor, p.esforco, p.alcance, p.confianca,
          p.criado_em, p.atualizado_em
@@ -338,6 +345,7 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
             p.gerente_id, ug.nome AS gerente_nome,
             p.status, p.inicio, p.fim,
             (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+            p.capex, p.moeda,
             p.area_demandante, p.justificativa,
             p.valor, p.esforco, p.alcance, p.confianca,
             p.criado_em, p.atualizado_em,
@@ -573,6 +581,8 @@ export interface DadosProjeto {
   gerenteId?: string | null | undefined;
   status?: ProjectStatus | undefined;
   usaDiasUteis?: boolean | undefined;
+  capex?: number | null | undefined;
+  moeda?: string | null | undefined;
   areaDemandante?: string | null | undefined;
   justificativa?: string | null | undefined;
   valor?: number | null | undefined;
@@ -652,12 +662,13 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
   await executar(
     `INSERT INTO projetos
        (id, nome, objetivo, sponsor_id, gerente_id, status, inicio, fim,
-        usa_dias_uteis, area_demandante, justificativa,
+        usa_dias_uteis, capex, moeda, area_demandante, justificativa,
         valor, esforco, alcance, confianca, ordem_backlog,
         criado_em, atualizado_em)
      VALUES
        (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status,
-        CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :area, :justificativa,
+        CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :capex, :moeda,
+        :area, :justificativa,
         :valor, :esforco, :alcance, :confianca,
         CASE WHEN :status = 'backlog'
              THEN (SELECT COALESCE(MAX(ordem_backlog), 0) + 1
@@ -674,6 +685,10 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
       gerenteId: d.gerenteId ?? ctx.id,
       status,
       usaDiasUteis: deBool(d.usaDiasUteis ?? true),
+      // Valor sem moeda o banco recusa: a moeda cai no real quando há
+      // número e ninguém escolheu, que é o caso da esmagadora maioria.
+      capex: d.capex ?? null,
+      moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
       area: d.areaDemandante?.trim() ?? null,
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,
@@ -698,6 +713,7 @@ export async function atualizarProjeto(
         SET nome = :nome, objetivo = :objetivo, sponsor_id = :sponsorId,
             gerente_id = :gerenteId, status = COALESCE(:status, status),
             usa_dias_uteis = COALESCE(:usaDiasUteis, usa_dias_uteis),
+            capex = :capex, moeda = :moeda,
             area_demandante = :area, justificativa = :justificativa,
             valor = :valor, esforco = :esforco,
             alcance = :alcance, confianca = :confianca,
@@ -711,6 +727,8 @@ export async function atualizarProjeto(
       gerenteId: d.gerenteId ?? null,
       status: d.status ?? null,
       usaDiasUteis: d.usaDiasUteis === undefined ? null : deBool(d.usaDiasUteis),
+      capex: d.capex ?? null,
+      moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
       area: d.areaDemandante?.trim() ?? null,
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,

@@ -31,6 +31,8 @@ export interface ProjetoBacklog {
   sponsorId: string | null;
   sponsorNome: string | null;
   usaDiasUteis: boolean;
+  capex: number | null;
+  moeda: string | null;
   valor: number | null;
   esforco: number | null;
   alcance: number | null;
@@ -49,6 +51,7 @@ const SELECT_BACKLOG = `
          p.gerente_id, ug.nome AS gerente_nome,
          p.sponsor_id, us.nome AS sponsor_nome,
          (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+         p.capex, p.moeda,
          p.valor, p.esforco, p.alcance, p.confianca, p.ordem_backlog,
          p.status, p.inicio, p.fim,
          p.criado_em, p.atualizado_em

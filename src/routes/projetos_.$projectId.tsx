@@ -10,7 +10,7 @@ import { TaskDialog } from "@/views/task-dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
+import { PROJECT_STATUS_LABEL, formatarValor, type ProjectStatus } from "@/models/itsm-types";
 import type { Tarefa, TarefaCalculada } from "@/repositories/projetos.repo";
 import {
   detalheProjetoFn,
@@ -324,7 +324,7 @@ function DetalheProjeto() {
           <ArrowLeft className="size-3.5" /> Portfólio
         </Link>
 
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div className="panel p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Situação</p>
             <span
@@ -411,6 +411,28 @@ function DetalheProjeto() {
               </span>
               <span className="text-muted-foreground">desde a última atualização</span>
             </p>
+          </div>
+
+          {/* Investimento aparece sempre, mesmo sem valor: a ausência é
+              informação — diz que o projeto é esforço interno, e não que
+              alguém esqueceu de preencher. */}
+          <div className="panel p-4">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Investimento</p>
+            {formatarValor(projeto.capex, projeto.moeda) ? (
+              <>
+                <p className="mt-1 font-mono text-2xl font-semibold">
+                  {formatarValor(projeto.capex, projeto.moeda)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  CAPEX previsto em {projeto.moeda === "USD" ? "dólar" : "real"}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="mt-1 font-mono text-2xl font-semibold text-muted-foreground">—</p>
+                <p className="mt-1 text-xs text-muted-foreground">Sem desembolso previsto</p>
+              </>
+            )}
           </div>
         </section>
 

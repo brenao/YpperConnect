@@ -180,6 +180,53 @@ export interface Project {
   baselines?: ProjectBaseline[] | undefined;
 }
 
+/**
+ * Moeda do investimento do projeto.
+ *
+ * Fica por projeto, não por instalação: a empresa contrata software em
+ * dólar e serviço em real no mesmo portfólio. Converter na entrada
+ * exigiria guardar a cotação do dia, senão o número muda de sentido
+ * quando alguém reabrir o cadastro meses depois.
+ */
+export type Moeda = "BRL" | "USD";
+
+export const MOEDA_LABEL: Record<Moeda, string> = {
+  BRL: "Real (R$)",
+  USD: "Dólar (US$)",
+};
+
+const MOEDA_LOCALE: Record<Moeda, string> = {
+  BRL: "pt-BR",
+  USD: "en-US",
+};
+
+/**
+ * Formata o investimento para exibição.
+ *
+ * Aceita string porque `NUMERIC` do Postgres pode chegar como texto,
+ * dependendo do parser configurado no driver — e um valor exibido como
+ * "NaN" num painel de diretoria é pior do que não exibir nada.
+ *
+ * Sem valor devolve `null`, não "R$ 0,00": zero é uma informação
+ * (projeto sem desembolso), e ausência é outra.
+ */
+export function formatarValor(
+  valor: number | string | null | undefined,
+  moeda: Moeda | string | null | undefined,
+): string | null {
+  if (valor === null || valor === undefined || valor === "") return null;
+
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return null;
+
+  const m: Moeda = moeda === "USD" ? "USD" : "BRL";
+  return numero.toLocaleString(MOEDA_LOCALE[m], {
+    style: "currency",
+    currency: m,
+    maximumFractionDigits: 2,
+  });
+}
+
 export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
   backlog: "Backlog",
   planejamento: "Planejamento",

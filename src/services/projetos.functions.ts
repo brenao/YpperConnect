@@ -127,6 +127,9 @@ const ProjetoSchema = z.object({
   gerenteId: z.string().nullable().optional(),
   status: z.enum(STATUS).optional(),
   usaDiasUteis: z.boolean().optional(),
+  /** Investimento previsto. Opcional; a moeda acompanha o valor. */
+  capex: z.number().min(0).max(999_999_999).nullable().optional(),
+  moeda: z.enum(["BRL", "USD"]).nullable().optional(),
   /** Origem e priorização. Mesmos campos no backlog e fora dele. */
   areaDemandante: z.string().max(160).nullable().optional(),
   justificativa: z.string().max(4000).nullable().optional(),
