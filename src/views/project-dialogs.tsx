@@ -39,12 +39,7 @@ import {
 } from "@/services/projetos.functions";
 import { listarUsuariosFn } from "@/services/cadastros.functions";
 import { Switch } from "@/components/ui/switch";
-import {
-  ESFORCOS,
-  VALORES,
-  calcularScore,
-  type ModeloPriorizacao,
-} from "@/services/priorizacao";
+import { ESFORCOS, VALORES, calcularScore, type ModeloPriorizacao } from "@/services/priorizacao";
 import { cn } from "@/lib/utils";
 
 /** Radix não aceita SelectItem com value vazio. */
@@ -135,10 +130,7 @@ export function ProjectDialog({
             status: project.status,
             usaDiasUteis: project.usaDiasUteis,
             // Reais para centavos: 1500 gravado vira "150000" digitado.
-            capex:
-              project.capex === null
-                ? ""
-                : String(Math.round(Number(project.capex) * 100)),
+            capex: project.capex === null ? "" : String(Math.round(Number(project.capex) * 100)),
             moeda: project.moeda === "USD" ? "USD" : "BRL",
             areaDemandante: project.areaDemandante ?? "",
             justificativa: project.justificativa ?? "",
@@ -197,7 +189,10 @@ export function ProjectDialog({
    * ele, o banco recusaria o insert depois de a pessoa ter digitado.
    */
   function aoDigitarCapex(texto: string) {
-    const digitos = texto.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 15);
+    const digitos = texto
+      .replace(/\D/g, "")
+      .replace(/^0+(?=\d)/, "")
+      .slice(0, 15);
     setForm((f) => ({ ...f, capex: digitos }));
   }
 
@@ -485,9 +480,7 @@ export function ProjectDialog({
                       )}
                     >
                       <span className="block text-sm font-semibold">{e.rotulo}</span>
-                      <span className="block text-[11px] text-muted-foreground">
-                        {e.descricao}
-                      </span>
+                      <span className="block text-[11px] text-muted-foreground">{e.descricao}</span>
                     </button>
                   ))}
                 </div>
@@ -539,8 +532,8 @@ export function ProjectDialog({
               </>
             ) : noBacklog ? (
               <>
-                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e
-                aí começa o cronograma.
+                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e aí
+                começa o cronograma.
               </>
             ) : (
               <>
