@@ -1,4 +1,5 @@
 import { request } from "node:https";
+import { constants as crypto_constants } from "node:crypto";
 import { URL } from "node:url";
 import { consultar, executar, emTransacao } from "@/integrations/postgres/client.server";
 
@@ -40,7 +41,7 @@ const TENTATIVAS = 3;
  * Em produção isto deve ficar em `true`.
  */
 function verificarTls(): boolean {
-  return process.env["GLPI_TLS_REJECT_UNAUTHORIZED"] !== "false";
+  return process.env.GLPI_TLS_REJECT_UNAUTHORIZED !== "false";
 }
 
 interface RespostaHttp {
@@ -69,6 +70,26 @@ function chamar(url: string, segredo: string): Promise<RespostaHttp> {
         headers: { "X-Service-Secret": segredo, Accept: "application/json" },
         rejectUnauthorized: verificarTls(),
         timeout: TIMEOUT_MS,
+        /**
+         * Permite a renegociação de TLS pedida pelo servidor.
+         *
+         * O Apache do GLPI pede renegociação logo após receber a
+         * requisição — comportamento de `SSLVerifyClient` configurado
+         * por diretório. O `curl` aceita e a resposta chega; o Node
+         * recusa por padrão, e a conexão fica pendurada até o timeout,
+         * sem erro nenhum. Foi exatamente esse o sintoma: TCP conecta,
+         * requisição sai, e nada volta em 10 segundos.
+         *
+         * `ALLOW_UNSAFE_LEGACY_RENEGOTIATION` tem esse nome porque
+         * renegociação iniciada pelo servidor já foi vetor de ataque
+         * (CVE-2009-3555). O risco real aqui é baixo: rede interna,
+         * host fixo, e a alternativa seria não ter a integração. A
+         * correção de verdade é do lado do GLPI — se a autenticação é
+         * o `X-Service-Secret`, a exigência de certificado de cliente
+         * naquele diretório provavelmente é resíduo de configuração.
+         */
+        secureOptions: crypto_constants.SSL_OP_LEGACY_SERVER_CONNECT |
+          crypto_constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION,
       },
       (res) => {
         let corpo = "";
@@ -100,8 +121,8 @@ class ErroConfiguracaoGlpi extends Error {}
  * espera crescente para não somar carga a um servidor em dificuldade.
  */
 export async function buscarUsuariosGlpi(): Promise<UsuarioGlpi[]> {
-  const url = process.env["GLPI_USUARIOS_URL"];
-  const segredo = process.env["GLPI_USUARIOS_SECRET"];
+  const url = process.env.GLPI_USUARIOS_URL;
+  const segredo = process.env.GLPI_USUARIOS_SECRET;
 
   if (!url || !segredo) {
     throw new ErroConfiguracaoGlpi(
@@ -296,9 +317,7 @@ export async function statusGlpi(): Promise<StatusGlpi> {
   );
 
   return {
-    configurado: Boolean(
-      process.env["GLPI_USUARIOS_URL"] && process.env["GLPI_USUARIOS_SECRET"],
-    ),
+    configurado: Boolean(process.env.GLPI_USUARIOS_URL && process.env.GLPI_USUARIOS_SECRET),
     ativos: r[0]?.ativos ?? 0,
     ultimaSincronizacao: r[0]?.ultima ?? null,
   };
