@@ -39,6 +39,12 @@ export const FEATURE_PROJETOS_PORTFOLIO = "projetos.portfolio";
 export interface ContextoUsuario {
   id: string;
   nome: string;
+  /**
+   * Vazio quando a pessoa veio do GLPI, que devolve só id, login e
+   * nome. Quem se autentica tem e-mail — vem do AD —, então na prática
+   * o contexto de quem está logado nunca fica sem ele. O tipo continua
+   * `string` para não obrigar toda tela a tratar nulo.
+   */
   email: string;
   admin: boolean;
   perfilId: string | null;
@@ -60,7 +66,8 @@ const LOGIN_DESENVOLVIMENTO = "breno";
 interface LinhaUsuario {
   id: string;
   nome: string;
-  email: string;
+  /** A coluna aceita nulo desde que os usuários do GLPI entraram. */
+  email: string | null;
   admin: number;
   perfilId: string | null;
   equipeId: string | null;
@@ -165,7 +172,7 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
   return {
     id: linha.id,
     nome: linha.nome,
-    email: linha.email,
+    email: linha.email ?? "",
     admin: linha.admin === 1,
     perfilId: linha.perfilId,
     equipeId: linha.equipeId,

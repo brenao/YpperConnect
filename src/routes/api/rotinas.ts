@@ -26,7 +26,36 @@ export const Route = createFileRoute("/api/rotinas")({
 
         const lembretes = await gerarLembretesProjeto();
         const fila = await processarFila();
-        return Response.json({ lembretes, fila });
+
+        /**
+         * Sincronização do GLPI.
+         *
+         * Isolada num try próprio de propósito: ela depende de um
+         * servidor de terceiro, e o GLPI fora do ar não pode impedir o
+         * envio dos lembretes — que já foram gerados acima e ficariam
+         * na fila até a próxima rodada.
+         *
+         * O erro vai na resposta, não engolido: é assim que o log do
+         * cron mostra que a integração está quebrada. Sem isso, uma
+         * credencial trocada passaria semanas despercebida.
+         *
+         * Sem as variáveis configuradas a rotina é pulada em silêncio —
+         * é o estado de quem ainda não recebeu o segredo, não uma falha.
+         */
+        let glpi: unknown = { pulado: "GLPI_USUARIOS_URL não configurada" };
+        if (process.env["GLPI_USUARIOS_URL"] && process.env["GLPI_USUARIOS_SECRET"]) {
+          try {
+            const { sincronizarUsuariosGlpi } = await import(
+              "@/integrations/glpi/usuarios.server"
+            );
+            glpi = await sincronizarUsuariosGlpi();
+          } catch (erro) {
+            glpi = { erro: erro instanceof Error ? erro.message : String(erro) };
+            console.error("[rotinas] sincronização do GLPI falhou:", erro);
+          }
+        }
+
+        return Response.json({ lembretes, fila, glpi });
       },
     },
   },
