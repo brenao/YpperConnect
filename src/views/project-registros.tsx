@@ -7,7 +7,6 @@
  */
 
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CalendarClock,
@@ -45,7 +44,7 @@ import {
 import { doInput, fmt, paraInput } from "@/lib/datas";
 import { cn } from "@/lib/utils";
 import type { Atencao, Atualizacao, Risco } from "@/repositories/projetos.repo";
-import { listarUsuariosFn } from "@/services/cadastros.functions";
+import { SeletorUsuario } from "@/views/seletor-usuario";
 import type {
   AtencaoInput,
   AtencaoUpdateInput,
@@ -681,12 +680,6 @@ function AtencaoDialog({
   const [decisao, setDecisao] = useState("");
   const [responsavel, setResponsavel] = useState(SEM);
 
-  const usuarios = useQuery({
-    queryKey: ["usuarios"],
-    queryFn: () => listarUsuariosFn(),
-    enabled: open,
-  });
-
   useEffect(() => {
     if (!open) return;
     setTitulo(atencao?.titulo ?? "");
@@ -753,22 +746,14 @@ function AtencaoDialog({
             <Textarea rows={2} value={decisao} onChange={(e) => setDecisao(e.target.value)} />
           </div>
           <div className="grid gap-2">
-            <Label>Quem decide</Label>
-            <Select value={responsavel} onValueChange={setResponsavel}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SEM}>Não definido</SelectItem>
-                {(usuarios.data ?? [])
-                  .filter((u) => u.ativo)
-                  .map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.nome}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor="atn-responsavel">Quem decide</Label>
+            <SeletorUsuario
+              id="atn-responsavel"
+              valor={responsavel === SEM ? null : responsavel}
+              onMudar={(v) => setResponsavel(v ?? SEM)}
+              placeholder="Não definido"
+              rotuloVazio="Não definido"
+            />
           </div>
         </div>
         <DialogFooter>

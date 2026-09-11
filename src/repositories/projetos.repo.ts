@@ -670,7 +670,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
         CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :capex, :moeda,
         :area, :justificativa,
         :valor, :esforco, :alcance, :confianca,
-        CASE WHEN :status = 'backlog'
+        CASE WHEN CAST(:status AS varchar) = 'backlog'
              THEN (SELECT COALESCE(MAX(ordem_backlog), 0) + 1
                      FROM projetos WHERE status = 'backlog')
              ELSE NULL END,
@@ -2319,9 +2319,10 @@ export async function atualizarVinculosTarefa(
     }
   });
 
-  // Vincular uma predecessora sem propagar deixava a sucessora na data
-  // antiga até alguém tocar em outra coisa.
-  if (d.predecessoras) await propagarCronograma(tarefa.projetoId);
+  // Trocar responsável muda a capacidade diária, e capacidade muda a
+  // duração em dias: sem propagar, a tarefa fica com as datas da
+  // jornada padrão até alguém reeditar outro campo.
+  if (d.predecessoras || d.responsaveis) await propagarCronograma(tarefa.projetoId);
 }
 
 /** Recusa recurso inexistente ou desativado antes de gravar o vínculo. */

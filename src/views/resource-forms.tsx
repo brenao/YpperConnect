@@ -24,7 +24,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Recurso } from "@/repositories/recursos.repo";
-import { listarEquipesFn, listarUsuariosFn } from "@/services/cadastros.functions";
+import { listarEquipesFn } from "@/services/cadastros.functions";
+import { SeletorUsuario } from "@/views/seletor-usuario";
 import {
   criarRecursoFn,
   atualizarRecursoFn,
@@ -79,11 +80,6 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<Form>(vazio);
 
-  const usuarios = useQuery({
-    queryKey: ["usuarios"],
-    queryFn: () => listarUsuariosFn(),
-    enabled: open,
-  });
   const equipes = useQuery({
     queryKey: ["equipes"],
     queryFn: () => listarEquipesFn(),
@@ -161,12 +157,14 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
     }
   }
 
-  /** Preencher o usuário sugere nome e equipe, se ainda estiverem vazios. */
-  function aoEscolherUsuario(v: string) {
-    const u = usuarios.data?.find((x) => x.id === v);
+  /**
+   * Escolher o usuário sugere nome e equipe, sem sobrescrever o que já
+   * foi digitado: quem ajustou o nome à mão não quer perdê-lo.
+   */
+  function aoEscolherUsuario(id: string | null, u?: { nome: string; equipeId?: string | null }) {
     setForm((f) => ({
       ...f,
-      usuarioId: v,
+      usuarioId: id ?? SEM,
       nome: f.nome.trim() === "" && u ? u.nome : f.nome,
       equipeId: f.equipeId === SEM && u?.equipeId ? u.equipeId : f.equipeId,
     }));
@@ -201,21 +199,12 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label>Vincular a um usuário</Label>
-            <Select value={form.usuarioId} onValueChange={aoEscolherUsuario}>
-              <SelectTrigger>
-                <SelectValue placeholder="Opcional" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SEM}>Sem vínculo (terceiro, consultoria)</SelectItem>
-                {(usuarios.data ?? [])
-                  .filter((u) => u.ativo)
-                  .map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.nome}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <SeletorUsuario
+              valor={form.usuarioId === SEM ? null : form.usuarioId}
+              onMudar={aoEscolherUsuario}
+              placeholder="Buscar pessoa..."
+              rotuloVazio="Sem vínculo (terceiro, consultoria)"
+            />
             {form.usuarioId === SEM ? (
               <p className="text-xs text-muted-foreground">
                 Sem vínculo, a pessoa não enxerga os projetos em que tem tarefa — é por ele que o

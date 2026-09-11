@@ -41,7 +41,7 @@ const TENTATIVAS = 3;
  * Em produção isto deve ficar em `true`.
  */
 function verificarTls(): boolean {
-  return process.env.GLPI_TLS_REJECT_UNAUTHORIZED !== "false";
+  return process.env["GLPI_TLS_REJECT_UNAUTHORIZED"] !== "false";
 }
 
 interface RespostaHttp {
@@ -121,8 +121,8 @@ class ErroConfiguracaoGlpi extends Error {}
  * espera crescente para não somar carga a um servidor em dificuldade.
  */
 export async function buscarUsuariosGlpi(): Promise<UsuarioGlpi[]> {
-  const url = process.env.GLPI_USUARIOS_URL;
-  const segredo = process.env.GLPI_USUARIOS_SECRET;
+  const url = process.env["GLPI_USUARIOS_URL"];
+  const segredo = process.env["GLPI_USUARIOS_SECRET"];
 
   if (!url || !segredo) {
     throw new ErroConfiguracaoGlpi(
@@ -185,6 +185,30 @@ export interface ResultadoSincronizacao {
 }
 
 /**
+ * Desfaz as entidades HTML que o GLPI devolve.
+ *
+ * A resposta traz `A &#38; N Rep. Ltda.` em vez de `A & N Rep. Ltda.` —
+ * o GLPI escapa o nome para uso em página, e o endpoint devolve assim
+ * mesmo. Sem desfazer, o `&#38;` vai para o banco e reaparece em toda
+ * tela que mostra o nome.
+ *
+ * Cobre as cinco entidades que o escape de HTML produz, mais a forma
+ * numérica. Não é um decodificador completo de HTML de propósito: o
+ * campo é um nome de pessoa, não um documento.
+ */
+function decodificarHtml(texto: string): string {
+  return texto
+    .replace(/&#(\d+);/g, (_, codigo: string) => String.fromCharCode(Number(codigo)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    // `&amp;` por último: antes dos outros, transformaria `&amp;lt;`
+    // em `<` em vez de `&lt;`.
+    .replace(/&amp;/g, "&");
+}
+
+/**
  * Compara logins ignorando domínio, como o `current-user.server` faz.
  *
  * O GLPI manda `paulort`; a tabela pode ter `ROSSET\paulort`, herdado de
@@ -235,7 +259,7 @@ export async function sincronizarUsuariosGlpi(): Promise<ResultadoSincronizacao>
 
   await emTransacao(async (tx) => {
     for (const u of usuarios) {
-      const nome = u.nome.trim() || u.login;
+      const nome = decodificarHtml(u.nome).trim() || u.login;
       const login = u.login.trim();
 
       // 1. Já conhecida pelo id do GLPI.
@@ -317,7 +341,7 @@ export async function statusGlpi(): Promise<StatusGlpi> {
   );
 
   return {
-    configurado: Boolean(process.env.GLPI_USUARIOS_URL && process.env.GLPI_USUARIOS_SECRET),
+    configurado: Boolean(process.env["GLPI_USUARIOS_URL"] && process.env["GLPI_USUARIOS_SECRET"]),
     ativos: r[0]?.ativos ?? 0,
     ultimaSincronizacao: r[0]?.ultima ?? null,
   };

@@ -91,7 +91,9 @@ if (semVinculo.rows.length === 0) {
 } else {
   console.log("  SEM usuario vinculado (nao verao os proprios projetos):");
   for (const r of semVinculo.rows) {
-    console.log(`    - ${r.nome}${r.papel ? ` (${r.papel})` : ""}${r.equipe ? ` · ${r.equipe}` : ""}`);
+    console.log(
+      `    - ${r.nome}${r.papel ? ` (${r.papel})` : ""}${r.equipe ? ` · ${r.equipe}` : ""}`,
+    );
   }
 }
 console.log();

@@ -23,10 +23,10 @@ const Email = ({ assunto, corpo, rodape }: Props) => {
   return (
     <Html lang="pt-BR" dir="ltr">
       <Head />
-      <Preview>{assunto ?? "Notificação YpperConnect"}</Preview>
+      <Preview>{assunto ?? "Notificação BeagleOne"}</Preview>
       <Body style={main}>
         <Container style={container}>
-          <Text style={brand}>YpperConnect</Text>
+          <Text style={brand}>BeagleOne</Text>
           <Heading style={h1}>{assunto ?? "Notificação"}</Heading>
           <Section>
             {linhas.length ? (
@@ -36,12 +36,12 @@ const Email = ({ assunto, corpo, rodape }: Props) => {
                 </Text>
               ))
             ) : (
-              <Text style={paragraph}>Há uma atualização registrada no YpperConnect.</Text>
+              <Text style={paragraph}>Há uma atualização registrada no BeagleOne.</Text>
             )}
           </Section>
           <Hr style={hr} />
           <Text style={footer}>
-            {rodape ?? "Mensagem automática do YpperConnect — Gestão de TI."}
+            {rodape ?? "Mensagem automática do BeagleOne — Gestão de TI."}
           </Text>
         </Container>
       </Body>
@@ -51,7 +51,7 @@ const Email = ({ assunto, corpo, rodape }: Props) => {
 
 export const template = {
   component: Email,
-  subject: (data: DadosTemplate) => (data["assunto"] as string) || "Notificação YpperConnect",
+  subject: (data: DadosTemplate) => (data["assunto"] as string) || "Notificação BeagleOne",
   displayName: "Notificação ITSM",
   previewData: {
     assunto: "[INC-1042] Status alterado para Em atendimento",

@@ -160,7 +160,7 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
     // cadastro — e quem lê o log precisa saber qual dos dois.
     throw new Error(
       username
-        ? `Usuário '${username}' autenticou mas não está cadastrado no YpperConnect. ` +
+        ? `Usuário '${username}' autenticou mas não está cadastrado no BeagleOne. ` +
             `Peça a um administrador para cadastrá-lo em Administração > Usuários.`
         : `Requisição sem token de autenticação. Em produção isso não deveria acontecer: ` +
             `verifique se a aplicação está atrás do OpenResty.`,

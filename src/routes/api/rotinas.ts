@@ -45,9 +45,7 @@ export const Route = createFileRoute("/api/rotinas")({
         let glpi: unknown = { pulado: "GLPI_USUARIOS_URL não configurada" };
         if (process.env["GLPI_USUARIOS_URL"] && process.env["GLPI_USUARIOS_SECRET"]) {
           try {
-            const { sincronizarUsuariosGlpi } = await import(
-              "@/integrations/glpi/usuarios.server"
-            );
+            const { sincronizarUsuariosGlpi } = await import("@/integrations/glpi/usuarios.server");
             glpi = await sincronizarUsuariosGlpi();
           } catch (erro) {
             glpi = { erro: erro instanceof Error ? erro.message : String(erro) };

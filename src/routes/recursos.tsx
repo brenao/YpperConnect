@@ -34,13 +34,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/recursos")({
   head: () => ({
     meta: [
-      { title: "Recursos e capacidade · YpperConnect" },
+      { title: "Recursos e capacidade · BeagleOne" },
       {
         name: "description",
         content:
           "Cadastro de recursos de TI com percentual de disponibilidade diária para projetos, alocação multiprojeto e alertas de sobrealocação.",
       },
-      { property: "og:title", content: "Recursos e capacidade · YpperConnect" },
+      { property: "og:title", content: "Recursos e capacidade · BeagleOne" },
       {
         property: "og:description",
         content:
@@ -55,6 +55,9 @@ export const Route = createFileRoute("/recursos")({
 
 /** Mesma chave que o repositório exige para escrever. */
 const FEATURE_RECURSO_EDITAR = "recurso.editar";
+
+/** Letras necessárias antes de sugerir nomes, como no seletor de pessoa. */
+const MIN_BUSCA = 2;
 
 function Recursos() {
   const qc = useQueryClient();
@@ -361,15 +364,25 @@ function DialogoAdicionarUsuarios() {
   });
 
   const usuarios = useMemo(() => q.data?.usuarios ?? [], [q.data]);
+
+  const termo = busca.trim().toLowerCase();
+  const digitouPouco = termo.length < MIN_BUSCA;
+
+  /**
+   * Só sugere depois de o usuário digitar.
+   *
+   * A lista vem do GLPI com mais de mil pessoas, e as primeiras em
+   * ordem alfabética são representantes comerciais — ninguém que se vá
+   * cadastrar como recurso. Abrir com elas só ensina a ignorar a lista.
+   */
   const visiveis = useMemo(() => {
-    const t = busca.trim().toLowerCase();
-    if (!t) return usuarios;
+    if (termo.length < MIN_BUSCA) return [];
     return usuarios.filter((u) =>
       `${u.nome} ${u.email} ${u.departamento ?? ""} ${u.equipeNome ?? ""}`
         .toLowerCase()
-        .includes(t),
+        .includes(termo),
     );
-  }, [usuarios, busca]);
+  }, [usuarios, termo]);
 
   function alternar(id: string) {
     setMarcados((atual) => {
@@ -424,18 +437,27 @@ function DialogoAdicionarUsuarios() {
             <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> Carregando...
             </p>
+          ) : usuarios.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              Todos os usuários ativos já são recursos.
+            </p>
+          ) : digitouPouco ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              Digite ao menos {MIN_BUSCA} letras para buscar entre {usuarios.length} pessoa(s).
+            </p>
           ) : visiveis.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              {usuarios.length === 0
-                ? "Todos os usuários ativos já são recursos."
-                : "Nenhum usuário corresponde à busca."}
+              Nenhum usuário corresponde à busca.
             </p>
           ) : (
             <ul className="max-h-64 space-y-1 overflow-y-auto pr-1">
               {visiveis.map((u) => (
                 <li key={u.id}>
                   <label className="flex cursor-pointer items-center gap-2 rounded-md p-2 hover:bg-secondary/40">
-                    <Checkbox checked={marcados.has(u.id)} onCheckedChange={() => alternar(u.id)} />
+                    <Checkbox
+                      checked={marcados.has(u.id)}
+                      onCheckedChange={() => alternar(u.id)}
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">{u.nome}</span>
                       <span className="block truncate text-xs text-muted-foreground">

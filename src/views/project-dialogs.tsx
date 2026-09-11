@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -37,9 +37,14 @@ import {
   type ProjetoInput,
   type ProjetoUpdateInput,
 } from "@/services/projetos.functions";
-import { listarUsuariosFn } from "@/services/cadastros.functions";
+import { SeletorUsuario } from "@/views/seletor-usuario";
 import { Switch } from "@/components/ui/switch";
-import { ESFORCOS, VALORES, calcularScore, type ModeloPriorizacao } from "@/services/priorizacao";
+import {
+  ESFORCOS,
+  VALORES,
+  calcularScore,
+  type ModeloPriorizacao,
+} from "@/services/priorizacao";
 import { cn } from "@/lib/utils";
 
 /** Radix não aceita SelectItem com value vazio. */
@@ -112,12 +117,6 @@ export function ProjectDialog({
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<Form>(() => vazio(statusInicial));
 
-  const usuarios = useQuery({
-    queryKey: ["usuarios"],
-    queryFn: () => listarUsuariosFn(),
-    enabled: open,
-  });
-
   useEffect(() => {
     if (!open) return;
     setForm(
@@ -130,7 +129,10 @@ export function ProjectDialog({
             status: project.status,
             usaDiasUteis: project.usaDiasUteis,
             // Reais para centavos: 1500 gravado vira "150000" digitado.
-            capex: project.capex === null ? "" : String(Math.round(Number(project.capex) * 100)),
+            capex:
+              project.capex === null
+                ? ""
+                : String(Math.round(Number(project.capex) * 100)),
             moeda: project.moeda === "USD" ? "USD" : "BRL",
             areaDemandante: project.areaDemandante ?? "",
             justificativa: project.justificativa ?? "",
@@ -189,10 +191,7 @@ export function ProjectDialog({
    * ele, o banco recusaria o insert depois de a pessoa ter digitado.
    */
   function aoDigitarCapex(texto: string) {
-    const digitos = texto
-      .replace(/\D/g, "")
-      .replace(/^0+(?=\d)/, "")
-      .slice(0, 15);
+    const digitos = texto.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 15);
     setForm((f) => ({ ...f, capex: digitos }));
   }
 
@@ -238,8 +237,6 @@ export function ProjectDialog({
     }
   }
 
-  const ativos = (usuarios.data ?? []).filter((u) => u.ativo);
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -249,7 +246,7 @@ export function ProjectDialog({
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{project ? "Editar projeto" : "Novo projeto"}</DialogTitle>
           <DialogDescription>
@@ -283,56 +280,40 @@ export function ProjectDialog({
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor="prj-area">Área demandante</Label>
-              <Input
-                id="prj-area"
-                maxLength={160}
-                value={form.areaDemandante}
-                onChange={(e) => setForm({ ...form, areaDemandante: e.target.value })}
-                placeholder="Ex.: Comercial"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Gerente do projeto</Label>
-              <Select
-                value={form.gerenteId}
-                onValueChange={(v) => setForm({ ...form, gerenteId: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={SEM}>Eu mesmo</SelectItem>
-                  {ativos.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.nome}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid gap-2">
+            <Label htmlFor="prj-area">Área demandante</Label>
+            <Input
+              id="prj-area"
+              maxLength={160}
+              value={form.areaDemandante}
+              onChange={(e) => setForm({ ...form, areaDemandante: e.target.value })}
+              placeholder="Ex.: Comercial"
+            />
+          </div>
+
+          {/* Gerente e patrocinador ocupam a linha inteira: a lista de
+              busca tem a largura do campo, e em meia coluna os nomes
+              apareciam cortados. */}
+          <div className="grid gap-2">
+            <Label htmlFor="prj-gerente">Gerente do projeto</Label>
+            <SeletorUsuario
+              id="prj-gerente"
+              valor={form.gerenteId === SEM ? null : form.gerenteId}
+              onMudar={(v) => setForm({ ...form, gerenteId: v ?? SEM })}
+              placeholder="Eu mesmo"
+              rotuloVazio="Eu mesmo"
+            />
           </div>
 
           <div className="grid gap-2">
-            <Label>Patrocinador</Label>
-            <Select
-              value={form.sponsorId}
-              onValueChange={(v) => setForm({ ...form, sponsorId: v })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SEM}>Não definido</SelectItem>
-                {ativos.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.nome}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor="prj-sponsor">Patrocinador</Label>
+            <SeletorUsuario
+              id="prj-sponsor"
+              valor={form.sponsorId === SEM ? null : form.sponsorId}
+              onMudar={(v) => setForm({ ...form, sponsorId: v ?? SEM })}
+              placeholder="Não definido"
+              rotuloVazio="Não definido"
+            />
           </div>
 
           <div className="grid gap-2">
@@ -385,6 +366,11 @@ export function ProjectDialog({
                 </SelectContent>
               </Select>
             </div>
+            <p className="text-xs text-muted-foreground">
+              {capexNumero === null
+                ? "Deixe em branco quando o projeto é esforço interno, sem desembolso."
+                : `${formatarValor(capexNumero, form.moeda)} — a moeda fica gravada junto, sem conversão.`}
+            </p>
           </div>
 
           {/* ------------------------------------------------ priorização */}
@@ -480,7 +466,9 @@ export function ProjectDialog({
                       )}
                     >
                       <span className="block text-sm font-semibold">{e.rotulo}</span>
-                      <span className="block text-[11px] text-muted-foreground">{e.descricao}</span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        {e.descricao}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -532,8 +520,8 @@ export function ProjectDialog({
               </>
             ) : noBacklog ? (
               <>
-                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e aí
-                começa o cronograma.
+                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e
+                aí começa o cronograma.
               </>
             ) : (
               <>

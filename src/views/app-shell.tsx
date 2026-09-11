@@ -16,7 +16,7 @@ import {
   LogOut,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import logo from "@/assets/ypperconnect-logo.png";
+import logo from "@/assets/beagleone-logo.png";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
@@ -92,16 +92,12 @@ export function AppShell({
   return (
     <div className="flex min-h-screen">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
-        <Link to="/" className="mb-8 flex items-center gap-3 px-2">
-          <span className="grid size-9 place-items-center rounded-lg bg-hero ring-1 ring-primary/40">
-            <img src={logo} alt="Logo YpperConnect" width={1024} height={1024} className="size-6" />
-          </span>
-          <span>
-            <span className="block text-sm font-semibold text-sidebar-foreground">
-              YpperConnect
-            </span>
-            <span className="block text-[11px] text-muted-foreground">Gestão de TI · ITIL</span>
-          </span>
+        {/* Sem divisória sob a marca: ela encontrava a borda da sidebar
+            num T e o canto competia com o logotipo. A própria borda do
+            <aside> já separa navegação de conteúdo, e o espaço abaixo
+            faz o trabalho que a linha fazia — com menos ruído. */}
+        <Link to="/" aria-label="BeagleOne" className="mb-8 flex justify-center">
+          <img src={logo} alt="BeagleOne" width={1240} height={1240} className="h-24 w-auto" />
         </Link>
 
         <nav className="flex flex-1 flex-col gap-1">
@@ -127,16 +123,25 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-4 border-b border-border bg-background/80 px-6 py-4 backdrop-blur">
-          <div className="min-w-0">
+        {/* O cabeçalho não quebra linha: telas com muitas ações — o
+            projeto tem meia dúzia — faziam o grupo da direita cair para
+            a segunda linha, e ali o justify-between deixava de empurrar
+            para a borda. Título espremível e grupo com ml-auto colam a
+            identidade na direita em qualquer largura. */}
+        <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-border bg-background/80 px-6 py-4 backdrop-blur">
+          <div className="min-w-0 flex-1">
             <h1 className="truncate text-lg font-semibold">{title}</h1>
             {subtitle ? <p className="truncate text-sm text-muted-foreground">{subtitle}</p> : null}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
             {actions}
-            {/* Identidade real, vinda do banco. Substituiu o RoleSwitch,
-                que trocava papel por clique e passou a conflitar com o
-                perfil do usuário autenticado. */}
+            <ThemeToggle />
+            <NewTicketDialog />
+
+            {/* Identidade e saída ficam na ponta direita, separadas das
+                ações da tela: são do usuário, não do que ele está vendo.
+                A divisória marca essa troca de assunto. */}
+            <span className="mx-1 h-6 w-px bg-border" aria-hidden="true" />
             {usuario.data ? (
               <span className="hidden text-right sm:block">
                 <span className="block text-xs font-medium leading-tight">{usuario.data.nome}</span>
@@ -146,8 +151,6 @@ export function AppShell({
               </span>
             ) : null}
             <BotaoSair />
-            <ThemeToggle />
-            <NewTicketDialog />
           </div>
         </header>
 

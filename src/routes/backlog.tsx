@@ -38,7 +38,7 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/backlog")({
   head: () => ({
     meta: [
-      { title: "Backlog de projetos · YpperConnect" },
+      { title: "Backlog de projetos · BeagleOne" },
       {
         name: "description",
         content:

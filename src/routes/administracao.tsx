@@ -69,13 +69,13 @@ import {
 export const Route = createFileRoute("/administracao")({
   head: () => ({
     meta: [
-      { title: "Administração · YpperConnect" },
+      { title: "Administração · BeagleOne" },
       {
         name: "description",
         content:
-          "Administração do YpperConnect: usuários, administradores, responsáveis por sistema, atribuição automática de chamados e notificações por e-mail.",
+          "Administração do BeagleOne: usuários, administradores, responsáveis por sistema, atribuição automática de chamados e notificações por e-mail.",
       },
-      { property: "og:title", content: "Administração · YpperConnect" },
+      { property: "og:title", content: "Administração · BeagleOne" },
       {
         property: "og:description",
         content: "Usuários, administradores, responsáveis por sistema e notificações.",
