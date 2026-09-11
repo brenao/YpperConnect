@@ -42,7 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CRITICALITY_LABEL, type SystemCriticality } from "@/models/itsm-types";
 import type { Sistema } from "@/repositories/catalogo.repo";
 import type { Usuario } from "@/repositories/usuarios.repo";
-import { Paginacao, paginar } from "@/views/paginacao";
+import { Paginacao, usePaginacao } from "@/views/paginacao";
 import {
   usuarioAtualFn,
   listarUsuariosFn,
@@ -572,7 +572,6 @@ function Administracao() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const [mostrarInativos, setMostrarInativos] = useState(false);
-  const [paginaUsuarios, setPaginaUsuarios] = useState(1);
 
   const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
   const usuariosQuery = useQuery({ queryKey: ["usuarios"], queryFn: () => listarUsuariosFn() });
@@ -667,12 +666,6 @@ function Administracao() {
     [sistemas, mostrarInativos],
   );
 
-  // Buscar ou alternar inativos redefine o conjunto: continuar na página
-  // 7 mostraria o meio de uma lista que a pessoa acabou de trocar.
-  useEffect(() => {
-    setPaginaUsuarios(1);
-  }, [busca, mostrarInativos]);
-
   /**
    * Só as linhas da página vão para o DOM.
    *
@@ -680,8 +673,11 @@ function Administracao() {
    * base do GLPI inteira na tela eram mais de mil diálogos instanciados
    * de uma vez — o custo que travava a aba, e que não aparecia enquanto
    * o cadastro tinha algumas dezenas de pessoas.
+   *
+   * A chave junta os filtros: quando qualquer um muda, a paginação
+   * volta à primeira página.
    */
-  const paginaDeUsuarios = paginar(usuariosFiltrados, paginaUsuarios);
+  const paginaDeUsuarios = usePaginacao(usuariosFiltrados, `${busca}|${mostrarInativos}`);
 
   const carregando = usuariosQuery.isPending || sistemasQuery.isPending;
 
@@ -772,6 +768,8 @@ function Administracao() {
             </div>
 
             <div className="panel overflow-hidden">
+              <Paginacao {...paginaDeUsuarios.controles} rotulo="usuários" posicao="topo" />
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -863,15 +861,7 @@ function Administracao() {
                 </table>
               </div>
 
-              <Paginacao
-                pagina={paginaDeUsuarios.paginaAtual}
-                totalPaginas={paginaDeUsuarios.totalPaginas}
-                total={usuariosFiltrados.length}
-                primeiro={paginaDeUsuarios.primeiro}
-                ultimo={paginaDeUsuarios.ultimo}
-                rotulo="usuários"
-                onMudar={setPaginaUsuarios}
-              />
+              <Paginacao {...paginaDeUsuarios.controles} rotulo="usuários" />
             </div>
           </TabsContent>
 

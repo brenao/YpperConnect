@@ -29,7 +29,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { APP_FEATURES, APP_MODULES } from "@/models/itsm-types";
-import { Paginacao, paginar } from "@/views/paginacao";
+import { Paginacao, usePaginacao } from "@/views/paginacao";
 import {
   listarPerfisFn,
   listarUsuariosFn,
@@ -75,7 +75,6 @@ function Permissoes() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string>("");
   const [busca, setBusca] = useState("");
-  const [paginaUsuarios, setPaginaUsuarios] = useState(1);
 
   // Rascunho local: as permissões só vão ao banco quando o admin salva.
   // Gravar a cada clique geraria dezenas de transações e deixaria o
@@ -207,19 +206,16 @@ function Permissoes() {
     );
   }, [usuarios, busca]);
 
-  // Buscar redefine o conjunto: voltar ao começo é o que a pessoa espera.
-  useEffect(() => {
-    setPaginaUsuarios(1);
-  }, [busca]);
-
   /**
    * Só as linhas da página vão para o DOM.
    *
    * Cada linha tem um Select do Radix com a lista de perfis. Com os
    * mais de mil usuários vindos do GLPI, eram mil seletores montados
    * antes de a seção aparecer — e a tela inteira esperava por isso.
+   *
+   * A busca é a chave do conjunto: ao mudar, a paginação recomeça.
    */
-  const paginaDeUsuarios = paginar(usuariosFiltrados, paginaUsuarios);
+  const paginaDeUsuarios = usePaginacao(usuariosFiltrados, busca);
 
   const contagem = useMemo(() => {
     const map = new Map<string, number>();
@@ -515,6 +511,8 @@ function Permissoes() {
               </div>
 
               <div className="mt-3">
+                <Paginacao {...paginaDeUsuarios.controles} rotulo="usuários" posicao="topo" />
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -575,15 +573,7 @@ function Permissoes() {
                   </table>
                 </div>
 
-                <Paginacao
-                  pagina={paginaDeUsuarios.paginaAtual}
-                  totalPaginas={paginaDeUsuarios.totalPaginas}
-                  total={usuariosFiltrados.length}
-                  primeiro={paginaDeUsuarios.primeiro}
-                  ultimo={paginaDeUsuarios.ultimo}
-                  rotulo="usuários"
-                  onMudar={setPaginaUsuarios}
-                />
+                <Paginacao {...paginaDeUsuarios.controles} rotulo="usuários" />
               </div>
             </section>
           </div>
