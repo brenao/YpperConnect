@@ -41,7 +41,58 @@ const USER_TYPES: RecordType[] = ["incidente", "requisicao", "melhoria", "tarefa
 /** Radix não aceita SelectItem com value vazio. */
 const SEM_SELECAO = "__nenhum__";
 
+/**
+ * Portal externo que assume a abertura de chamado, quando houver.
+ *
+ * Vem do ambiente e não do código porque o endereço é de um host
+ * interno, e o repositório tem um espelho público — URL de máquina da
+ * rede não se publica. Também deixa a troca de endereço ser
+ * configuração, não commit.
+ *
+ * Embutida no bundle em tempo de build, como toda variável `VITE_`:
+ * precisa existir onde o Jenkins roda o build, não no servidor que
+ * executa a aplicação. Sem ela, o formulário interno continua valendo.
+ *
+ * Colchetes por causa de noPropertyAccessFromIndexSignature.
+ */
+const URL_PORTAL_CHAMADOS = (import.meta.env["VITE_URL_ABRIR_CHAMADO"] ?? "").trim();
+
+/**
+ * Botão que leva ao portal externo, na mesma aba.
+ *
+ * Mesma aba de propósito: abrir chamado é a tarefa inteira da pessoa
+ * naquele momento, não uma consulta paralela. Nova aba deixaria duas
+ * janelas do mesmo assunto abertas e a de trás desatualizada.
+ */
+function BotaoPortalExterno() {
+  return (
+    <Button
+      size="sm"
+      className="gap-2"
+      onClick={() => {
+        window.location.href = URL_PORTAL_CHAMADOS;
+      }}
+    >
+      <Plus className="size-4" />
+      Abrir chamado
+    </Button>
+  );
+}
+
+/**
+ * Escolhe o destino do botão uma vez, no carregamento do módulo.
+ *
+ * A decisão fica aqui fora e não dentro do componente para que os hooks
+ * do formulário só existam quando o formulário existe: um `return`
+ * antecipado antes deles mudaria a quantidade de hooks entre um
+ * ambiente e outro.
+ */
 export function NewTicketDialog() {
+  if (URL_PORTAL_CHAMADOS !== "") return <BotaoPortalExterno />;
+  return <DialogoNovoChamado />;
+}
+
+function DialogoNovoChamado() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
 
