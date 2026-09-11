@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   BookOpen,
   Clock,
   Loader2,
+  Lock,
   Sparkles,
   TrendingUp,
   Users,
@@ -26,6 +27,23 @@ import { AppShell } from "@/views/app-shell";
 import { PriorityBadge, StatusBadge, TypeBadge } from "@/views/badges";
 import { TYPE_LABEL, type Priority, type RecordType, type TicketStatus } from "@/models/itsm-types";
 import { painelFn } from "@/services/indicadores.functions";
+import { minhasPermissoesFn } from "@/services/cadastros.functions";
+
+/**
+ * Portal externo de chamados. Mesma variável do botão "Abrir chamado".
+ *
+ * A presença dela é o que diz em qual instalação o sistema está
+ * rodando: com portal configurado, o atendimento acontece fora daqui e
+ * este produto é de projetos — a raiz deixa de ser painel de chamados e
+ * vira desvio para a tela de projetos que o usuário puder ver.
+ *
+ * Sem a variável, nada muda: o painel continua sendo a tela inicial.
+ */
+const PORTAL_CHAMADOS = (import.meta.env["VITE_URL_ABRIR_CHAMADO"] ?? "").trim();
+
+/** Chaves de `perfil_features` que dão entrada no módulo de projetos. */
+const FEATURE_DIRETORIA = "projetos.visao_diretoria";
+const FEATURE_PORTFOLIO = "projetos.portfolio";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -44,8 +62,65 @@ export const Route = createFileRoute("/")({
       },
     ],
   }),
-  component: Dashboard,
+  /**
+   * Decide a tela inicial antes de renderizar qualquer coisa.
+   *
+   * No `beforeLoad` e não dentro do componente: o redirecionamento
+   * acontece durante o SSR, sem o usuário ver o painel piscar antes de
+   * ser levado embora.
+   *
+   * Diretoria ganha de portfólio quando a pessoa tem as duas — é a
+   * visão mais ampla, e quem a tem consegue chegar aos projetos pelo
+   * menu de qualquer jeito.
+   */
+  beforeLoad: async () => {
+    if (PORTAL_CHAMADOS === "") return;
+
+    const p = await minhasPermissoesFn();
+    if (p.admin || p.funcionalidades.includes(FEATURE_DIRETORIA)) {
+      throw redirect({ to: "/diretoria" });
+    }
+    if (p.funcionalidades.includes(FEATURE_PORTFOLIO)) {
+      throw redirect({ to: "/projetos" });
+    }
+    // Sem nenhuma das duas, cai no componente abaixo, que explica.
+  },
+  component: PORTAL_CHAMADOS === "" ? Dashboard : SemAcessoProjetos,
 });
+
+/**
+ * Tela de quem entrou e não tem acesso a projetos.
+ *
+ * Só é alcançada quando o redirecionamento acima não encontrou destino.
+ * Não usa o tom de erro de propósito: não houve falha nem tentativa
+ * indevida — a pessoa apenas ainda não foi incluída, e o caminho para
+ * resolver é humano, não técnico.
+ */
+function SemAcessoProjetos() {
+  return (
+    <AppShell title="BeagleOne" subtitle="Gestão de projetos de TI">
+      <div className="panel mx-auto max-w-lg p-8 text-center">
+        <span className="mx-auto grid size-12 place-items-center rounded-full bg-secondary">
+          <Lock className="size-5 text-muted-foreground" />
+        </span>
+        <h2 className="mt-4 text-lg font-semibold">Você ainda não tem acesso aos projetos</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Seu perfil não inclui a visão de projetos. Peça a um administrador para liberar o acesso
+          em Perfis de acesso.
+        </p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          Para abrir ou acompanhar um chamado, use o portal de atendimento.
+        </p>
+        <a
+          href={PORTAL_CHAMADOS}
+          className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          Ir para o portal de chamados <ArrowUpRight className="size-4" />
+        </a>
+      </div>
+    </AppShell>
+  );
+}
 
 function Kpi({
   label,

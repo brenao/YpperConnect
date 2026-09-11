@@ -11,6 +11,11 @@ import { nitro } from "nitro/vite";
 const serverEnv = loadEnv(process.env["NODE_ENV"] ?? "development", process.cwd(), "");
 Object.assign(process.env, serverEnv);
 
+// Pasta deste arquivo. `import.meta.dirname` no lugar de `__dirname`
+// porque o Vite vai passar a carregar a config como ESM nativo, e ali
+// `__dirname` não existe — o aviso a cada build era o anúncio disso.
+const raiz = import.meta.dirname;
+
 // Prefixo de URL em que o app e servido. Padrao "/" (raiz).
 // Atras do nginx do rosset16 sob /ypper, o build recebe APP_BASE_PATH=/ypper/.
 // O Vite grava esse valor nas URLs dos assets e o expoe como
@@ -34,12 +39,34 @@ export default defineConfig({
     // alcanca o handler de assets estaticos, que ja foi gerado com o prefixo.
     nitro({ baseURL: basePath }),
   ],
+  /**
+   * Dependências que o otimizador descobria tarde demais.
+   *
+   * Sem declará-las, o Vite só as encontrava ao servir a primeira
+   * página: interrompia para reagrupar, invalidava os módulos no meio do
+   * caminho e o registro de server functions do plugin ficava vazio por
+   * um instante — que é o "Invalid server function ID" no console,
+   * sempre seguido de "optimized dependencies changed. reloading".
+   *
+   * Declaradas aqui, o reagrupamento acontece antes de a primeira
+   * requisição chegar. Não elimina o aviso para sempre: qualquer import
+   * novo que puxe uma dependência ainda não vista reabre a mesma janela.
+   * A correção definitiva está no plugin, não nesta configuração.
+   */
+  optimizeDeps: {
+    include: [
+      "@tanstack/router-core",
+      "@tanstack/router-core/isServer",
+      "@tanstack/router-core/ssr/client",
+      "seroval",
+    ],
+  },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
-      "entities/lib/decode.js": path.resolve(__dirname, "node_modules/entities/lib/decode.js"),
-      "entities/lib/encode.js": path.resolve(__dirname, "node_modules/entities/lib/encode.js"),
-      entities: path.resolve(__dirname, "node_modules/entities"),
+      "@": path.resolve(raiz, "./src"),
+      "entities/lib/decode.js": path.resolve(raiz, "node_modules/entities/lib/decode.js"),
+      "entities/lib/encode.js": path.resolve(raiz, "node_modules/entities/lib/encode.js"),
+      entities: path.resolve(raiz, "node_modules/entities"),
     },
     dedupe: ["react", "react-dom", "@tanstack/react-router"],
   },

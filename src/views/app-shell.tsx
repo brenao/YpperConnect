@@ -22,6 +22,15 @@ import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
 import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functions";
 
+/**
+ * Portal externo de chamados. Mesma variável do botão "Abrir chamado".
+ *
+ * Quando existe, o atendimento mora fora deste sistema: o item Chamados
+ * passa a ser uma saída para lá, e a Visão geral — que é um painel de
+ * chamados — deixa de fazer sentido no menu.
+ */
+const PORTAL_CHAMADOS = (import.meta.env["VITE_URL_ABRIR_CHAMADO"] ?? "").trim();
+
 const nav = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
   { to: "/chamados", label: "Chamados", icon: Ticket },
@@ -87,7 +96,12 @@ export function AppShell({
   // Enquanto carrega, mostra o menu inteiro: esconder e depois revelar
   // produz um piscar desagradável a cada navegação.
   const modulos = permissoes.data?.modulos;
-  const visibleNav = modulos ? nav.filter((item) => modulos.includes(item.to)) : nav;
+  const permitidos = modulos ? nav.filter((item) => modulos.includes(item.to)) : nav;
+
+  // Com portal externo, a Visão geral sai: ela é o painel de chamados, e
+  // a raiz virou apenas desvio para a tela de projetos.
+  const visibleNav =
+    PORTAL_CHAMADOS === "" ? permitidos : permitidos.filter((item) => item.to !== "/");
 
   return (
     <div className="flex min-h-screen">
@@ -103,17 +117,26 @@ export function AppShell({
         <nav className="flex flex-1 flex-col gap-1">
           {visibleNav.map((item) => {
             const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
+            const classe = cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+              active
+                ? "bg-sidebar-accent text-sidebar-primary"
+                : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+            );
+
+            // Chamados sai do sistema quando há portal: <a> e não <Link>,
+            // senão o router tentaria casar a URL com uma rota daqui.
+            if (item.to === "/chamados" && PORTAL_CHAMADOS !== "") {
+              return (
+                <a key={item.to} href={PORTAL_CHAMADOS} className={classe}>
+                  <item.icon className="size-4" />
+                  {item.label}
+                </a>
+              );
+            }
+
             return (
-              <Link
-                key={item.to}
-                to={item.to}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-primary"
-                    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-                )}
-              >
+              <Link key={item.to} to={item.to} className={classe}>
                 <item.icon className="size-4" />
                 {item.label}
               </Link>
@@ -155,15 +178,23 @@ export function AppShell({
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-border px-4 py-2 lg:hidden">
-          {visibleNav.map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              className="whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted-foreground"
-            >
-              {item.label}
-            </Link>
-          ))}
+          {visibleNav.map((item) => {
+            const classe = "whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted-foreground";
+
+            if (item.to === "/chamados" && PORTAL_CHAMADOS !== "") {
+              return (
+                <a key={item.to} href={PORTAL_CHAMADOS} className={classe}>
+                  {item.label}
+                </a>
+              );
+            }
+
+            return (
+              <Link key={item.to} to={item.to} className={classe}>
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
 
         <main className="flex-1 px-6 py-6">{children}</main>

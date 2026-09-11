@@ -29,6 +29,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { APP_FEATURES, APP_MODULES } from "@/models/itsm-types";
+import { Paginacao, paginar } from "@/views/paginacao";
 import {
   listarPerfisFn,
   listarUsuariosFn,
@@ -74,6 +75,7 @@ function Permissoes() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string>("");
   const [busca, setBusca] = useState("");
+  const [paginaUsuarios, setPaginaUsuarios] = useState(1);
 
   // Rascunho local: as permissões só vão ao banco quando o admin salva.
   // Gravar a cada clique geraria dezenas de transações e deixaria o
@@ -204,6 +206,20 @@ function Permissoes() {
       (u) => !q || u.nome.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
     );
   }, [usuarios, busca]);
+
+  // Buscar redefine o conjunto: voltar ao começo é o que a pessoa espera.
+  useEffect(() => {
+    setPaginaUsuarios(1);
+  }, [busca]);
+
+  /**
+   * Só as linhas da página vão para o DOM.
+   *
+   * Cada linha tem um Select do Radix com a lista de perfis. Com os
+   * mais de mil usuários vindos do GLPI, eram mil seletores montados
+   * antes de a seção aparecer — e a tela inteira esperava por isso.
+   */
+  const paginaDeUsuarios = paginar(usuariosFiltrados, paginaUsuarios);
 
   const contagem = useMemo(() => {
     const map = new Map<string, number>();
@@ -498,60 +514,76 @@ function Permissoes() {
                 </div>
               </div>
 
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="py-2 pr-3 font-medium">Usuário</th>
-                      <th className="py-2 pr-3 font-medium">Departamento</th>
-                      <th className="py-2 pr-3 font-medium">Perfil de acesso</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usuariosFiltrados.map((u) => (
-                      <tr key={u.id} className="border-b border-border/60">
-                        <td className="py-2 pr-3">
-                          <span className="block">{u.nome}</span>
-                          <span className="block text-[11px] text-muted-foreground">{u.email}</span>
-                        </td>
-                        <td className="py-2 pr-3 text-muted-foreground">{u.departamento ?? "—"}</td>
-                        <td className="py-2 pr-3">
-                          <Select
-                            value={u.perfilId ?? SEM_PERFIL}
-                            disabled={!isAdmin || atribuirPerfil.isPending}
-                            onValueChange={(v) =>
-                              atribuirPerfil.mutate({
-                                id: u.id,
-                                perfilId: v === SEM_PERFIL ? null : v,
-                              })
-                            }
-                          >
-                            <SelectTrigger className="w-60">
-                              <SelectValue placeholder="Sem perfil" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={SEM_PERFIL}>Sem perfil</SelectItem>
-                              {perfis
-                                .filter((p) => p.ativo)
-                                .map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>
-                                    {p.nome}
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
-                        </td>
+              <div className="mt-3">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="py-2 pr-3 font-medium">Usuário</th>
+                        <th className="py-2 pr-3 font-medium">Departamento</th>
+                        <th className="py-2 pr-3 font-medium">Perfil de acesso</th>
                       </tr>
-                    ))}
-                    {usuariosFiltrados.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="py-6 text-center text-muted-foreground">
-                          Nenhum usuário encontrado.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {paginaDeUsuarios.visiveis.map((u) => (
+                        <tr key={u.id} className="border-b border-border/60">
+                          <td className="py-2 pr-3">
+                            <span className="block">{u.nome}</span>
+                            <span className="block text-[11px] text-muted-foreground">
+                              {u.email}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-3 text-muted-foreground">
+                            {u.departamento ?? "—"}
+                          </td>
+                          <td className="py-2 pr-3">
+                            <Select
+                              value={u.perfilId ?? SEM_PERFIL}
+                              disabled={!isAdmin || atribuirPerfil.isPending}
+                              onValueChange={(v) =>
+                                atribuirPerfil.mutate({
+                                  id: u.id,
+                                  perfilId: v === SEM_PERFIL ? null : v,
+                                })
+                              }
+                            >
+                              <SelectTrigger className="w-60">
+                                <SelectValue placeholder="Sem perfil" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={SEM_PERFIL}>Sem perfil</SelectItem>
+                                {perfis
+                                  .filter((p) => p.ativo)
+                                  .map((p) => (
+                                    <SelectItem key={p.id} value={p.id}>
+                                      {p.nome}
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                        </tr>
+                      ))}
+                      {usuariosFiltrados.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="py-6 text-center text-muted-foreground">
+                            Nenhum usuário encontrado.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+
+                <Paginacao
+                  pagina={paginaDeUsuarios.paginaAtual}
+                  totalPaginas={paginaDeUsuarios.totalPaginas}
+                  total={usuariosFiltrados.length}
+                  primeiro={paginaDeUsuarios.primeiro}
+                  ultimo={paginaDeUsuarios.ultimo}
+                  rotulo="usuários"
+                  onMudar={setPaginaUsuarios}
+                />
               </div>
             </section>
           </div>

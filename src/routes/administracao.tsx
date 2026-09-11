@@ -42,6 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CRITICALITY_LABEL, type SystemCriticality } from "@/models/itsm-types";
 import type { Sistema } from "@/repositories/catalogo.repo";
 import type { Usuario } from "@/repositories/usuarios.repo";
+import { Paginacao, paginar } from "@/views/paginacao";
 import {
   usuarioAtualFn,
   listarUsuariosFn,
@@ -571,6 +572,7 @@ function Administracao() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const [mostrarInativos, setMostrarInativos] = useState(false);
+  const [paginaUsuarios, setPaginaUsuarios] = useState(1);
 
   const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
   const usuariosQuery = useQuery({ queryKey: ["usuarios"], queryFn: () => listarUsuariosFn() });
@@ -665,6 +667,22 @@ function Administracao() {
     [sistemas, mostrarInativos],
   );
 
+  // Buscar ou alternar inativos redefine o conjunto: continuar na página
+  // 7 mostraria o meio de uma lista que a pessoa acabou de trocar.
+  useEffect(() => {
+    setPaginaUsuarios(1);
+  }, [busca, mostrarInativos]);
+
+  /**
+   * Só as linhas da página vão para o DOM.
+   *
+   * Cada linha monta um UserDialog, que é um Dialog do Radix. Com a
+   * base do GLPI inteira na tela eram mais de mil diálogos instanciados
+   * de uma vez — o custo que travava a aba, e que não aparecia enquanto
+   * o cadastro tinha algumas dezenas de pessoas.
+   */
+  const paginaDeUsuarios = paginar(usuariosFiltrados, paginaUsuarios);
+
   const carregando = usuariosQuery.isPending || sistemasQuery.isPending;
 
   return (
@@ -753,93 +771,107 @@ function Administracao() {
               ) : null}
             </div>
 
-            <div className="panel overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-2 font-medium">Usuário</th>
-                    <th className="px-4 py-2 font-medium">Departamento</th>
-                    <th className="px-4 py-2 font-medium">Equipe</th>
-                    <th className="px-4 py-2 font-medium">Origem</th>
-                    <th className="px-4 py-2 font-medium">Situação</th>
-                    <th className="px-4 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {usuariosFiltrados.map((u) => (
-                    <tr
-                      key={u.id}
-                      className={`border-b border-border/60 ${u.ativo ? "" : "opacity-60"}`}
-                    >
-                      <td className="px-4 py-2">
-                        <span className="flex items-center gap-2">
-                          {u.nome}
-                          {u.admin ? (
-                            <Badge variant="outline" className="gap-1 text-[10px]">
-                              <ShieldCheck className="size-3" /> admin
-                            </Badge>
-                          ) : null}
-                        </span>
-                        <span className="block text-[11px] text-muted-foreground">{u.email}</span>
-                      </td>
-                      <td className="px-4 py-2 text-muted-foreground">{u.departamento ?? "—"}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{u.equipeNome ?? "—"}</td>
-                      <td className="px-4 py-2">
-                        <Badge variant="outline" className="text-[10px] uppercase">
-                          {u.origem}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-2">
-                        {u.ativo ? (
-                          <span className="text-success">Ativo</span>
-                        ) : (
-                          <span className="text-muted-foreground">Inativo</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2">
-                        {isAdmin ? (
-                          <span className="flex justify-end gap-1">
-                            <UserDialog
-                              user={u}
-                              trigger={
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7"
-                                  title="Editar"
-                                >
-                                  <Pencil className="size-3.5" />
-                                </Button>
-                              }
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-7"
-                              title={u.ativo ? "Desativar" : "Reativar"}
-                              disabled={alternarUsuario.isPending}
-                              onClick={() => alternarUsuario.mutate({ id: u.id, ativo: !u.ativo })}
-                            >
-                              {u.ativo ? (
-                                <EyeOff className="size-3.5 text-muted-foreground" />
-                              ) : (
-                                <Eye className="size-3.5 text-success" />
-                              )}
-                            </Button>
+            <div className="panel overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-4 py-2 font-medium">Usuário</th>
+                      <th className="px-4 py-2 font-medium">Departamento</th>
+                      <th className="px-4 py-2 font-medium">Equipe</th>
+                      <th className="px-4 py-2 font-medium">Origem</th>
+                      <th className="px-4 py-2 font-medium">Situação</th>
+                      <th className="px-4 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginaDeUsuarios.visiveis.map((u) => (
+                      <tr
+                        key={u.id}
+                        className={`border-b border-border/60 ${u.ativo ? "" : "opacity-60"}`}
+                      >
+                        <td className="px-4 py-2">
+                          <span className="flex items-center gap-2">
+                            {u.nome}
+                            {u.admin ? (
+                              <Badge variant="outline" className="gap-1 text-[10px]">
+                                <ShieldCheck className="size-3" /> admin
+                              </Badge>
+                            ) : null}
                           </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                  {usuariosFiltrados.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                        Nenhum usuário encontrado.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+                          <span className="block text-[11px] text-muted-foreground">{u.email}</span>
+                        </td>
+                        <td className="px-4 py-2 text-muted-foreground">{u.departamento ?? "—"}</td>
+                        <td className="px-4 py-2 text-muted-foreground">{u.equipeNome ?? "—"}</td>
+                        <td className="px-4 py-2">
+                          <Badge variant="outline" className="text-[10px] uppercase">
+                            {u.origem}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2">
+                          {u.ativo ? (
+                            <span className="text-success">Ativo</span>
+                          ) : (
+                            <span className="text-muted-foreground">Inativo</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          {isAdmin ? (
+                            <span className="flex justify-end gap-1">
+                              <UserDialog
+                                user={u}
+                                trigger={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7"
+                                    title="Editar"
+                                  >
+                                    <Pencil className="size-3.5" />
+                                  </Button>
+                                }
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7"
+                                title={u.ativo ? "Desativar" : "Reativar"}
+                                disabled={alternarUsuario.isPending}
+                                onClick={() =>
+                                  alternarUsuario.mutate({ id: u.id, ativo: !u.ativo })
+                                }
+                              >
+                                {u.ativo ? (
+                                  <EyeOff className="size-3.5 text-muted-foreground" />
+                                ) : (
+                                  <Eye className="size-3.5 text-success" />
+                                )}
+                              </Button>
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                    {usuariosFiltrados.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                          Nenhum usuário encontrado.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+
+              <Paginacao
+                pagina={paginaDeUsuarios.paginaAtual}
+                totalPaginas={paginaDeUsuarios.totalPaginas}
+                total={usuariosFiltrados.length}
+                primeiro={paginaDeUsuarios.primeiro}
+                ultimo={paginaDeUsuarios.ultimo}
+                rotulo="usuários"
+                onMudar={setPaginaUsuarios}
+              />
             </div>
           </TabsContent>
 
