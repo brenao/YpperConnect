@@ -1,14 +1,34 @@
-# Deploy — rosset29 (container) + rosset16 (borda)
+# Deploy — container (rosset29 / rosset17) + borda (rosset16 / rosset30)
 
-O app roda em um container Docker no **rosset29** e o OpenResty do **rosset16**
-o publica em `https://set-teste.rosset.com.br/ypper/`, atrás do login unificado.
+O app roda em um container Docker e o OpenResty da borda o publica atrás do
+login unificado. **O prefixo de URL é diferente em cada ambiente:**
+
+| Ambiente | Borda | Prefixo | Container | Script |
+| --- | --- | --- | --- | --- |
+| teste | rosset16 | `/ypper/` | `ypper-app` no rosset29 | `rosset29/atualizar-ypper.sh` |
+| produção | rosset30 | `/beagleone/` | `beagleone-app` no rosset17 | `rosset17/atualizar-beagleone.sh` |
 
 ```
-navegador → rosset16 (OpenResty, TLS + check-token.lua)
-              └─ location ^~ /ypper/ → http://rosset29.rosset.grp:8083
-                                          └─ container ypper-app (Node, SSR)
-                                                └─ Postgres 18 (rosset96, banco ypper)
+teste:    navegador → rosset16 (OpenResty, TLS + check-token.lua)
+                        └─ location ^~ /ypper/ → http://rosset29.rosset.grp:8083
+                                                   └─ container ypper-app (Node, SSR)
+                                                         └─ Postgres 18 (rosset96, banco ypper)
+
+produção: navegador → rosset30 (OpenResty, TLS + check-token.lua)
+                        └─ location ^~ /beagleone/ → http://rosset17.rosset.grp:8083
+                                                       └─ container beagleone-app (Node, SSR)
+                                                             └─ Postgres 18 (rosset97, banco ypper)
 ```
+
+### O prefixo tem de bater com a borda (2026-09-11)
+
+Em produção o produto virou **BeagleOne** e a borda do rosset30 passou a publicar
+sob `/beagleone/` (`comum/beagleone.conf`, aplicado no servidor e versionado em
+`rosset30/comum/beagleone.conf`). O container do rosset17, porém, tinha sido
+construído com `APP_BASE_PATH=/ypper/`. Não dá erro: o app sobe, a borda
+encaminha `/beagleone/`, o router não reconhece o caminho e o navegador abre
+`https://gerencial.rosset.com.br/ypper/beagleone`. A correção é reconstruir a
+imagem com o prefixo certo, que é o que `rosset17/atualizar-beagleone.sh` faz.
 
 O banco migrou do Oracle para o PostgreSQL em 2026-08-13. Teste é o
 **rosset96** (10.8.0.196); produção é o **rosset97**. Quem aponta para qual é
@@ -24,10 +44,12 @@ final roda `node .output/server/index.mjs`. É diferente do `frontend-auth`, que
 O driver `pg` é JavaScript puro, então a imagem **não** precisa de nenhuma
 biblioteca de cliente do banco instalada.
 
-## O prefixo `/ypper` é build-time
+## O prefixo é build-time
 
 O Vite grava o prefixo dentro das URLs dos assets. Por isso ele entra como
-`--build-arg APP_BASE_PATH=/ypper/`, não como variável de runtime.
+`--build-arg APP_BASE_PATH=/ypper/` (teste) ou `APP_BASE_PATH=/beagleone/`
+(produção), não como variável de runtime. Trocar o prefixo exige **rebuild**;
+`docker restart` não adianta.
 `src/router.tsx` lê o mesmo valor via `import.meta.env.BASE_URL`, para o
 prefixo não ficar declarado em dois lugares.
 
@@ -81,7 +103,25 @@ docker exec ypper-app sh -c 'printf %s "$PG_PASSWORD" | wc -c'
 E, depois de corrigir o `.env`, **recrie o container**: `--env-file` só é lido
 na criação, então `docker restart` mantém o valor velho.
 
-## Passos no rosset16
+## Passos no rosset17 (produção)
+
+Igual ao rosset29, trocando `/var/ypper` por `/var/beagleone` e o script por
+`rosset17/atualizar-beagleone.sh`. O `.env` aponta para o **rosset97**.
+
+```bash
+/var/beagleone/atualizar-beagleone.sh main
+curl -I http://localhost:8083/beagleone/     # esperado: 200
+curl -I http://localhost:8083/               # esperado: 307 para /beagleone/
+```
+
+## Passos no rosset30 (borda de produção)
+
+`rosset30/comum/beagleone.conf` já está aplicado (2026-09-11), incluído nos
+cinco arquivos de marca (`gerencialrosset`, `gerencialvalisere`, `gerencialfilo`,
+`gerencialdoutex` e `set.rosset`). Conferido pelo MCP: as diretivas do arquivo
+no servidor e as do repositório são iguais.
+
+## Passos no rosset16 (borda de teste)
 
 Copiar `rosset16/comum/ypper.conf` para `/var/nginx/data/conf.d/comum/` e
 acrescentar **uma linha** em cada um dos três arquivos de marca

@@ -35,7 +35,11 @@ RUN npm ci
 FROM base AS build
 
 # Prefixo de URL em que o app sera servido. "/" = raiz (padrao).
-# Para publicar sob https://set-teste.rosset.com.br/ypper, passar "/ypper/".
+# O prefixo e POR AMBIENTE: teste (rosset16 -> rosset29) publica sob /ypper/,
+# producao (rosset30 -> rosset17) publica sob /beagleone/. Quem decide e o
+# script de deploy de cada servidor (deploy/rosset29/atualizar-ypper.sh e
+# deploy/rosset17/atualizar-beagleone.sh). Prefixo errado nao da erro: o app
+# sobe e o navegador abre .../ypper/beagleone (2026-09-11).
 # E build-time de proposito: o Vite grava esse prefixo nas URLs dos assets.
 ARG APP_BASE_PATH=/
 ENV APP_BASE_PATH=${APP_BASE_PATH}
