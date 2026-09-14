@@ -7,7 +7,7 @@ import { createFileRoute } from "@tanstack/react-router";
  * uma máquina, não um usuário logado. Sem `CRON_TOKEN` configurado o
  * endpoint fica desligado — é preferível não rodar a rodar aberto.
  *
- * Uso: curl -X POST -H "x-cron-token: $CRON_TOKEN" https://.../ypper/api/rotinas
+ * Uso: curl -X POST -H "x-cron-token: $CRON_TOKEN" https://.../beagleone/api/rotinas
  */
 export const Route = createFileRoute("/api/rotinas")({
   server: {

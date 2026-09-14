@@ -108,7 +108,7 @@ function usuarioDoToken(token: string): string | null {
 
 /**
  * O token pode chegar por dois caminhos: o header `Authorization` que o
- * `ypper.conf` repassa, ou o cookie `Token` do domínio. O header vem
+ * `beagleone.conf` repassa, ou o cookie `Token` do domínio. O header vem
  * primeiro porque é o contrato explícito do proxy; o cookie é a rede de
  * segurança para o caso de a configuração mudar.
  */

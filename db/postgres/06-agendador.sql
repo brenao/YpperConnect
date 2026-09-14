@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS cron_config (
 
 -- TROQUE os dois valores antes de aplicar.
 INSERT INTO cron_config (chave, valor) VALUES
-  ('rotinas_url',   'http://localhost:8080/ypper/api/rotinas'),
+  ('rotinas_url',   'http://localhost:8080/beagleone/api/rotinas'),
   ('rotinas_token', 'TROQUE-ESTE-VALOR')
 ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor;
 

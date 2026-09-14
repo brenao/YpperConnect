@@ -51,10 +51,10 @@ const nav = [
  *
  * Quem autentica é o OpenResty; a aplicação não tem sessão própria para
  * limpar. Sair é derrubar o token no sistema de login — depois disso, a
- * próxima visita a /ypper é barrada pelo check-token.lua e redirecionada
+ * próxima visita a /beagleone é barrada pelo check-token.lua e redirecionada
  * para a tela de login.
  *
- * A URL é montada a partir da origem porque /vuelogin e /ypper são
+ * A URL é montada a partir da origem porque /vuelogin e /beagleone são
  * caminhos do mesmo domínio: assim teste e produção funcionam sem
  * configuração, e não há endereço fixo para alguém esquecer de trocar.
  */

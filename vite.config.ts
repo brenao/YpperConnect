@@ -17,8 +17,9 @@ Object.assign(process.env, serverEnv);
 const raiz = import.meta.dirname;
 
 // Prefixo de URL em que o app e servido. Padrao "/" (raiz).
-// Atras da borda o build recebe o prefixo do ambiente: /ypper/ em teste
-// (rosset16 -> rosset29) e /beagleone/ em producao (rosset30 -> rosset17).
+// Atras da borda o build recebe o prefixo do ambiente: /beagleone/ tanto em
+// teste (rosset16 -> rosset29) quanto em producao (rosset30 -> rosset17);
+// ate 2026-09-14 o teste era /ypper/.
 // O Vite grava esse valor nas URLs dos assets e o expoe como
 // import.meta.env.BASE_URL — que o router le em src/router.tsx, para o
 // prefixo nunca ficar declarado em dois lugares e sair de sincronia.

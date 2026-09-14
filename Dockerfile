@@ -35,14 +35,24 @@ RUN npm ci
 FROM base AS build
 
 # Prefixo de URL em que o app sera servido. "/" = raiz (padrao).
-# O prefixo e POR AMBIENTE: teste (rosset16 -> rosset29) publica sob /ypper/,
-# producao (rosset30 -> rosset17) publica sob /beagleone/. Quem decide e o
-# script de deploy de cada servidor (deploy/rosset29/atualizar-ypper.sh e
-# deploy/rosset17/atualizar-beagleone.sh). Prefixo errado nao da erro: o app
-# sobe e o navegador abre .../ypper/beagleone (2026-09-11).
+# O prefixo e decidido pelo script de deploy de cada servidor
+# (deploy/rosset29/atualizar-beagleone.sh e deploy/rosset17/atualizar-beagleone.sh).
+# Hoje os dois usam /beagleone/ (teste rosset16 -> rosset29, producao rosset30
+# -> rosset17); ate 2026-09-14 o teste era /ypper/. Prefixo diferente do da
+# borda nao da erro: o app sobe e o navegador abre .../ypper/beagleone (2026-09-11).
 # E build-time de proposito: o Vite grava esse prefixo nas URLs dos assets.
 ARG APP_BASE_PATH=/
 ENV APP_BASE_PATH=${APP_BASE_PATH}
+
+# URL do portal externo de abrir chamado (src/views/new-ticket-dialog.tsx,
+# app-shell.tsx, routes/index.tsx). Vazia = formulario interno.
+# Toda variavel VITE_* e build-time: o Vite grava o valor dentro do JavaScript
+# no `npm run build`. Colocar no .env do servidor NAO adianta -- o .env fica
+# fora do contexto de build (.dockerignore) e o --env-file do docker run chega
+# depois. Foi assim que a variavel ficou vazia no rosset29 em 2026-09-14.
+# Os scripts de deploy leem a linha do .env e repassam como --build-arg.
+ARG VITE_URL_ABRIR_CHAMADO=
+ENV VITE_URL_ABRIR_CHAMADO=${VITE_URL_ABRIR_CHAMADO}
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

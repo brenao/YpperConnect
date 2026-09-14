@@ -3,7 +3,7 @@ import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
 
 // BASE_URL vem do `base` do vite.config.ts (que le APP_BASE_PATH no build).
-// Vale "/" na raiz, "/ypper/" em teste (rosset16) e "/beagleone/" em producao
+// Vale "/" na raiz e "/beagleone/" atras da borda, em teste (rosset16) e em producao
 // (rosset30). Precisa bater com a location da borda: se ela publica sob
 // /beagleone/ e o build recebeu /ypper/, o router nao reconhece o caminho e
 // o navegador acaba em /ypper/beagleone (2026-09-11). O router quer o

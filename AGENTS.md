@@ -1,8 +1,9 @@
 # YpperConnect
 
 Ferramenta de ITSM e gestão de projetos da TI do Grupo Rosset. TanStack Start
-(SSR) + React 19 + PostgreSQL 18. Publicada sob `/ypper` no servidor de teste,
-atrás do OpenResty do rosset16.
+(SSR) + React 19 + PostgreSQL 18. Publicada sob `/beagleone` em teste (OpenResty
+do rosset16 → rosset29) e em produção (rosset30 → rosset17); o nome público é
+**BeagleOne**, o repositório manteve o nome antigo.
 
 Repositório `gruporosset/Rosset.Ypper.Tool`, branch de trabalho `develop`. O
 Jenkins publica no servidor de teste a cada commit, então `develop` precisa
@@ -68,7 +69,7 @@ tipo é um index signature.
 
 Ver `src/ARCHITECTURE.md` para as camadas, `src/routes/README.md` para as
 convenções de roteamento e `deploy/README.md` para o deploy e o prefixo
-`/ypper`.
+`/beagleone`.
 
 ## Estado atual
 
