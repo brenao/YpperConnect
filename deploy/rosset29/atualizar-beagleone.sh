@@ -27,7 +27,7 @@ BRANCH="${1:-main}"
 TAG=latest
 NOME=beagleone-app
 IMAGEM="gruporosset/beagleone-app:${TAG}"
-REPO=github.com/gruporosset/Rosset.Ypper.Tool.git
+REPO=github.com/gruporosset/Rosset.Beagleone.git
 
 # Porta publicada no host. E por ela que o OpenResty do rosset16 chega aqui
 # (conf.d/comum/beagleone.conf, proxy_pass http://rosset29.rosset.grp:8083).

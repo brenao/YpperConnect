@@ -5,7 +5,7 @@ Ferramenta de ITSM e gestão de projetos da TI do Grupo Rosset. TanStack Start
 do rosset16 → rosset29) e em produção (rosset30 → rosset17); o nome público é
 **BeagleOne**, o repositório manteve o nome antigo.
 
-Repositório `gruporosset/Rosset.Ypper.Tool`, branch de trabalho `develop`. O
+Repositório `gruporosset/Rosset.Beagleone` (ex-`Rosset.Ypper.Tool`, renomeado em 2026-09-14), branch de trabalho `develop`. O
 Jenkins publica no servidor de teste a cada commit, então `develop` precisa
 ficar sempre em estado funcional.
 
