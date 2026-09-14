@@ -96,7 +96,22 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "icon", href: "/beagleone-mark.svg", type: "image/svg+xml" },
+      /**
+       * O caminho acompanha o prefixo de publicação.
+       *
+       * Absoluto, o favicon apontava para a raiz do domínio e some em
+       * produção: a aplicação é servida sob /beagleone/, e o navegador
+       * procurava o arquivo um nível acima de onde ele está.
+       *
+       * BASE_URL é o mesmo valor que o router usa, vindo do `base` do
+       * vite.config.ts — e já termina em barra, por isso o nome do
+       * arquivo entra sem barra na frente.
+       */
+      {
+        rel: "icon",
+        href: `${import.meta.env.BASE_URL}beagleone-mark.svg`,
+        type: "image/svg+xml",
+      },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       {
         rel: "stylesheet",
