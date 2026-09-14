@@ -648,6 +648,13 @@ function Administracao() {
     onError: (e: Error) => toast.error("SMTP inacessível", { description: e.message }),
   });
 
+  /**
+   * Nome e e-mail entram com guarda de nulo.
+   *
+   * A sincronizacao do GLPI traz pessoas sem e-mail cadastrado, e o
+   * filtro so tocava nesses campos quando havia texto digitado — por
+   * isso a tela abria bem e quebrava na primeira tecla da busca.
+   */
   const usuariosFiltrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return usuarios
@@ -655,8 +662,8 @@ function Administracao() {
       .filter(
         (u) =>
           !q ||
-          u.nome.toLowerCase().includes(q) ||
-          u.email.toLowerCase().includes(q) ||
+          (u.nome ?? "").toLowerCase().includes(q) ||
+          (u.email ?? "").toLowerCase().includes(q) ||
           (u.departamento ?? "").toLowerCase().includes(q),
       );
   }, [usuarios, busca, mostrarInativos]);
