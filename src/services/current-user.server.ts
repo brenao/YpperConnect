@@ -133,15 +133,11 @@ function normalizarLogin(login: string): string {
   return semDominio.trim().toLowerCase();
 }
 
-export async function getUsuarioAtual(): Promise<ContextoUsuario> {
-  const token = tokenDaRequisicao();
-  const username = token ? usuarioDoToken(token) : null;
-  const login = username ?? LOGIN_DESENVOLVIMENTO;
-
+async function buscarLinha(login: string): Promise<LinhaUsuario | null> {
   // As funcionalidades vêm agregadas na mesma consulta: são lidas em
   // toda requisição, e uma segunda ida ao banco por causa de uma lista
   // de meia dúzia de chaves não se paga.
-  const linha = await consultarUm<LinhaUsuario>(
+  return consultarUm<LinhaUsuario>(
     `SELECT u.id, u.nome, u.email, u.admin, u.perfil_id, u.equipe_id,
             f.chaves AS funcionalidades
        FROM usuarios u
@@ -153,15 +149,93 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
         AND u.ativo = 1`,
     { login: normalizarLogin(login) },
   );
+}
+
+/**
+ * Cadastro automático no primeiro login — controle de repetição.
+ *
+ * Uma página dispara várias server functions ao mesmo tempo, e cada uma
+ * chama `getUsuarioAtual`. Para um login desconhecido, sem este mapa
+ * cada uma delas iria ao GLPI buscar a lista inteira e tentar inserir a
+ * mesma pessoa. O mapa faz todas esperarem a primeira.
+ *
+ * Quem o GLPI não conhece fica anotado por alguns minutos: senão cada
+ * clique dessa pessoa custaria uma chamada ao GLPI (até 3 tentativas de
+ * 10 s cada) para chegar à mesma resposta. Passado o prazo, tenta de
+ * novo — o cadastro no GLPI pode ter acontecido nesse meio-tempo.
+ */
+type ResultadoAutoCadastro = "cadastrado" | "nao_encontrado";
+const autoCadastroEmAndamento = new Map<string, Promise<ResultadoAutoCadastro>>();
+const naoEncontradosAte = new Map<string, number>();
+const MEMORIA_NAO_ENCONTRADO_MS = 5 * 60 * 1000;
+
+async function cadastrarPeloGlpi(login: string): Promise<ResultadoAutoCadastro> {
+  const chave = normalizarLogin(login);
+
+  const lembrado = naoEncontradosAte.get(chave);
+  if (lembrado !== undefined && lembrado > Date.now()) return "nao_encontrado";
+
+  let pendente = autoCadastroEmAndamento.get(chave);
+  if (!pendente) {
+    pendente = (async () => {
+      const { cadastrarUsuarioGlpiPorLogin } = await import("@/integrations/glpi/usuarios.server");
+      const feito = await cadastrarUsuarioGlpiPorLogin(login);
+      if (feito === "nao_encontrado") {
+        naoEncontradosAte.set(chave, Date.now() + MEMORIA_NAO_ENCONTRADO_MS);
+        return "nao_encontrado";
+      }
+      naoEncontradosAte.delete(chave);
+      console.info(
+        `[beagleone] usuário '${login}' cadastrado no primeiro login via GLPI (${feito}).`,
+      );
+      return "cadastrado";
+    })().finally(() => autoCadastroEmAndamento.delete(chave));
+    autoCadastroEmAndamento.set(chave, pendente);
+  }
+  return pendente;
+}
+
+export async function getUsuarioAtual(): Promise<ContextoUsuario> {
+  const token = tokenDaRequisicao();
+  const username = token ? usuarioDoToken(token) : null;
+  const login = username ?? LOGIN_DESENVOLVIMENTO;
+
+  let linha = await buscarLinha(login);
+
+  // Autenticou mas não está na tabela: antes de recusar, procura no
+  // GLPI e cadastra. É assim que ninguém precisa cadastrar a empresa
+  // inteira de uma vez — cada pessoa entra na primeira vez que loga.
+  // Só com token: sem token é ambiente mal configurado, não pessoa nova.
+  if (!linha && username) {
+    let resultado: ResultadoAutoCadastro;
+    try {
+      resultado = await cadastrarPeloGlpi(username);
+    } catch (erro) {
+      const motivo = erro instanceof Error ? erro.message : String(erro);
+      throw new Error(
+        `Usuário '${username}' autenticou mas não está cadastrado no BeagleOne, ` +
+          `e o cadastro automático falhou porque o GLPI não respondeu: ${motivo}. ` +
+          `Tente de novo em instantes ou peça a um administrador para cadastrá-lo.`,
+      );
+    }
+    if (resultado === "nao_encontrado") {
+      throw new Error(
+        `Usuário '${username}' autenticou mas não está cadastrado no BeagleOne ` +
+          `nem consta na lista de usuários do GLPI. ` +
+          `Peça a um administrador para cadastrá-lo em Administração > Usuários.`,
+      );
+    }
+    // Cadastrado (ou reativado). Se ainda assim não vier linha, a pessoa
+    // existe mas está inativa por decisão local — o GLPI não reativa
+    // cadastro manual, de propósito.
+    linha = await buscarLinha(login);
+  }
 
   if (!linha) {
-    // Mensagem distingue os dois casos: sem token é ambiente mal
-    // configurado; com token é pessoa que autenticou mas não tem
-    // cadastro — e quem lê o log precisa saber qual dos dois.
     throw new Error(
       username
-        ? `Usuário '${username}' autenticou mas não está cadastrado no BeagleOne. ` +
-            `Peça a um administrador para cadastrá-lo em Administração > Usuários.`
+        ? `Usuário '${username}' está cadastrado no BeagleOne, mas inativo. ` +
+            `Peça a um administrador para reativá-lo em Administração > Usuários.`
         : `Requisição sem token de autenticação. Em produção isso não deveria acontecer: ` +
             `verifique se a aplicação está atrás do OpenResty.`,
     );

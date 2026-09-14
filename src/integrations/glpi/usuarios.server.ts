@@ -2,6 +2,7 @@ import { request } from "node:https";
 import { constants as crypto_constants } from "node:crypto";
 import { URL } from "node:url";
 import { consultar, executar, emTransacao } from "@/integrations/postgres/client.server";
+import type { Transacao } from "@/integrations/postgres/client.server";
 
 /**
  * Lista de usuários do GLPI. SOMENTE SERVIDOR.
@@ -88,7 +89,8 @@ function chamar(url: string, segredo: string): Promise<RespostaHttp> {
          * o `X-Service-Secret`, a exigência de certificado de cliente
          * naquele diretório provavelmente é resíduo de configuração.
          */
-        secureOptions: crypto_constants.SSL_OP_LEGACY_SERVER_CONNECT |
+        secureOptions:
+          crypto_constants.SSL_OP_LEGACY_SERVER_CONNECT |
           crypto_constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION,
       },
       (res) => {
@@ -197,15 +199,17 @@ export interface ResultadoSincronizacao {
  * campo é um nome de pessoa, não um documento.
  */
 function decodificarHtml(texto: string): string {
-  return texto
-    .replace(/&#(\d+);/g, (_, codigo: string) => String.fromCharCode(Number(codigo)))
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    // `&amp;` por último: antes dos outros, transformaria `&amp;lt;`
-    // em `<` em vez de `&lt;`.
-    .replace(/&amp;/g, "&");
+  return (
+    texto
+      .replace(/&#(\d+);/g, (_, codigo: string) => String.fromCharCode(Number(codigo)))
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      // `&amp;` por último: antes dos outros, transformaria `&amp;lt;`
+      // em `<` em vez de `&lt;`.
+      .replace(/&amp;/g, "&")
+  );
 }
 
 /**
@@ -220,10 +224,12 @@ function normalizarLogin(login: string): string {
   return semDominio.trim().toLowerCase();
 }
 
+type Incorporacao = "atualizado" | "vinculado" | "criado";
+
 /**
- * Traz a lista do GLPI para a tabela `usuarios`.
+ * Leva UMA pessoa do GLPI para a tabela `usuarios`.
  *
- * A ordem de tentativa por pessoa não é acidental:
+ * A ordem de tentativa não é acidental:
  *
  *   1. Já sincronizada antes (casa por `glpi_user_id`): atualiza nome e
  *      login, porque o GLPI é a fonte para quem veio dele.
@@ -232,9 +238,97 @@ function normalizarLogin(login: string): string {
  *      equipe — esses são do cadastro local, e o GLPI não os conhece.
  *   3. Não existe: cria com origem 'glpi', sem perfil e sem e-mail.
  *
- * Quem sai da lista do GLPI é desativado, nunca apagado: `projetos` e
- * `recursos` apontam para essas linhas, e um DELETE quebraria o
- * histórico de quem foi gerente do quê.
+ * É o mesmo passo para a sincronização completa e para o cadastro
+ * automático no primeiro login (`cadastrarUsuarioGlpiPorLogin`): uma
+ * pessoa que entra pela porta do login tem de ficar igual à que entrou
+ * pela rotina, senão a rotina seguinte a "corrigiria".
+ */
+async function incorporarUsuarioGlpi(tx: Transacao, u: UsuarioGlpi): Promise<Incorporacao> {
+  const nome = decodificarHtml(u.nome).trim() || u.login;
+  const login = u.login.trim();
+
+  // 1. Já conhecida pelo id do GLPI.
+  const porId = await tx.executar(
+    `UPDATE usuarios
+        SET nome = :nome,
+            login = :login,
+            ativo = 1,
+            sincronizado_em = LOCALTIMESTAMP,
+            atualizado_em = LOCALTIMESTAMP
+      WHERE glpi_user_id = :glpiId AND origem = 'glpi'`,
+    { glpiId: u.id, nome, login },
+  );
+  if (porId > 0) return "atualizado";
+
+  // 2. Existe localmente pelo login: só anexa a chave do GLPI.
+  const porLogin = await tx.executar(
+    `UPDATE usuarios
+        SET glpi_user_id = :glpiId,
+            sincronizado_em = LOCALTIMESTAMP,
+            atualizado_em = LOCALTIMESTAMP
+      WHERE LOWER(REGEXP_REPLACE(login, '^.*\\\\', '')) = :loginNormalizado
+        AND glpi_user_id IS NULL`,
+    { glpiId: u.id, loginNormalizado: normalizarLogin(login) },
+  );
+  if (porLogin > 0) return "vinculado";
+
+  // 3. Nova. Sem perfil de acesso: existir para ser escolhida num
+  // seletor não é o mesmo que poder entrar no sistema.
+  await tx.executar(
+    `INSERT INTO usuarios
+       (id, glpi_user_id, nome, email, login, origem, admin, ativo,
+        sincronizado_em, criado_em, atualizado_em)
+     VALUES
+       (:id, :glpiId, :nome, NULL, :login, 'glpi', 0, 1,
+        LOCALTIMESTAMP, LOCALTIMESTAMP, LOCALTIMESTAMP)
+     ON CONFLICT (login) DO UPDATE
+        SET glpi_user_id = EXCLUDED.glpi_user_id,
+            sincronizado_em = LOCALTIMESTAMP`,
+    { id: crypto.randomUUID(), glpiId: u.id, nome, login },
+  );
+  return "criado";
+}
+
+/**
+ * Cadastra no primeiro login quem ainda não está em `usuarios`.
+ *
+ * Motivo: em produção o seed cria um único usuário, e a tela que
+ * cadastra os demais fica dentro do app. Sem isto, cada pessoa nova
+ * bateria em "autenticou mas não está cadastrado" até alguém com perfil
+ * de administrador entrar e cadastrá-la à mão (2026-09-14). Com isto, o
+ * GLPI é a lista de quem existe; o administrador só decide o PERFIL.
+ *
+ * Quem entra por aqui nasce exatamente como pela sincronização: origem
+ * 'glpi', sem perfil, sem e-mail. Ou seja, entra no sistema mas vê só o
+ * que "sem perfil" permite — a tela de "ainda não tem acesso" e o portal.
+ *
+ * O endpoint do GLPI não busca por login: devolve a lista inteira. Uma
+ * chamada por login desconhecido é aceitável porque só acontece na
+ * primeira entrada de cada pessoa; quem chama é que precisa evitar
+ * repetir para o mesmo login em sequência (ver `current-user.server`).
+ *
+ * `nao_encontrado` não é erro: a pessoa autenticou na rede, mas o GLPI
+ * não a conhece — o mesmo "não cadastrado" de antes, agora com o motivo
+ * certo. Falha de rede ou credencial no GLPI continua sendo exceção.
+ */
+export async function cadastrarUsuarioGlpiPorLogin(
+  login: string,
+): Promise<Incorporacao | "nao_encontrado"> {
+  const alvo = normalizarLogin(login);
+  const usuarios = await buscarUsuariosGlpi();
+  const pessoa = usuarios.find((u) => normalizarLogin(u.login) === alvo);
+  if (!pessoa) return "nao_encontrado";
+
+  return emTransacao((tx) => incorporarUsuarioGlpi(tx, pessoa));
+}
+
+/**
+ * Traz a lista do GLPI para a tabela `usuarios`.
+ *
+ * Por pessoa, aplica `incorporarUsuarioGlpi`. Quem sai da lista do GLPI
+ * é desativado, nunca apagado: `projetos` e `recursos` apontam para
+ * essas linhas, e um DELETE quebraria o histórico de quem foi gerente
+ * do quê.
  *
  * Tudo numa transação: uma falha no meio deixaria metade da empresa
  * sincronizada e a outra metade desativada.
@@ -259,55 +353,10 @@ export async function sincronizarUsuariosGlpi(): Promise<ResultadoSincronizacao>
 
   await emTransacao(async (tx) => {
     for (const u of usuarios) {
-      const nome = decodificarHtml(u.nome).trim() || u.login;
-      const login = u.login.trim();
-
-      // 1. Já conhecida pelo id do GLPI.
-      const porId = await tx.executar(
-        `UPDATE usuarios
-            SET nome = :nome,
-                login = :login,
-                ativo = 1,
-                sincronizado_em = LOCALTIMESTAMP,
-                atualizado_em = LOCALTIMESTAMP
-          WHERE glpi_user_id = :glpiId AND origem = 'glpi'`,
-        { glpiId: u.id, nome, login },
-      );
-      if (porId > 0) {
-        resultado.atualizados += 1;
-        continue;
-      }
-
-      // 2. Existe localmente pelo login: só anexa a chave do GLPI.
-      const porLogin = await tx.executar(
-        `UPDATE usuarios
-            SET glpi_user_id = :glpiId,
-                sincronizado_em = LOCALTIMESTAMP,
-                atualizado_em = LOCALTIMESTAMP
-          WHERE LOWER(REGEXP_REPLACE(login, '^.*\\\\', '')) = :loginNormalizado
-            AND glpi_user_id IS NULL`,
-        { glpiId: u.id, loginNormalizado: normalizarLogin(login) },
-      );
-      if (porLogin > 0) {
-        resultado.vinculados += 1;
-        continue;
-      }
-
-      // 3. Nova. Sem perfil de acesso: existir para ser escolhida num
-      // seletor não é o mesmo que poder entrar no sistema.
-      await tx.executar(
-        `INSERT INTO usuarios
-           (id, glpi_user_id, nome, email, login, origem, admin, ativo,
-            sincronizado_em, criado_em, atualizado_em)
-         VALUES
-           (:id, :glpiId, :nome, NULL, :login, 'glpi', 0, 1,
-            LOCALTIMESTAMP, LOCALTIMESTAMP, LOCALTIMESTAMP)
-         ON CONFLICT (login) DO UPDATE
-            SET glpi_user_id = EXCLUDED.glpi_user_id,
-                sincronizado_em = LOCALTIMESTAMP`,
-        { id: crypto.randomUUID(), glpiId: u.id, nome, login },
-      );
-      resultado.criados += 1;
+      const feito = await incorporarUsuarioGlpi(tx, u);
+      if (feito === "atualizado") resultado.atualizados += 1;
+      else if (feito === "vinculado") resultado.vinculados += 1;
+      else resultado.criados += 1;
     }
 
     // Saiu da lista do GLPI: desativa, mantendo a linha pelas FKs.
