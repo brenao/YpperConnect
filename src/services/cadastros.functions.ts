@@ -334,27 +334,48 @@ export const testarSmtpFn = createServerFn({ method: "POST" }).handler(async () 
 // ------------------------------------------------- permissões do usuário
 
 /**
+ * Menus que o administrador enxerga sempre, independentemente do perfil.
+ *
+ * São as duas telas que devolvem o controle: é por elas que se conserta
+ * um perfil mal configurado e se atribui perfil a alguém. Sem esta
+ * garantia, um administrador cujo perfil não inclui "Perfis de acesso"
+ * ficaria sem caminho para corrigir o próprio erro — e a única saída
+ * seria um UPDATE direto no banco.
+ *
+ * A trava fica aqui, na leitura, e não no formulário de perfis. Travar o
+ * formulário protegeria apenas o perfil que está sendo editado naquele
+ * momento; não protege o administrador que caiu num perfil já existente
+ * sem a chave, nem o que está sem perfil nenhum.
+ */
+const MODULOS_SEMPRE_DO_ADMIN = ["/administracao", "/permissoes"];
+
+/**
  * Módulos e funcionalidades do perfil do usuário atual.
  *
  * Substitui o `canAccess` do store antigo, que lia papel do
- * localStorage. Admin recebe tudo: sem isso, um erro de configuração de
- * perfil trancaria o administrador para fora da tela de permissões — e
- * não haveria como consertar pela interface.
+ * localStorage.
+ *
+ * O administrador passou a seguir o próprio perfil, como todo mundo.
+ * Antes ele recebia a união dos módulos de todos os perfis, o que
+ * tornava impossível testar uma configuração: quem desenha o perfil
+ * precisa ver o resultado do que desenhou. O acréscimo acima é a única
+ * exceção, e existe para não haver estado do qual não se saia.
  */
 export const minhasPermissoesFn = createServerFn({ method: "GET" }).handler(async () => {
   const c = await ctx();
   const { listarPerfis } = await import("@/repositories/perfis.repo");
   const perfis = await listarPerfis();
 
-  if (c.admin) {
-    const todos = perfis.flatMap((p) => p.modulos);
-    return { modulos: [...new Set(["/", ...todos])], funcionalidades: [], admin: true };
-  }
-
   const meu = perfis.find((p) => p.id === c.perfilId && p.ativo);
+
+  // A raiz entra sempre: ela é desvio para a primeira tela que a pessoa
+  // pode ver, e tirá-la deixaria o endereço inicial sem destino.
+  const modulos = ["/", ...(meu?.modulos ?? [])];
+  if (c.admin) modulos.push(...MODULOS_SEMPRE_DO_ADMIN);
+
   return {
-    modulos: [...new Set(["/", ...(meu?.modulos ?? [])])],
+    modulos: [...new Set(modulos)],
     funcionalidades: meu?.funcionalidades ?? [],
-    admin: false,
+    admin: c.admin,
   };
 });

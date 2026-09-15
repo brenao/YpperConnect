@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   ArrowUpRight,
-  GripVertical,
   LayoutGrid,
   List,
   Loader2,
@@ -15,9 +14,18 @@ import {
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { ProjectDialog } from "@/views/project-dialogs";
+import { Paginacao, usePaginacao } from "@/views/paginacao";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
 import {
   QUADRANTE_LABEL,
@@ -31,7 +39,6 @@ import type { ProjetoBacklog } from "@/repositories/backlog.repo";
 import type { Projeto } from "@/repositories/projetos.repo";
 import {
   listarBacklogFn,
-  reordenarBacklogFn,
   promoverDemandaFn,
   descartarDemandaFn,
 } from "@/services/backlog.functions";
@@ -50,6 +57,9 @@ export const Route = createFileRoute("/backlog")({
   }),
   component: Backlog,
 });
+
+/** Radix não aceita SelectItem com value vazio. */
+const TODOS = "__todos__";
 
 /**
  * O item do backlog é um projeto: mesmos campos, mesmo formulário.
@@ -79,11 +89,27 @@ function classeStatus(status: string): string {
   }
 }
 
+/** Pessoas que aparecem como gerente ou patrocinador, para os filtros. */
+function pessoasDe(
+  itens: ProjetoBacklog[],
+  campoId: "gerenteId" | "sponsorId",
+  campoNome: "gerenteNome" | "sponsorNome",
+): { id: string; nome: string }[] {
+  const mapa = new Map<string, string>();
+  for (const d of itens) {
+    const id = d[campoId];
+    if (id) mapa.set(id, d[campoNome] ?? "Sem nome");
+  }
+  return [...mapa].map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome));
+}
+
 function Backlog() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
+  const [filtroGerente, setFiltroGerente] = useState(TODOS);
+  const [filtroSponsor, setFiltroSponsor] = useState(TODOS);
   const [visao, setVisao] = useState<"lista" | "matriz">("lista");
-  const [arrastando, setArrastando] = useState<string | null>(null);
+  const [aba, setAba] = useState<"fila" | "priorizados">("fila");
 
   const q = useQuery({ queryKey: ["backlog"], queryFn: () => listarBacklogFn() });
 
@@ -91,28 +117,11 @@ function Backlog() {
   const podeGerir = q.data?.podeGerir ?? false;
   const itens = useMemo(() => q.data?.demandas ?? [], [q.data]);
 
-  /**
-   * A tela virou o índice do portfólio, então separa os dois mundos.
-   *
-   * Na fila: o que ainda é decisão, com ordem arrastável e pontuação.
-   * Já priorizados: o que virou compromisso, só para consulta — a
-   * ordem ali é do cronograma, não da priorização, e arrastar não
-   * significaria nada.
-   */
-  const naFila = useMemo(() => itens.filter((d) => d.status === "backlog"), [itens]);
-  const priorizados = useMemo(() => itens.filter((d) => d.status !== "backlog"), [itens]);
-
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["backlog"] });
     qc.invalidateQueries({ queryKey: ["projetos"] });
   };
   const erro = (e: Error) => toast.error("Não foi possível salvar", { description: e.message });
-
-  const reordenar = useMutation({
-    mutationFn: (ids: string[]) => reordenarBacklogFn({ data: { ids } }),
-    onSuccess: invalidar,
-    onError: erro,
-  });
 
   const promover = useMutation({
     mutationFn: (id: string) => promoverDemandaFn({ data: { id } }),
@@ -134,46 +143,73 @@ function Backlog() {
     onError: erro,
   });
 
-  function filtrar(lista: ProjetoBacklog[]): ProjetoBacklog[] {
-    const t = busca.trim().toLowerCase();
-    if (!t) return lista;
-    return lista.filter((d) =>
-      `${d.nome} ${d.objetivo ?? ""} ${d.areaDemandante ?? ""} ${d.justificativa ?? ""}`
-        .toLowerCase()
-        .includes(t),
-    );
+  const gerentes = useMemo(() => pessoasDe(itens, "gerenteId", "gerenteNome"), [itens]);
+  const patrocinadores = useMemo(() => pessoasDe(itens, "sponsorId", "sponsorNome"), [itens]);
+
+  const temFiltro = busca.trim() !== "" || filtroGerente !== TODOS || filtroSponsor !== TODOS;
+
+  function limparFiltros() {
+    setBusca("");
+    setFiltroGerente(TODOS);
+    setFiltroSponsor(TODOS);
   }
 
-  const filaVisivel = filtrar(naFila);
-  const priorizadosVisiveis = filtrar(priorizados);
+  const filtrados = useMemo(() => {
+    const t = busca.trim().toLowerCase();
+    return itens.filter((d) => {
+      if (filtroGerente !== TODOS && d.gerenteId !== filtroGerente) return false;
+      if (filtroSponsor !== TODOS && d.sponsorId !== filtroSponsor) return false;
+      if (!t) return true;
+      return `${d.nome} ${d.objetivo ?? ""} ${d.areaDemandante ?? ""} ${d.justificativa ?? ""}`
+        .toLowerCase()
+        .includes(t);
+    });
+  }, [itens, busca, filtroGerente, filtroSponsor]);
 
   /**
-   * Arrasto nativo: a ordem só vai ao servidor quando solta.
+   * A fila é ordenada pelo nome.
    *
-   * Opera apenas sobre a fila — o índice vem de `naFila`, não da lista
-   * inteira, senão a posição gravada contaria projetos que já saíram da
-   * priorização.
+   * O arrastar-e-soltar saiu junto com a paginação: mover um item para
+   * uma posição que está em outra página é operação que ninguém
+   * consegue conferir. A ordem alfabética é a que sobra sendo previsível
+   * — a pessoa que procura um projeto sabe onde ele está sem precisar
+   * entender o critério, e a lista não se reorganiza sozinha quando
+   * alguém edita uma pontuação.
+   *
+   * Quem decide prioridade não usa esta lista para isso: usa a matriz,
+   * onde valor e esforço posicionam cada projeto. Ordenar aqui por score
+   * seria repetir mal o que a matriz faz bem.
+   *
+   * `localeCompare` com sensibilidade de base resolve acento e caixa:
+   * "Órion" e "orion" caem lado a lado, e não em pontas opostas.
    */
-  function aoSoltar(alvoId: string) {
-    if (!arrastando || arrastando === alvoId) return;
+  const naFila = useMemo(() => {
+    return filtrados
+      .filter((d) => d.status === "backlog")
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+  }, [filtrados]);
 
-    const ids = naFila.map((d) => d.id);
-    const de = ids.indexOf(arrastando);
-    const para = ids.indexOf(alvoId);
-    if (de < 0 || para < 0) return;
+  const priorizados = useMemo(() => filtrados.filter((d) => d.status !== "backlog"), [filtrados]);
 
-    ids.splice(para, 0, ...ids.splice(de, 1));
-    setArrastando(null);
-    reordenar.mutate(ids);
-  }
+  // A chave inclui a aba: com a mesma chave nas duas listas, trocar de
+  // aba deixaria a segunda aberta numa página que só a primeira tinha.
+  const paginaFila = usePaginacao(naFila, `fila|${busca}|${filtroGerente}|${filtroSponsor}`);
+  const paginaPriorizados = usePaginacao(
+    priorizados,
+    `prio|${busca}|${filtroGerente}|${filtroSponsor}`,
+  );
 
-  const semPontuacao = naFila.filter((d) => calcularScore(modelo, d) === null).length;
-  const emExecucao = priorizados.filter((d) => d.status === "execucao").length;
+  const totalFila = itens.filter((d) => d.status === "backlog").length;
+  const totalPriorizados = itens.length - totalFila;
+  const semPontuacao = itens.filter(
+    (d) => d.status === "backlog" && calcularScore(modelo, d) === null,
+  ).length;
+  const emExecucao = itens.filter((d) => d.status === "execucao").length;
 
   return (
     <AppShell
       title="Backlog de projetos"
-      subtitle="A carteira inteira num lugar só: o que aguarda decisão no topo, o que já foi priorizado logo abaixo."
+      subtitle="A carteira inteira num lugar só: o que aguarda decisão e o que já foi priorizado."
     >
       <div className="space-y-4">
         {q.error ? (
@@ -182,15 +218,19 @@ function Backlog() {
           </div>
         ) : null}
 
-        <section className="grid gap-4 sm:grid-cols-4">
+        {/* Três indicadores, todos números. O modelo de priorização saiu
+            daqui: era um rótulo de configuração no meio de uma faixa de
+            magnitudes, e quebrava a varredura. Ele agora aparece na
+            matriz, que é onde a pontuação de fato é usada. */}
+        <section className="grid gap-4 sm:grid-cols-3">
           <div className="panel p-5">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Na fila</p>
-            <p className="mt-2 font-mono text-3xl font-semibold">{naFila.length}</p>
+            <p className="mt-2 font-mono text-3xl font-semibold">{totalFila}</p>
             <p className="mt-1 text-xs text-muted-foreground">projeto(s) aguardando decisão</p>
           </div>
           <div className="panel p-5">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Já priorizados</p>
-            <p className="mt-2 font-mono text-3xl font-semibold">{priorizados.length}</p>
+            <p className="mt-2 font-mono text-3xl font-semibold">{totalPriorizados}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               {emExecucao} em execução no momento
             </p>
@@ -206,24 +246,14 @@ function Backlog() {
               {semPontuacao}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Sem valor e esforço não entram no ranking
-            </p>
-          </div>
-          <div className="panel p-5">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Priorização</p>
-            <p className="mt-2 text-lg font-semibold">
-              {modelo === "rice" ? "RICE" : "Valor ÷ esforço"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {modelo === "rice"
-                ? "Alcance × impacto × confiança ÷ esforço"
-                : "Modelo simples, definido em Administração"}
+              Sem valor e esforço, ficam fora da matriz
             </p>
           </div>
         </section>
 
-        {/* Ação de coleção junto da coleção, como em Projetos: o
-            cabeçalho é reservado à identidade e ao "Abrir chamado". */}
+        {/* Uma linha só: a busca ocupa o que sobra, os seletores têm
+            largura fixa. Crescer a barra em duas linhas faria o filtro
+            competir com a lista pelo primeiro olhar. */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-56 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
@@ -234,31 +264,77 @@ function Backlog() {
               className="pl-8"
             />
           </div>
-          <div className="flex items-center rounded-md border border-border p-0.5">
-            {(["lista", "matriz"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setVisao(v)}
-                aria-pressed={visao === v}
-                className={cn(
-                  "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
-                  visao === v
-                    ? "bg-secondary font-medium text-secondary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {v === "lista" ? (
-                  <List className="size-3.5" />
-                ) : (
-                  <LayoutGrid className="size-3.5" />
-                )}
-                {v === "lista" ? "Lista" : "Matriz"}
-              </button>
-            ))}
-          </div>
+
+          <Select value={filtroGerente} onValueChange={setFiltroGerente}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Gerente" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os gerentes</SelectItem>
+              {gerentes.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.nome}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={filtroSponsor} onValueChange={setFiltroSponsor}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Patrocinador" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os patrocinadores</SelectItem>
+              {patrocinadores.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.nome}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* A matriz é ferramenta de decisão sobre a fila; nos já
+              priorizados não haveria o que decidir. */}
+          {aba === "fila" ? (
+            <div className="flex items-center rounded-md border border-border p-0.5">
+              {(["lista", "matriz"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setVisao(v)}
+                  aria-pressed={visao === v}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+                    visao === v
+                      ? "bg-secondary font-medium text-secondary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {v === "lista" ? (
+                    <List className="size-3.5" />
+                  ) : (
+                    <LayoutGrid className="size-3.5" />
+                  )}
+                  {v === "lista" ? "Lista" : "Matriz"}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           <ProjectDialog statusInicial="backlog" modelo={modelo} />
         </div>
+
+        {/* Sem este aviso, filtrar e esquecer faz a pessoa concluir que
+            o backlog esvaziou. */}
+        {temFiltro ? (
+          <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            Filtro ativo: {naFila.length} na fila e {priorizados.length} priorizado(s) de{" "}
+            {itens.length} projeto(s).
+            <button type="button" onClick={limparFiltros} className="text-primary hover:underline">
+              Limpar filtros
+            </button>
+          </p>
+        ) : null}
 
         {q.isPending ? (
           <p className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
@@ -273,71 +349,67 @@ function Backlog() {
               em que for priorizado.
             </p>
           </div>
-        ) : visao === "matriz" ? (
-          /* A matriz é ferramenta de decisão: só quem ainda está na fila
-             entra. Posicionar projeto em execução num quadrante sugeriria
-             que ele ainda pode ser descartado. */
-          <Matriz itens={filaVisivel} modelo={modelo} />
         ) : (
-          <div className="space-y-6">
-            <section className="space-y-2">
-              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
-                Na fila de priorização
-              </h2>
-              {filaVisivel.length === 0 ? (
-                <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
-                  {naFila.length === 0
-                    ? "Nada aguardando decisão no momento."
-                    : "Nenhum projeto da fila corresponde à busca."}
-                </p>
-              ) : (
-                <ol className="space-y-2">
-                  {filaVisivel.map((d, i) => (
-                    <LinhaBacklog
-                      key={d.id}
-                      posicao={i + 1}
-                      item={d}
-                      modelo={modelo}
-                      podeGerir={podeGerir}
-                      arrastavel={podeGerir && busca.trim() === ""}
-                      promovendo={promover.isPending}
-                      onArrastarInicio={() => setArrastando(d.id)}
-                      onSoltar={() => aoSoltar(d.id)}
-                      onPromover={() => promover.mutate(d.id)}
-                      onDescartar={() => descartar.mutate(d.id)}
-                    />
-                  ))}
-                </ol>
-              )}
-            </section>
+          <Tabs value={aba} onValueChange={(v) => setAba(v as "fila" | "priorizados")}>
+            <TabsList>
+              <TabsTrigger value="fila">Na fila ({naFila.length})</TabsTrigger>
+              <TabsTrigger value="priorizados">Já priorizados ({priorizados.length})</TabsTrigger>
+            </TabsList>
 
-            {priorizados.length > 0 ? (
-              <section className="space-y-2">
-                <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Já priorizados
-                </h2>
-                {priorizadosVisiveis.length === 0 ? (
-                  <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
-                    Nenhum projeto priorizado corresponde à busca.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {priorizadosVisiveis.map((d) => (
+            {/* ------------------------------------------------- na fila */}
+            <TabsContent value="fila" className="mt-4">
+              {naFila.length === 0 ? (
+                <div className="panel px-5 py-10 text-center text-sm text-muted-foreground">
+                  {temFiltro
+                    ? "Nenhum projeto da fila corresponde aos filtros."
+                    : "Nada aguardando decisão no momento."}
+                </div>
+              ) : visao === "matriz" ? (
+                <Matriz itens={naFila} modelo={modelo} />
+              ) : (
+                <div className="panel overflow-hidden">
+                  <Paginacao {...paginaFila.controles} rotulo="na fila" posicao="topo" />
+                  <ol className="divide-y divide-border">
+                    {paginaFila.visiveis.map((d, i) => (
+                      <LinhaBacklog
+                        key={d.id}
+                        posicao={paginaFila.controles.primeiro + i}
+                        item={d}
+                        modelo={modelo}
+                        podeGerir={podeGerir}
+                        promovendo={promover.isPending}
+                        onPromover={() => promover.mutate(d.id)}
+                        onDescartar={() => descartar.mutate(d.id)}
+                      />
+                    ))}
+                  </ol>
+                  <Paginacao {...paginaFila.controles} rotulo="na fila" />
+                </div>
+              )}
+            </TabsContent>
+
+            {/* -------------------------------------------- priorizados */}
+            <TabsContent value="priorizados" className="mt-4">
+              {priorizados.length === 0 ? (
+                <div className="panel px-5 py-10 text-center text-sm text-muted-foreground">
+                  {temFiltro
+                    ? "Nenhum projeto priorizado corresponde aos filtros."
+                    : "Nenhum projeto priorizado ainda."}
+                </div>
+              ) : (
+                <div className="panel overflow-hidden">
+                  <Paginacao {...paginaPriorizados.controles} rotulo="priorizados" posicao="topo" />
+                  <ul className="divide-y divide-border">
+                    {paginaPriorizados.visiveis.map((d) => (
                       <LinhaPriorizada key={d.id} item={d} modelo={modelo} />
                     ))}
                   </ul>
-                )}
-              </section>
-            ) : null}
-          </div>
+                  <Paginacao {...paginaPriorizados.controles} rotulo="priorizados" />
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         )}
-
-        {podeGerir && visao === "lista" && busca.trim() !== "" ? (
-          <p className="text-xs text-muted-foreground">
-            A ordem só pode ser alterada sem filtro — arrastar sobre uma lista parcial moveria o
-            projeto para uma posição que você não está vendo.
-          </p>
-        ) : null}
       </div>
     </AppShell>
   );
@@ -348,10 +420,7 @@ function LinhaBacklog({
   item: d,
   modelo,
   podeGerir,
-  arrastavel,
   promovendo,
-  onArrastarInicio,
-  onSoltar,
   onPromover,
   onDescartar,
 }: {
@@ -359,10 +428,7 @@ function LinhaBacklog({
   item: ProjetoBacklog;
   modelo: ModeloPriorizacao;
   podeGerir: boolean;
-  arrastavel: boolean;
   promovendo: boolean;
-  onArrastarInicio: () => void;
-  onSoltar: () => void;
   onPromover: () => void;
   onDescartar: () => void;
 }) {
@@ -371,16 +437,7 @@ function LinhaBacklog({
   const resumo = d.objetivo ?? d.justificativa;
 
   return (
-    <li
-      draggable={arrastavel}
-      onDragStart={onArrastarInicio}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={onSoltar}
-      className={cn("panel flex items-start gap-3 p-4", arrastavel ? "cursor-grab" : "")}
-    >
-      {arrastavel ? (
-        <GripVertical className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      ) : null}
+    <li className="flex items-start gap-3 p-4">
       <span className="mt-0.5 w-6 shrink-0 font-mono text-sm text-muted-foreground">{posicao}</span>
 
       <div className="min-w-0 flex-1">
@@ -388,6 +445,7 @@ function LinhaBacklog({
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {d.areaDemandante ?? "Sem área"}
           {d.gerenteNome ? ` · ${d.gerenteNome}` : ""}
+          {d.sponsorNome ? ` · patrocínio de ${d.sponsorNome}` : ""}
         </p>
         {resumo ? (
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{resumo}</p>
@@ -462,21 +520,22 @@ function LinhaBacklog({
 /**
  * Linha do que já saiu da fila.
  *
- * Sem arrasto, sem priorizar, sem descartar: aqui a decisão já foi
- * tomada, e as ações da fila não fazem mais sentido. O que interessa é
- * a situação e o quanto andou — e o caminho para o cronograma.
+ * Sem priorizar e sem descartar: aqui a decisão já foi tomada, e as
+ * ações da fila não fazem mais sentido. O que interessa é a situação e
+ * o quanto andou — e o caminho para o cronograma.
  */
 function LinhaPriorizada({ item: d, modelo }: { item: ProjetoBacklog; modelo: ModeloPriorizacao }) {
   const encerrado = d.status === "concluido" || d.status === "cancelado";
   const resumo = d.objetivo ?? d.justificativa;
 
   return (
-    <li className={cn("panel flex items-start gap-3 p-4", encerrado ? "opacity-60" : "")}>
+    <li className={cn("flex items-start gap-3 p-4", encerrado ? "opacity-60" : "")}>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{d.nome}</p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {d.areaDemandante ?? "Sem área"}
           {d.gerenteNome ? ` · ${d.gerenteNome}` : ""}
+          {d.sponsorNome ? ` · patrocínio de ${d.sponsorNome}` : ""}
         </p>
         {resumo ? (
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{resumo}</p>
@@ -527,6 +586,10 @@ function LinhaPriorizada({ item: d, modelo }: { item: ProjetoBacklog; modelo: Mo
  * relance o que é ganho rápido e o que é aposta cara. Só entra quem tem
  * pontuação — posicionar o não avaliado em algum canto sugeriria uma
  * avaliação que ninguém fez.
+ *
+ * O modelo em uso aparece aqui, e só aqui: é nesta visão que a fórmula
+ * muda o que se vê, e saber que "esforço 3" vem do RICE ou do modelo
+ * simples é o que permite discordar da posição de um quadrante.
  */
 function Matriz({ itens, modelo }: { itens: ProjetoBacklog[]; modelo: ModeloPriorizacao }) {
   const porQuadrante = useMemo(() => {
@@ -552,6 +615,16 @@ function Matriz({ itens, modelo }: { itens: ProjetoBacklog[]; modelo: ModeloPrio
 
   return (
     <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Pontuação por{" "}
+        <strong className="font-medium text-foreground">
+          {modelo === "rice" ? "RICE" : "valor ÷ esforço"}
+        </strong>
+        {modelo === "rice"
+          ? " — alcance × impacto × confiança ÷ esforço."
+          : " — modelo simples, definido em Administração."}
+      </p>
+
       <div className="grid gap-3 sm:grid-cols-2">
         {ordem.map(({ q, classe }) => {
           const lista = porQuadrante.get(q) ?? [];
