@@ -36,6 +36,11 @@ import { QUADROS } from "./project-kanban";
 
 const SEM = "__nenhum__";
 
+/** Esforço de uma tarefa recém-criada: uma jornada. */
+const ESFORCO_PADRAO = 8;
+
+type Unidade = "horas" | "dias";
+
 function paraInput(d: Date | string): string {
   const dt = new Date(d);
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
@@ -52,7 +57,8 @@ interface Form {
   atividade: string;
   paiId: string;
   inicio: string;
-  fim: string;
+  duracao: string;
+  duracaoUnidade: Unidade;
   progresso: number;
   quadro: QuadroTarefa;
   marco: boolean;
@@ -92,7 +98,8 @@ export function TaskDialog({
     atividade: "",
     paiId: SEM,
     inicio: paraInput(new Date()),
-    fim: paraInput(new Date()),
+    duracao: String(ESFORCO_PADRAO),
+    duracaoUnidade: "horas",
     progresso: 0,
     quadro: "backlog",
     marco: false,
@@ -112,7 +119,11 @@ export function TaskDialog({
             atividade: tarefa.atividade ?? "",
             paiId: tarefa.paiId ?? SEM,
             inicio: paraInput(tarefa.inicio),
-            fim: paraInput(tarefa.fim),
+            // Tarefa antiga, criada antes de o esforço existir, cai na
+            // jornada padrão: melhor um valor editável do que um campo
+            // vazio que o servidor recusaria ao salvar.
+            duracao: String(tarefa.duracao ?? ESFORCO_PADRAO),
+            duracaoUnidade: tarefa.duracaoUnidade === "dias" ? "dias" : "horas",
             progresso: tarefa.progresso,
             quadro: tarefa.quadro,
             marco: tarefa.marco,
@@ -163,19 +174,28 @@ export function TaskDialog({
       toast.error("Informe o nome da tarefa.");
       return;
     }
-    const inicio = doInput(form.inicio);
-    const fim = doInput(form.fim);
-    if (fim < inicio) {
-      toast.error("A data de término não pode ser anterior ao início.");
+
+    const duracao = Number(form.duracao.replace(",", "."));
+    if (!Number.isFinite(duracao) || duracao <= 0) {
+      toast.error("Informe um esforço maior que zero.");
       return;
     }
 
+    /**
+     * Sem `fim`: o término é calculado no servidor.
+     *
+     * É lá que se conhece o regime de dias do projeto, os feriados e a
+     * capacidade diária de cada responsável — três coisas que a tela
+     * não tem. Mandar uma data daqui seria mandar um palpite que o
+     * reagendamento sobrescreveria em seguida.
+     */
     const base = {
       nome: form.nome.trim(),
       atividade: form.atividade.trim() || null,
       paiId: form.paiId === SEM ? null : form.paiId,
-      inicio,
-      fim,
+      inicio: doInput(form.inicio),
+      duracao,
+      duracaoUnidade: form.duracaoUnidade,
       progresso: form.progresso,
       quadro: form.quadro,
       marco: form.marco,
@@ -199,7 +219,8 @@ export function TaskDialog({
         <DialogHeader>
           <DialogTitle>{tarefa ? "Editar tarefa" : "Nova tarefa"}</DialogTitle>
           <DialogDescription>
-            A alocação define quanto da capacidade diária do responsável esta tarefa consome.
+            O término é calculado a partir do esforço, da alocação e da capacidade diária de quem
+            executa. Para ajustar a data final à mão, use a grade do cronograma.
           </DialogDescription>
         </DialogHeader>
 
@@ -240,21 +261,44 @@ export function TaskDialog({
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label>Início</Label>
+              <Label htmlFor="tsk-inicio">Início</Label>
               <Input
+                id="tsk-inicio"
                 type="date"
                 value={form.inicio}
                 onChange={(e) => setForm({ ...form, inicio: e.target.value })}
               />
             </div>
+
+            {/* Esforço no lugar do término: é o trabalho previsto que se
+                estima, e a data final é consequência dele. */}
             <div className="grid gap-2">
-              <Label>Término</Label>
-              <Input
-                type="date"
-                value={form.fim}
-                onChange={(e) => setForm({ ...form, fim: e.target.value })}
-              />
+              <Label htmlFor="tsk-esforco">Esforço</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="tsk-esforco"
+                  inputMode="decimal"
+                  className="flex-1"
+                  value={form.duracao}
+                  onChange={(e) =>
+                    setForm({ ...form, duracao: e.target.value.replace(/[^\d.,]/g, "") })
+                  }
+                />
+                <Select
+                  value={form.duracaoUnidade}
+                  onValueChange={(v) => setForm({ ...form, duracaoUnidade: v as Unidade })}
+                >
+                  <SelectTrigger className="w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="horas">horas</SelectItem>
+                    <SelectItem value="dias">dias</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+
             <div className="grid gap-2">
               <Label>Situação</Label>
               <Select
@@ -311,6 +355,10 @@ export function TaskDialog({
               value={[form.alocacao]}
               onValueChange={([v]) => setForm({ ...form, alocacao: v ?? 0 })}
             />
+            <p className="text-xs text-muted-foreground">
+              Quanto da capacidade diária do responsável esta tarefa consome. Metade da alocação
+              dobra o prazo sem mudar o esforço.
+            </p>
           </div>
 
           <div className="grid gap-2">

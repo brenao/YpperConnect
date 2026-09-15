@@ -43,6 +43,8 @@ import { CRITICALITY_LABEL, type SystemCriticality } from "@/models/itsm-types";
 import type { Sistema } from "@/repositories/catalogo.repo";
 import type { Usuario } from "@/repositories/usuarios.repo";
 import { Paginacao, usePaginacao } from "@/views/paginacao";
+import { listarRecursosFn } from "@/services/recursos.functions";
+import { cn } from "@/lib/utils";
 import {
   usuarioAtualFn,
   listarUsuariosFn,
@@ -568,10 +570,150 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
 
 // ---------------------------------------------------------------------- tela
 
+/** Recortes que os cartões aplicam sobre a lista de usuários. */
+type FiltroCartao = "todos" | "admins" | "atendentes";
+
+/**
+ * Cartão de indicador que também filtra.
+ *
+ * O número já estava lá dizendo "existem 14 administradores"; poder
+ * clicar nele responde a pergunta seguinte — "quais?" — sem obrigar a
+ * pessoa a adivinhar um termo de busca que separe esse grupo.
+ *
+ * O estado ligado é visível na borda e no `aria-pressed`: sem isso, a
+ * lista filtrada parece uma lista incompleta.
+ */
+function CartaoFiltro({
+  label,
+  value,
+  hint,
+  ativo,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  ativo?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={ativo ?? false}
+      className={cn(
+        "panel p-4 text-left transition-colors hover:border-primary/40",
+        ativo ? "border-primary/60 bg-primary/5" : "",
+      )}
+    >
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-2xl font-semibold">{value}</p>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    </button>
+  );
+}
+
+/**
+ * Tabela de usuários de um grupo.
+ *
+ * Extraída porque a tela passou a mostrar dois blocos com o mesmo
+ * formato — quem já é recurso e quem não é. Duas cópias do mesmo markup
+ * divergiriam na primeira coluna que alguém acrescentasse.
+ */
+function TabelaUsuarios({
+  usuarios,
+  isAdmin,
+  alternando,
+  onAlternar,
+}: {
+  usuarios: Usuario[];
+  isAdmin: boolean;
+  alternando: boolean;
+  onAlternar: (id: string, ativo: boolean) => void;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+            <th className="px-4 py-2 font-medium">Usuário</th>
+            <th className="px-4 py-2 font-medium">Departamento</th>
+            <th className="px-4 py-2 font-medium">Equipe</th>
+            <th className="px-4 py-2 font-medium">Origem</th>
+            <th className="px-4 py-2 font-medium">Situação</th>
+            <th className="px-4 py-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {usuarios.map((u) => (
+            <tr key={u.id} className={`border-b border-border/60 ${u.ativo ? "" : "opacity-60"}`}>
+              <td className="px-4 py-2">
+                <span className="flex items-center gap-2">
+                  {u.nome}
+                  {u.admin ? (
+                    <Badge variant="outline" className="gap-1 text-[10px]">
+                      <ShieldCheck className="size-3" /> admin
+                    </Badge>
+                  ) : null}
+                </span>
+                <span className="block text-[11px] text-muted-foreground">{u.email}</span>
+              </td>
+              <td className="px-4 py-2 text-muted-foreground">{u.departamento ?? "—"}</td>
+              <td className="px-4 py-2 text-muted-foreground">{u.equipeNome ?? "—"}</td>
+              <td className="px-4 py-2">
+                <Badge variant="outline" className="text-[10px] uppercase">
+                  {u.origem}
+                </Badge>
+              </td>
+              <td className="px-4 py-2">
+                {u.ativo ? (
+                  <span className="text-success">Ativo</span>
+                ) : (
+                  <span className="text-muted-foreground">Inativo</span>
+                )}
+              </td>
+              <td className="px-4 py-2">
+                {isAdmin ? (
+                  <span className="flex justify-end gap-1">
+                    <UserDialog
+                      user={u}
+                      trigger={
+                        <Button variant="ghost" size="icon" className="size-7" title="Editar">
+                          <Pencil className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      title={u.ativo ? "Desativar" : "Reativar"}
+                      disabled={alternando}
+                      onClick={() => onAlternar(u.id, !u.ativo)}
+                    >
+                      {u.ativo ? (
+                        <EyeOff className="size-3.5 text-muted-foreground" />
+                      ) : (
+                        <Eye className="size-3.5 text-success" />
+                      )}
+                    </Button>
+                  </span>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Administracao() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const [mostrarInativos, setMostrarInativos] = useState(false);
+  const [filtroCartao, setFiltroCartao] = useState<FiltroCartao>("todos");
+  const [aba, setAba] = useState("usuarios");
 
   const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
   const usuariosQuery = useQuery({ queryKey: ["usuarios"], queryFn: () => listarUsuariosFn() });
@@ -579,6 +721,10 @@ function Administracao() {
     queryKey: ["sistemas-admin"],
     queryFn: () => listarSistemasAdminFn(),
   });
+  // Só para saber quem já é recurso. A lista de recursos é pequena
+  // perto da de usuários, e cruzar aqui evita uma consulta nova no
+  // servidor só para responder "esta pessoa recebe tarefa?".
+  const recursosQuery = useQuery({ queryKey: ["recursos"], queryFn: () => listarRecursosFn() });
   const notificacoes = useQuery({
     queryKey: ["notificacoes"],
     queryFn: () => listarNotificacoesFn(),
@@ -587,6 +733,15 @@ function Administracao() {
   const isAdmin = usuario.data?.admin ?? false;
   const usuarios = useMemo(() => usuariosQuery.data ?? [], [usuariosQuery.data]);
   const sistemas = useMemo(() => sistemasQuery.data ?? [], [sistemasQuery.data]);
+
+  /** Ids de usuário que têm recurso ativo — são os que recebem tarefa. */
+  const usuariosComRecurso = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of recursosQuery.data?.recursos ?? []) {
+      if (r.ativo && r.usuarioId) ids.add(r.usuarioId);
+    }
+    return ids;
+  }, [recursosQuery.data]);
 
   const erro = (e: Error) => toast.error("Não foi possível alterar", { description: e.message });
 
@@ -628,8 +783,10 @@ function Administracao() {
     mutationFn: () => executarRotinasFn(),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["notificacoes"] });
+      qc.invalidateQueries({ queryKey: ["projetos"] });
       const detalhe = [
         `${r.lembretes.enfileirados} lembrete(s) gerado(s)`,
+        r.lembretes.paralisados > 0 ? `${r.lembretes.paralisados} projeto(s) paralisado(s)` : "",
         r.lembretes.jaAvisadosHoje > 0 ? `${r.lembretes.jaAvisadosHoje} já avisado(s) hoje` : "",
         r.lembretes.semGerente > 0 ? `${r.lembretes.semGerente} projeto(s) sem gerente` : "",
       ]
@@ -651,14 +808,19 @@ function Administracao() {
   /**
    * Nome e e-mail entram com guarda de nulo.
    *
-   * A sincronizacao do GLPI traz pessoas sem e-mail cadastrado, e o
-   * filtro so tocava nesses campos quando havia texto digitado — por
+   * A sincronização do GLPI traz pessoas sem e-mail cadastrado, e o
+   * filtro só tocava nesses campos quando havia texto digitado — por
    * isso a tela abria bem e quebrava na primeira tecla da busca.
    */
   const usuariosFiltrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return usuarios
       .filter((u) => mostrarInativos || u.ativo)
+      .filter((u) => {
+        if (filtroCartao === "admins") return u.admin;
+        if (filtroCartao === "atendentes") return u.equipeId !== null;
+        return true;
+      })
       .filter(
         (u) =>
           !q ||
@@ -666,27 +828,41 @@ function Administracao() {
           (u.email ?? "").toLowerCase().includes(q) ||
           (u.departamento ?? "").toLowerCase().includes(q),
       );
-  }, [usuarios, busca, mostrarInativos]);
+  }, [usuarios, busca, mostrarInativos, filtroCartao]);
+
+  /**
+   * Dois blocos: quem já recebe tarefa e quem ainda não.
+   *
+   * Com mais de mil pessoas vindas do GLPI, a lista única escondia
+   * justamente as poucas que interessam no dia a dia — quem tem recurso
+   * cadastrado e pode ser responsável por uma atividade. Separar em
+   * blocos põe esse grupo no topo sem esconder o resto, que continua ali
+   * para quando alguém novo precisar de acesso.
+   */
+  const comRecurso = useMemo(
+    () => usuariosFiltrados.filter((u) => usuariosComRecurso.has(u.id)),
+    [usuariosFiltrados, usuariosComRecurso],
+  );
+  const semRecurso = useMemo(
+    () => usuariosFiltrados.filter((u) => !usuariosComRecurso.has(u.id)),
+    [usuariosFiltrados, usuariosComRecurso],
+  );
+
+  const chave = `${busca}|${mostrarInativos}|${filtroCartao}`;
+  const paginaComRecurso = usePaginacao(comRecurso, `rec|${chave}`);
+  const paginaSemRecurso = usePaginacao(semRecurso, `sem|${chave}`);
 
   const sistemasFiltrados = useMemo(
     () => sistemas.filter((s) => mostrarInativos || s.ativo),
     [sistemas, mostrarInativos],
   );
 
-  /**
-   * Só as linhas da página vão para o DOM.
-   *
-   * Cada linha monta um UserDialog, que é um Dialog do Radix. Com a
-   * base do GLPI inteira na tela eram mais de mil diálogos instanciados
-   * de uma vez — o custo que travava a aba, e que não aparecia enquanto
-   * o cadastro tinha algumas dezenas de pessoas.
-   *
-   * A chave junta os filtros: quando qualquer um muda, a paginação
-   * volta à primeira página.
-   */
-  const paginaDeUsuarios = usePaginacao(usuariosFiltrados, `${busca}|${mostrarInativos}`);
-
   const carregando = usuariosQuery.isPending || sistemasQuery.isPending;
+
+  function alternarCartao(f: FiltroCartao) {
+    setFiltroCartao((atual) => (atual === f ? "todos" : f));
+    setAba("usuarios");
+  }
 
   return (
     <AppShell
@@ -711,25 +887,36 @@ function Administracao() {
       ) : null}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi
+        <CartaoFiltro
           label="Usuários"
           value={String(usuarios.filter((u) => u.ativo).length)}
           hint="ativos no sistema"
+          ativo={filtroCartao === "todos" && aba === "usuarios"}
+          onClick={() => {
+            setFiltroCartao("todos");
+            setAba("usuarios");
+          }}
         />
-        <Kpi
+        <CartaoFiltro
           label="Administradores"
           value={String(usuarios.filter((u) => u.admin && u.ativo).length)}
           hint="com acesso total"
+          ativo={filtroCartao === "admins"}
+          onClick={() => alternarCartao("admins")}
         />
-        <Kpi
+        <CartaoFiltro
           label="Atendentes"
           value={String(usuarios.filter((u) => u.equipeId && u.ativo).length)}
           hint="podem receber chamado"
+          ativo={filtroCartao === "atendentes"}
+          onClick={() => alternarCartao("atendentes")}
         />
-        <Kpi
+        <CartaoFiltro
           label="Sistemas"
           value={String(sistemas.filter((s) => s.ativo).length)}
           hint="no inventário"
+          ativo={aba === "sistemas"}
+          onClick={() => setAba("sistemas")}
         />
       </div>
 
@@ -738,7 +925,7 @@ function Administracao() {
           <Loader2 className="size-4 animate-spin" /> Carregando cadastros...
         </p>
       ) : (
-        <Tabs defaultValue="usuarios">
+        <Tabs value={aba} onValueChange={setAba}>
           <TabsList>
             <TabsTrigger value="usuarios" className="gap-2">
               <UserCog className="size-4" /> Usuários
@@ -774,102 +961,63 @@ function Administracao() {
               ) : null}
             </div>
 
-            <div className="panel overflow-hidden">
-              <Paginacao {...paginaDeUsuarios.controles} rotulo="usuários" posicao="topo" />
+            {filtroCartao !== "todos" ? (
+              <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                Mostrando apenas {filtroCartao === "admins" ? "administradores" : "atendentes"}.
+                <button
+                  type="button"
+                  onClick={() => setFiltroCartao("todos")}
+                  className="text-primary hover:underline"
+                >
+                  Ver todos
+                </button>
+              </p>
+            ) : null}
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-4 py-2 font-medium">Usuário</th>
-                      <th className="px-4 py-2 font-medium">Departamento</th>
-                      <th className="px-4 py-2 font-medium">Equipe</th>
-                      <th className="px-4 py-2 font-medium">Origem</th>
-                      <th className="px-4 py-2 font-medium">Situação</th>
-                      <th className="px-4 py-2" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginaDeUsuarios.visiveis.map((u) => (
-                      <tr
-                        key={u.id}
-                        className={`border-b border-border/60 ${u.ativo ? "" : "opacity-60"}`}
-                      >
-                        <td className="px-4 py-2">
-                          <span className="flex items-center gap-2">
-                            {u.nome}
-                            {u.admin ? (
-                              <Badge variant="outline" className="gap-1 text-[10px]">
-                                <ShieldCheck className="size-3" /> admin
-                              </Badge>
-                            ) : null}
-                          </span>
-                          <span className="block text-[11px] text-muted-foreground">{u.email}</span>
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground">{u.departamento ?? "—"}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{u.equipeNome ?? "—"}</td>
-                        <td className="px-4 py-2">
-                          <Badge variant="outline" className="text-[10px] uppercase">
-                            {u.origem}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-2">
-                          {u.ativo ? (
-                            <span className="text-success">Ativo</span>
-                          ) : (
-                            <span className="text-muted-foreground">Inativo</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2">
-                          {isAdmin ? (
-                            <span className="flex justify-end gap-1">
-                              <UserDialog
-                                user={u}
-                                trigger={
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-7"
-                                    title="Editar"
-                                  >
-                                    <Pencil className="size-3.5" />
-                                  </Button>
-                                }
-                              />
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-7"
-                                title={u.ativo ? "Desativar" : "Reativar"}
-                                disabled={alternarUsuario.isPending}
-                                onClick={() =>
-                                  alternarUsuario.mutate({ id: u.id, ativo: !u.ativo })
-                                }
-                              >
-                                {u.ativo ? (
-                                  <EyeOff className="size-3.5 text-muted-foreground" />
-                                ) : (
-                                  <Eye className="size-3.5 text-success" />
-                                )}
-                              </Button>
-                            </span>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
-                    {usuariosFiltrados.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                          Nenhum usuário encontrado.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
+            <section className="space-y-2">
+              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
+                Cadastrados como recurso ({comRecurso.length})
+              </h2>
+              {comRecurso.length === 0 ? (
+                <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
+                  Ninguém aqui. Cadastre em Recursos e capacidade para que a pessoa possa receber
+                  tarefa de projeto.
+                </p>
+              ) : (
+                <div className="panel overflow-hidden">
+                  <Paginacao {...paginaComRecurso.controles} rotulo="com recurso" posicao="topo" />
+                  <TabelaUsuarios
+                    usuarios={paginaComRecurso.visiveis}
+                    isAdmin={isAdmin}
+                    alternando={alternarUsuario.isPending}
+                    onAlternar={(id, ativo) => alternarUsuario.mutate({ id, ativo })}
+                  />
+                  <Paginacao {...paginaComRecurso.controles} rotulo="com recurso" />
+                </div>
+              )}
+            </section>
 
-              <Paginacao {...paginaDeUsuarios.controles} rotulo="usuários" />
-            </div>
+            <section className="space-y-2">
+              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
+                Demais usuários ({semRecurso.length})
+              </h2>
+              {semRecurso.length === 0 ? (
+                <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
+                  Nenhum usuário fora dos recursos com os filtros atuais.
+                </p>
+              ) : (
+                <div className="panel overflow-hidden">
+                  <Paginacao {...paginaSemRecurso.controles} rotulo="usuários" posicao="topo" />
+                  <TabelaUsuarios
+                    usuarios={paginaSemRecurso.visiveis}
+                    isAdmin={isAdmin}
+                    alternando={alternarUsuario.isPending}
+                    onAlternar={(id, ativo) => alternarUsuario.mutate({ id, ativo })}
+                  />
+                  <Paginacao {...paginaSemRecurso.controles} rotulo="usuários" />
+                </div>
+              )}
+            </section>
           </TabsContent>
 
           {/* -------------------------------------------------- sistemas */}
@@ -1008,8 +1156,8 @@ function Administracao() {
                   {executarRotinas.isPending ? "Executando..." : "Executar rotinas do dia"}
                 </Button>
                 <span className="text-xs text-muted-foreground">
-                  As rotinas geram os lembretes de projeto sem atualização e despacham a fila. O
-                  agendador ainda não existe: por ora, alguém precisa clicar.
+                  As rotinas geram os lembretes de projeto, paralisam o que está parado e despacham
+                  a fila. O agendador ainda não existe: por ora, alguém precisa clicar.
                 </span>
               </div>
             ) : null}

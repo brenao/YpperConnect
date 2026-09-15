@@ -165,7 +165,22 @@ const TarefaBase = z.object({
   nome: z.string().min(3).max(300),
   atividade: z.string().max(200).nullable().optional(),
   inicio: z.coerce.date(),
-  fim: z.coerce.date(),
+  /**
+   * Término opcional.
+   *
+   * O formulário de tarefa deixou de perguntá-lo: quem informa é o
+   * esforço, e a data final sai do reagendamento, que já conhece a
+   * capacidade diária de cada responsável. Perguntar as duas coisas
+   * produzia cronograma em que o prazo e o trabalho previsto não
+   * conversavam, sem que o sistema soubesse qual dos dois respeitar.
+   *
+   * Continua aceito porque a grade do cronograma edita o término
+   * diretamente, e ali ele é entrada legítima.
+   */
+  fim: z.coerce.date().optional(),
+  /** Esforço previsto. É ele que determina o término. */
+  duracao: z.number().positive().max(9999).optional(),
+  duracaoUnidade: z.enum(UNIDADES).optional(),
   progresso: z.number().int().min(0).max(100).optional(),
   quadro: z.enum(QUADROS).optional(),
   marco: z.boolean().optional(),

@@ -947,7 +947,23 @@ export interface DadosTarefa {
   nome: string;
   atividade?: string | null | undefined;
   inicio: Date;
-  fim: Date;
+  /**
+   * Término. Opcional desde que o formulário passou a pedir esforço em
+   * vez de data final: quando não vem, entra igual ao início e o
+   * reagendamento o recalcula a partir da duração e da capacidade de
+   * quem executa.
+   *
+   * Continua aceito para os chamadores que ainda mandam data — a grade
+   * do cronograma edita o término direto, e ali ele é entrada.
+   */
+  fim?: Date | undefined;
+  /**
+   * Esforço da tarefa. É o que manda no término: a data final passa a
+   * ser consequência do trabalho previsto e da disponibilidade do
+   * responsável, e não um palpite digitado que ninguém confere.
+   */
+  duracao?: number | undefined;
+  duracaoUnidade?: UnidadeDuracao | undefined;
   progresso?: number | undefined;
   quadro?: QuadroTarefa | undefined;
   marco?: boolean | undefined;
@@ -964,7 +980,10 @@ export interface DadosTarefa {
 export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise<string> {
   await exigirAcessoProjeto(ctx, d.projetoId, "criar tarefas neste projeto");
   if (d.nome.trim().length < 3) throw new ErroDominio("Informe o nome da tarefa");
-  if (d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
+  if (d.fim && d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
+  if (d.duracao !== undefined && (!Number.isFinite(d.duracao) || d.duracao <= 0)) {
+    throw new ErroDominio("O esforço deve ser maior que zero");
+  }
 
   const id = novoId();
 
@@ -972,10 +991,10 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
     await tx.executar(
       `INSERT INTO projeto_tarefas
          (id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
-          quadro, marco, alocacao_pct, ordem)
+          quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem)
        VALUES
          (:id, :projetoId, :paiId, :nome, :atividade, :inicio, :fim, :progresso,
-          :quadro, :marco, :alocacaoPct, :ordem)`,
+          :quadro, :marco, :duracao, :unidade, :alocacaoPct, :ordem)`,
       {
         id,
         projetoId: d.projetoId,
@@ -983,7 +1002,12 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
         nome: d.nome.trim(),
         atividade: d.atividade?.trim() ?? null,
         inicio: d.inicio,
-        fim: d.fim,
+        // Sem término informado, nasce com um dia: o `propagarCronograma`
+        // logo abaixo recalcula a partir da duração e da capacidade dos
+        // responsáveis, que só existem depois do INSERT dos vínculos.
+        fim: d.fim ?? d.inicio,
+        duracao: d.duracao ?? null,
+        unidade: d.duracao === undefined ? null : (d.duracaoUnidade ?? "horas"),
         progresso: d.progresso ?? 0,
         quadro: d.quadro ?? "backlog",
         marco: deBool(d.marco),
@@ -1017,7 +1041,10 @@ export async function atualizarTarefa(
   d: Omit<DadosTarefa, "projetoId">,
 ): Promise<void> {
   await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
-  if (d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
+  if (d.fim && d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
+  if (d.duracao !== undefined && (!Number.isFinite(d.duracao) || d.duracao <= 0)) {
+    throw new ErroDominio("O esforço deve ser maior que zero");
+  }
 
   await emTransacao(async (tx) => {
     // quadro 'done' e progresso 100 andam juntos: deixar divergir
@@ -1029,6 +1056,8 @@ export async function atualizarTarefa(
           SET pai_id = :paiId, nome = COALESCE(:nome, nome), atividade = :atividade,
               inicio = :inicio, fim = :fim,
               progresso = :progresso, quadro = :quadro, marco = :marco,
+              duracao = COALESCE(:duracao, duracao),
+              duracao_unidade = COALESCE(:unidade, duracao_unidade),
               alocacao_pct = :alocacaoPct, ordem = COALESCE(:ordem, ordem),
               concluido_em = CASE WHEN :concluida = 1
                                   THEN COALESCE(concluido_em, LOCALTIMESTAMP) ELSE NULL END
@@ -1039,7 +1068,10 @@ export async function atualizarTarefa(
         nome: d.nome?.trim() ?? null,
         atividade: d.atividade?.trim() ?? null,
         inicio: d.inicio,
-        fim: d.fim,
+        // Mesma regra da criação: sem término, a propagação o deriva.
+        fim: d.fim ?? d.inicio,
+        duracao: d.duracao ?? null,
+        unidade: d.duracao === undefined ? null : (d.duracaoUnidade ?? "horas"),
         progresso: concluida ? 100 : (d.progresso ?? 0),
         quadro: concluida ? "done" : (d.quadro ?? "backlog"),
         marco: deBool(d.marco),
