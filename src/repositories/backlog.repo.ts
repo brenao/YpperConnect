@@ -38,8 +38,19 @@ export interface ProjetoBacklog {
   alcance: number | null;
   confianca: number | null;
   ordemBacklog: number | null;
-  /** Sempre 'backlog' aqui, mas presente para o formulário reusar o tipo. */
+  /**
+   * Situação atual. A tela lista a carteira inteira, então aqui aparece
+   * qualquer status — não só 'backlog'.
+   */
   status: string;
+  /**
+   * Média do progresso das tarefas, 0–100.
+   *
+   * Vem junto porque a lista passou a mostrar também o que já saiu da
+   * fila, e "em execução" sem o percentual não diz se o projeto andou
+   * ou se só trocaram o seletor.
+   */
+  progresso: number;
   inicio: Date;
   fim: Date;
   criadoEm: Date;
@@ -54,10 +65,15 @@ const SELECT_BACKLOG = `
          p.capex, p.moeda,
          p.valor, p.esforco, p.alcance, p.confianca, p.ordem_backlog,
          p.status, p.inicio, p.fim,
+         COALESCE(ROUND(t.media), 0) AS progresso,
          p.criado_em, p.atualizado_em
     FROM projetos p
     LEFT JOIN usuarios ug ON ug.id = p.gerente_id
-    LEFT JOIN usuarios us ON us.id = p.sponsor_id`;
+    LEFT JOIN usuarios us ON us.id = p.sponsor_id
+    LEFT JOIN (SELECT projeto_id, AVG(progresso) AS media
+                 FROM projeto_tarefas WHERE ativo = 1
+                GROUP BY projeto_id) t
+           ON t.projeto_id = p.id`;
 
 // ------------------------------------------------------- configuração
 
@@ -96,19 +112,41 @@ export async function definirModeloPriorizacao(
 // ------------------------------------------------------------ leitura
 
 /**
- * Backlog visível para este usuário, na ordem definida à mão.
+ * Carteira inteira visível para este usuário: o que está na fila e o
+ * que já saiu dela.
  *
- * Sem ordem gravada a demanda vai para o fim: é o que acontece com a
- * recém-criada, e o topo da lista pertence a quem já foi priorizado.
- * O desempate é pela criação, para a ordem não dançar entre recargas.
+ * Antes a consulta filtrava `status = 'backlog'`, e quem cadastrava um
+ * projeto já priorizado não o via mais aqui — ficava procurando um
+ * registro que existia em outra tela. Mostrar tudo devolve ao backlog o
+ * papel de índice do portfólio; a situação de cada linha diz em que
+ * ponto ele está.
+ *
+ * A ordem separa os dois mundos: quem está na fila vem primeiro, na
+ * ordem que o gestor arrastou; depois o resto, pela atenção que cada
+ * situação merece — em execução no topo, encerrados no fim. Misturar os
+ * dois faria a numeração da fila saltar números.
+ *
+ * Sem ordem gravada a demanda vai para o fim da fila: é o que acontece
+ * com a recém-criada, e o topo pertence a quem já foi priorizado. O
+ * desempate é pela criação, para a ordem não dançar entre recargas.
  */
 export async function listarBacklog(ctx: ContextoUsuario): Promise<ProjetoBacklog[]> {
   const f = filtroVisibilidadeProjetos(ctx);
 
   return consultar<ProjetoBacklog>(
     `${SELECT_BACKLOG}
-      WHERE p.status = 'backlog' AND (${f.clausula})
-      ORDER BY p.ordem_backlog NULLS LAST, p.criado_em`,
+      WHERE ${f.clausula}
+      ORDER BY CASE WHEN p.status = 'backlog' THEN 0 ELSE 1 END,
+               p.ordem_backlog NULLS LAST,
+               CASE p.status
+                 WHEN 'execucao' THEN 1
+                 WHEN 'planejamento' THEN 2
+                 WHEN 'paralisado' THEN 3
+                 WHEN 'concluido' THEN 4
+                 WHEN 'cancelado' THEN 5
+                 ELSE 6
+               END,
+               p.criado_em`,
     f.binds,
   );
 }
@@ -153,6 +191,10 @@ async function exigirAcessoDemanda(ctx: ContextoUsuario, id: string): Promise<vo
  * Em transação e reescrevendo a lista inteira: gravar só o que mudou
  * exigiria saber a posição anterior de cada um, e um erro no meio
  * deixaria duas demandas na mesma posição.
+ *
+ * O `status = 'backlog'` no WHERE é a guarda que sobrou de a tela
+ * passar a listar a carteira toda: se um id de projeto já priorizado
+ * chegar aqui, ele simplesmente não recebe posição.
  */
 export async function reordenarBacklog(ctx: ContextoUsuario, ids: string[]): Promise<void> {
   if (!ctx.admin && !ctx.visaoDiretoriaProjetos && !ctx.gestorPortfolio) {

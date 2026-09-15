@@ -620,6 +620,82 @@ async function recalcularPeriodo(projetoId: string): Promise<void> {
   );
 }
 
+/** Progresso a partir do qual o projeto é considerado em andamento. */
+const PROGRESSO_MINIMO_EXECUCAO = 1;
+
+/**
+ * Ajusta a situação do projeto ao que o cronograma diz.
+ *
+ * O status era digitado à mão e envelhecia: projeto com metade das
+ * tarefas entregues continuava "em planejamento" porque ninguém voltou
+ * ao seletor. Como o percentual já é calculado, ele passa a mandar.
+ *
+ * As fronteiras são três, e só elas movem o status:
+ *   0%            -> planejamento (ainda não começou)
+ *   acima de 1%   -> execucao     (alguém está trabalhando)
+ *   100%          -> concluido    (acabou)
+ *
+ * A faixa entre 0 e 1 fica de fora de propósito: é ruído de
+ * arredondamento numa tarefa de dez minutos, e não deveria mudar como o
+ * projeto aparece para a diretoria.
+ *
+ * Fora da automação ficam `backlog` e `cancelado`. O primeiro ainda não
+ * foi decidido, e promovê-lo por causa de um percentual pularia a
+ * decisão que o backlog existe para registrar; o segundo é decisão
+ * humana, e nada deveria tirá-lo de lá sem alguém mandar.
+ *
+ * Projeto sem tarefa ativa também não entra: a média seria 0 e um
+ * projeto em execução cujo cronograma foi esvaziado voltaria para
+ * planejamento sozinho.
+ */
+async function sincronizarStatusPorProgresso(projetoId: string): Promise<void> {
+  await executar(
+    `UPDATE projetos p
+        SET status = COALESCE(novo.destino, p.status),
+            atualizado_em = CASE WHEN novo.destino IS NULL OR novo.destino = p.status
+                                 THEN p.atualizado_em ELSE LOCALTIMESTAMP END
+       FROM (SELECT CASE
+                      WHEN COUNT(*) = 0 THEN NULL
+                      WHEN AVG(progresso) >= 100 THEN 'concluido'
+                      WHEN AVG(progresso) > :minimo THEN 'execucao'
+                      WHEN AVG(progresso) = 0 THEN 'planejamento'
+                      ELSE NULL
+                    END AS destino
+               FROM projeto_tarefas
+              WHERE projeto_id = :projetoId AND ativo = 1) novo
+      WHERE p.id = :projetoId
+        AND p.status IN ('planejamento', 'execucao', 'paralisado')`,
+    { projetoId, minimo: PROGRESSO_MINIMO_EXECUCAO },
+  );
+}
+
+/**
+ * Paralisa projetos parados há muito tempo.
+ *
+ * "Parado" é não ter nenhum movimento — de cronograma, de progresso ou
+ * de cadastro — pelo período informado. `atualizado_em` serve de relógio
+ * porque toda mutação de cronograma passa por `recalcularPeriodo`, que o
+ * atualiza.
+ *
+ * Só mexe em quem está em execução: paralisar um projeto em
+ * planejamento seria dizer que ele parou, quando na verdade ele ainda
+ * não começou.
+ *
+ * Roda no lote das rotinas, não na leitura: efeito colateral em
+ * consulta faria a mesma tela devolver coisas diferentes conforme quem
+ * a abriu primeiro. Devolve quantos foram paralisados, para a rotina
+ * poder relatar.
+ */
+export async function paralisarProjetosSemMovimento(dias: number): Promise<number> {
+  return executar(
+    `UPDATE projetos
+        SET status = 'paralisado', atualizado_em = LOCALTIMESTAMP
+      WHERE status = 'execucao'
+        AND atualizado_em < LOCALTIMESTAMP - make_interval(days => :dias)`,
+    { dias },
+  );
+}
+
 /**
  * Propaga o cronograma e depois fecha o período do projeto, nesta
  * ordem.
@@ -635,6 +711,9 @@ async function recalcularPeriodo(projetoId: string): Promise<void> {
 async function propagarCronograma(projetoId: string): Promise<void> {
   await reagendarProjeto(projetoId);
   await recalcularPeriodo(projetoId);
+  // Por último: a situação é conclusão do cronograma, e lê a média que
+  // as duas passadas acima acabaram de deixar consistente.
+  await sincronizarStatusPorProgresso(projetoId);
 }
 
 /** Mesma coisa, quando só se tem a tarefa em mãos. */
@@ -836,6 +915,11 @@ export async function excluirProjeto(ctx: ContextoUsuario, id: string): Promise<
  * Voltar para `backlog` não passa por aqui: tem regra própria em
  * `devolverAoBacklog`, que recusa projeto com cronograma e recalcula a
  * posição na fila.
+ *
+ * A escolha manual continua valendo e não é bloqueada: o ajuste
+ * automático por progresso só age nas três fronteiras (0%, acima de 1%,
+ * 100%), e entre elas o que o gerente marcou permanece. Paralisar à mão
+ * é o caso típico — dura até alguém lançar progresso de novo.
  */
 export async function definirStatusProjeto(
   ctx: ContextoUsuario,
@@ -1021,6 +1105,14 @@ export async function moverTarefa(
       WHERE id = :id`,
     { id, quadro, concluida: deBool(concluida), emAndamento: deBool(emAndamento) },
   );
+
+  // Arrastar no kanban mexe no progresso, e progresso agora decide a
+  // situação do projeto. As datas não mudam aqui, então basta o status.
+  const t = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
+    { id },
+  );
+  if (t) await sincronizarStatusPorProgresso(t.projetoId);
 }
 
 /**

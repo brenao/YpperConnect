@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
+  ArrowUpRight,
   GripVertical,
   LayoutGrid,
   List,
@@ -17,6 +18,7 @@ import { ProjectDialog } from "@/views/project-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
 import {
   QUADRANTE_LABEL,
   calcularScore,
@@ -61,6 +63,22 @@ function comoProjeto(p: ProjetoBacklog): Projeto {
   return p as unknown as Projeto;
 }
 
+/** Cor da tarja por situação: verde anda, vermelho parou, cinza encerrou. */
+function classeStatus(status: string): string {
+  switch (status) {
+    case "execucao":
+      return "border-success/40 text-success";
+    case "planejamento":
+      return "border-info/40 text-info";
+    case "paralisado":
+      return "border-warning/40 text-warning";
+    case "cancelado":
+      return "border-destructive/40 text-destructive";
+    default:
+      return "";
+  }
+}
+
 function Backlog() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
@@ -72,6 +90,17 @@ function Backlog() {
   const modelo: ModeloPriorizacao = q.data?.modelo ?? "simples";
   const podeGerir = q.data?.podeGerir ?? false;
   const itens = useMemo(() => q.data?.demandas ?? [], [q.data]);
+
+  /**
+   * A tela virou o índice do portfólio, então separa os dois mundos.
+   *
+   * Na fila: o que ainda é decisão, com ordem arrastável e pontuação.
+   * Já priorizados: o que virou compromisso, só para consulta — a
+   * ordem ali é do cronograma, não da priorização, e arrastar não
+   * significaria nada.
+   */
+  const naFila = useMemo(() => itens.filter((d) => d.status === "backlog"), [itens]);
+  const priorizados = useMemo(() => itens.filter((d) => d.status !== "backlog"), [itens]);
 
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["backlog"] });
@@ -90,7 +119,7 @@ function Backlog() {
     onSuccess: () => {
       invalidar();
       toast.success("Projeto priorizado", {
-        description: "Ele saiu do backlog e já aparece em Projetos, pronto para o cronograma.",
+        description: "Ele saiu da fila e agora aparece entre os projetos em andamento.",
       });
     },
     onError: erro,
@@ -105,21 +134,30 @@ function Backlog() {
     onError: erro,
   });
 
-  const visiveis = useMemo(() => {
+  function filtrar(lista: ProjetoBacklog[]): ProjetoBacklog[] {
     const t = busca.trim().toLowerCase();
-    if (!t) return itens;
-    return itens.filter((d) =>
+    if (!t) return lista;
+    return lista.filter((d) =>
       `${d.nome} ${d.objetivo ?? ""} ${d.areaDemandante ?? ""} ${d.justificativa ?? ""}`
         .toLowerCase()
         .includes(t),
     );
-  }, [itens, busca]);
+  }
 
-  /** Arrasto nativo: a ordem só vai ao servidor quando solta. */
+  const filaVisivel = filtrar(naFila);
+  const priorizadosVisiveis = filtrar(priorizados);
+
+  /**
+   * Arrasto nativo: a ordem só vai ao servidor quando solta.
+   *
+   * Opera apenas sobre a fila — o índice vem de `naFila`, não da lista
+   * inteira, senão a posição gravada contaria projetos que já saíram da
+   * priorização.
+   */
   function aoSoltar(alvoId: string) {
     if (!arrastando || arrastando === alvoId) return;
 
-    const ids = itens.map((d) => d.id);
+    const ids = naFila.map((d) => d.id);
     const de = ids.indexOf(arrastando);
     const para = ids.indexOf(alvoId);
     if (de < 0 || para < 0) return;
@@ -129,12 +167,13 @@ function Backlog() {
     reordenar.mutate(ids);
   }
 
-  const semPontuacao = itens.filter((d) => calcularScore(modelo, d) === null).length;
+  const semPontuacao = naFila.filter((d) => calcularScore(modelo, d) === null).length;
+  const emExecucao = priorizados.filter((d) => d.status === "execucao").length;
 
   return (
     <AppShell
       title="Backlog de projetos"
-      subtitle="O que foi pedido e ainda aguarda priorização. Nada aqui consome capacidade nem cobra acompanhamento."
+      subtitle="A carteira inteira num lugar só: o que aguarda decisão no topo, o que já foi priorizado logo abaixo."
     >
       <div className="space-y-4">
         {q.error ? (
@@ -143,11 +182,18 @@ function Backlog() {
           </div>
         ) : null}
 
-        <section className="grid gap-4 sm:grid-cols-3">
+        <section className="grid gap-4 sm:grid-cols-4">
           <div className="panel p-5">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Na fila</p>
-            <p className="mt-2 font-mono text-3xl font-semibold">{itens.length}</p>
+            <p className="mt-2 font-mono text-3xl font-semibold">{naFila.length}</p>
             <p className="mt-1 text-xs text-muted-foreground">projeto(s) aguardando decisão</p>
+          </div>
+          <div className="panel p-5">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Já priorizados</p>
+            <p className="mt-2 font-mono text-3xl font-semibold">{priorizados.length}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {emExecucao} em execução no momento
+            </p>
           </div>
           <div className="panel p-5">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Sem pontuação</p>
@@ -220,33 +266,70 @@ function Backlog() {
           </p>
         ) : itens.length === 0 ? (
           <div className="panel px-5 py-12 text-center">
-            <p className="text-sm font-medium">Backlog vazio.</p>
+            <p className="text-sm font-medium">Nenhum projeto cadastrado.</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Registre aqui o que foi pedido mas ainda não foi decidido. Projeto no backlog não
-              cobra acompanhamento semanal nem ocupa a capacidade da equipe — e entra na carteira no
-              dia em que for priorizado.
+              Registre aqui o que foi pedido mas ainda não foi decidido. Projeto na fila não cobra
+              acompanhamento semanal nem ocupa a capacidade da equipe — e entra na carteira no dia
+              em que for priorizado.
             </p>
           </div>
         ) : visao === "matriz" ? (
-          <Matriz itens={visiveis} modelo={modelo} />
+          /* A matriz é ferramenta de decisão: só quem ainda está na fila
+             entra. Posicionar projeto em execução num quadrante sugeriria
+             que ele ainda pode ser descartado. */
+          <Matriz itens={filaVisivel} modelo={modelo} />
         ) : (
-          <ol className="space-y-2">
-            {visiveis.map((d, i) => (
-              <LinhaBacklog
-                key={d.id}
-                posicao={i + 1}
-                item={d}
-                modelo={modelo}
-                podeGerir={podeGerir}
-                arrastavel={podeGerir && busca.trim() === ""}
-                promovendo={promover.isPending}
-                onArrastarInicio={() => setArrastando(d.id)}
-                onSoltar={() => aoSoltar(d.id)}
-                onPromover={() => promover.mutate(d.id)}
-                onDescartar={() => descartar.mutate(d.id)}
-              />
-            ))}
-          </ol>
+          <div className="space-y-6">
+            <section className="space-y-2">
+              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
+                Na fila de priorização
+              </h2>
+              {filaVisivel.length === 0 ? (
+                <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
+                  {naFila.length === 0
+                    ? "Nada aguardando decisão no momento."
+                    : "Nenhum projeto da fila corresponde à busca."}
+                </p>
+              ) : (
+                <ol className="space-y-2">
+                  {filaVisivel.map((d, i) => (
+                    <LinhaBacklog
+                      key={d.id}
+                      posicao={i + 1}
+                      item={d}
+                      modelo={modelo}
+                      podeGerir={podeGerir}
+                      arrastavel={podeGerir && busca.trim() === ""}
+                      promovendo={promover.isPending}
+                      onArrastarInicio={() => setArrastando(d.id)}
+                      onSoltar={() => aoSoltar(d.id)}
+                      onPromover={() => promover.mutate(d.id)}
+                      onDescartar={() => descartar.mutate(d.id)}
+                    />
+                  ))}
+                </ol>
+              )}
+            </section>
+
+            {priorizados.length > 0 ? (
+              <section className="space-y-2">
+                <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Já priorizados
+                </h2>
+                {priorizadosVisiveis.length === 0 ? (
+                  <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
+                    Nenhum projeto priorizado corresponde à busca.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {priorizadosVisiveis.map((d) => (
+                      <LinhaPriorizada key={d.id} item={d} modelo={modelo} />
+                    ))}
+                  </ul>
+                )}
+              </section>
+            ) : null}
+          </div>
         )}
 
         {podeGerir && visao === "lista" && busca.trim() !== "" ? (
@@ -377,6 +460,67 @@ function LinhaBacklog({
 }
 
 /**
+ * Linha do que já saiu da fila.
+ *
+ * Sem arrasto, sem priorizar, sem descartar: aqui a decisão já foi
+ * tomada, e as ações da fila não fazem mais sentido. O que interessa é
+ * a situação e o quanto andou — e o caminho para o cronograma.
+ */
+function LinhaPriorizada({ item: d, modelo }: { item: ProjetoBacklog; modelo: ModeloPriorizacao }) {
+  const encerrado = d.status === "concluido" || d.status === "cancelado";
+  const resumo = d.objetivo ?? d.justificativa;
+
+  return (
+    <li className={cn("panel flex items-start gap-3 p-4", encerrado ? "opacity-60" : "")}>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{d.nome}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          {d.areaDemandante ?? "Sem área"}
+          {d.gerenteNome ? ` · ${d.gerenteNome}` : ""}
+        </p>
+        {resumo ? (
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{resumo}</p>
+        ) : null}
+
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className={cn("text-[10px]", classeStatus(d.status))}>
+            {PROJECT_STATUS_LABEL[d.status as ProjectStatus] ?? d.status}
+          </Badge>
+          <Badge variant="outline" className="font-mono text-[10px]">
+            {d.progresso}%
+          </Badge>
+          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-secondary">
+            <span
+              className="block h-full rounded-full bg-primary/70"
+              style={{ width: `${d.progresso}%` }}
+            />
+          </span>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <ProjectDialog
+          project={comoProjeto(d)}
+          modelo={modelo}
+          trigger={
+            <Button variant="ghost" size="icon" className="size-7" title="Editar projeto">
+              <Pencil className="size-3.5" />
+            </Button>
+          }
+        />
+        <Link
+          to="/projetos/$projectId"
+          params={{ projectId: d.id }}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-primary hover:underline"
+        >
+          Cronograma <ArrowUpRight className="size-3.5" />
+        </Link>
+      </div>
+    </li>
+  );
+}
+
+/**
  * Matriz valor × esforço.
  *
  * É o artefato que funciona numa reunião de priorização: mostra de
@@ -447,7 +591,7 @@ function Matriz({ itens, modelo }: { itens: ProjetoBacklog[]; modelo: ModeloPrio
 
       {semPontuacao.length > 0 ? (
         <p className="text-xs text-muted-foreground">
-          {semPontuacao.length} projeto(s) fora da matriz por falta de valor ou esforço.
+          {semPontuacao.length} projeto(s) da fila fora da matriz por falta de valor ou esforço.
         </p>
       ) : null}
     </div>
