@@ -136,10 +136,39 @@ const usuarioVazio: FormUsuario = {
   admin: false,
 };
 
-function UserDialog({ user, trigger }: { user?: Usuario; trigger: ReactNode }) {
+/**
+ * Diálogo de usuário.
+ *
+ * Aceita ser controlado de fora para a lista poder abrir a edição pelo
+ * clique na linha, mantendo uma única instância montada: antes havia um
+ * Dialog por linha, e com a base do GLPI isso eram centenas de
+ * componentes só esperando um clique que quase nunca vinha.
+ */
+function UserDialog({
+  user,
+  trigger,
+  open: openProp,
+  onOpenChange,
+}: {
+  user?: Usuario | undefined;
+  trigger?: ReactNode | undefined;
+  open?: boolean | undefined;
+  onOpenChange?: ((v: boolean) => void) | undefined;
+}) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [interno, setInterno] = useState(false);
+  const open = openProp ?? interno;
+  const setOpen = onOpenChange ?? setInterno;
   const [form, setForm] = useState<FormUsuario>(usuarioVazio);
+
+  /**
+   * Só marca os campos em vermelho depois da primeira tentativa.
+   *
+   * Pintar de erro um formulário recém-aberto acusa a pessoa de algo
+   * que ela ainda não teve chance de fazer. Antes disso, o toast era o
+   * único aviso — e ele some sem dizer qual campo estava errado.
+   */
+  const [tentou, setTentou] = useState(false);
 
   const equipes = useQuery({
     queryKey: ["equipes"],
@@ -150,6 +179,7 @@ function UserDialog({ user, trigger }: { user?: Usuario; trigger: ReactNode }) {
 
   useEffect(() => {
     if (!open) return;
+    setTentou(false);
     setForm(
       user
         ? {
@@ -186,17 +216,24 @@ function UserDialog({ user, trigger }: { user?: Usuario; trigger: ReactNode }) {
 
   const salvando = criar.isPending || atualizar.isPending;
 
+  // Uma fonte só para a regra: o texto embaixo do campo, a borda
+  // vermelha e a recusa ao salvar leem daqui. Duplicar a condição faria
+  // o campo ficar vermelho sem impedir o envio, ou o contrário.
+  const erroNome = form.nome.trim().length < 3 ? "Informe o nome completo." : null;
+  const erroEmail =
+    form.email.trim() === ""
+      ? "Campo obrigatório."
+      : !form.email.includes("@")
+        ? "Informe um e-mail válido."
+        : null;
+  const erroLogin = form.login.trim().length < 3 ? "Informe o login de rede." : null;
+
+  const classeErro = "border-destructive focus-visible:ring-destructive/40";
+
   function salvar() {
-    if (form.nome.trim().length < 3) {
-      toast.error("Informe o nome completo.");
-      return;
-    }
-    if (!form.email.includes("@")) {
-      toast.error("Informe um e-mail válido.");
-      return;
-    }
-    if (form.login.trim().length < 3) {
-      toast.error("Informe o login de rede.");
+    setTentou(true);
+    if (erroNome || erroEmail || erroLogin) {
+      toast.error("Revise os campos destacados.");
       return;
     }
 
@@ -222,7 +259,7 @@ function UserDialog({ user, trigger }: { user?: Usuario; trigger: ReactNode }) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{user ? "Editar usuário" : "Novo usuário"}</DialogTitle>
@@ -234,31 +271,49 @@ function UserDialog({ user, trigger }: { user?: Usuario; trigger: ReactNode }) {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>Nome completo</Label>
+            <Label htmlFor="usr-nome">
+              Nome completo <span className="text-destructive">*</span>
+            </Label>
             <Input
+              id="usr-nome"
               maxLength={200}
+              aria-invalid={tentou && erroNome !== null}
+              className={tentou && erroNome ? classeErro : undefined}
               value={form.nome}
               onChange={(e) => setForm({ ...form, nome: e.target.value })}
             />
+            {tentou && erroNome ? <p className="text-xs text-destructive">{erroNome}</p> : null}
           </div>
           <div className="space-y-1.5">
-            <Label>E-mail</Label>
+            <Label htmlFor="usr-email">
+              E-mail <span className="text-destructive">*</span>
+            </Label>
             <Input
+              id="usr-email"
               type="email"
               maxLength={320}
+              aria-invalid={tentou && erroEmail !== null}
+              className={tentou && erroEmail ? classeErro : undefined}
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
             />
+            {tentou && erroEmail ? <p className="text-xs text-destructive">{erroEmail}</p> : null}
           </div>
           <div className="space-y-1.5">
-            <Label>Login de rede</Label>
+            <Label htmlFor="usr-login">
+              Login de rede <span className="text-destructive">*</span>
+            </Label>
             <Input
+              id="usr-login"
               maxLength={120}
               disabled={!!user}
+              aria-invalid={tentou && erroLogin !== null}
+              className={tentou && erroLogin ? classeErro : undefined}
               value={form.login}
               onChange={(e) => setForm({ ...form, login: e.target.value })}
               placeholder="ROSSET\usuario"
             />
+            {tentou && erroLogin ? <p className="text-xs text-destructive">{erroLogin}</p> : null}
           </div>
           <div className="space-y-1.5">
             <Label>Departamento</Label>
@@ -624,11 +679,15 @@ function TabelaUsuarios({
   usuarios,
   isAdmin,
   alternando,
+  nomeDoPerfil,
+  onEditar,
   onAlternar,
 }: {
   usuarios: Usuario[];
   isAdmin: boolean;
   alternando: boolean;
+  nomeDoPerfil: (id: string | null) => string;
+  onEditar: (u: Usuario) => void;
   onAlternar: (id: string, ativo: boolean) => void;
 }) {
   return (
@@ -639,6 +698,7 @@ function TabelaUsuarios({
             <th className="px-4 py-2 font-medium">Usuário</th>
             <th className="px-4 py-2 font-medium">Departamento</th>
             <th className="px-4 py-2 font-medium">Equipe</th>
+            <th className="px-4 py-2 font-medium">Perfil de acesso</th>
             <th className="px-4 py-2 font-medium">Origem</th>
             <th className="px-4 py-2 font-medium">Situação</th>
             <th className="px-4 py-2" />
@@ -646,7 +706,19 @@ function TabelaUsuarios({
         </thead>
         <tbody>
           {usuarios.map((u) => (
-            <tr key={u.id} className={`border-b border-border/60 ${u.ativo ? "" : "opacity-60"}`}>
+            /* A linha inteira abre a edição: o lápis era um alvo de 14px
+               numa linha de 900, e quem quer editar clica no nome. O
+               botão de ativar/desativar para a propagação para não
+               abrir o diálogo junto. */
+            <tr
+              key={u.id}
+              onClick={isAdmin ? () => onEditar(u) : undefined}
+              className={cn(
+                "border-b border-border/60",
+                u.ativo ? "" : "opacity-60",
+                isAdmin ? "cursor-pointer transition-colors hover:bg-secondary/40" : "",
+              )}
+            >
               <td className="px-4 py-2">
                 <span className="flex items-center gap-2">
                   {u.nome}
@@ -661,6 +733,15 @@ function TabelaUsuarios({
               <td className="px-4 py-2 text-muted-foreground">{u.departamento ?? "—"}</td>
               <td className="px-4 py-2 text-muted-foreground">{u.equipeNome ?? "—"}</td>
               <td className="px-4 py-2">
+                {u.perfilId ? (
+                  <Badge variant="outline" className="text-[10px]">
+                    {nomeDoPerfil(u.perfilId)}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-warning">Sem perfil</span>
+                )}
+              </td>
+              <td className="px-4 py-2">
                 <Badge variant="outline" className="text-[10px] uppercase">
                   {u.origem}
                 </Badge>
@@ -674,22 +755,17 @@ function TabelaUsuarios({
               </td>
               <td className="px-4 py-2">
                 {isAdmin ? (
-                  <span className="flex justify-end gap-1">
-                    <UserDialog
-                      user={u}
-                      trigger={
-                        <Button variant="ghost" size="icon" className="size-7" title="Editar">
-                          <Pencil className="size-3.5" />
-                        </Button>
-                      }
-                    />
+                  <span className="flex justify-end">
                     <Button
                       variant="ghost"
                       size="icon"
                       className="size-7"
                       title={u.ativo ? "Desativar" : "Reativar"}
                       disabled={alternando}
-                      onClick={() => onAlternar(u.id, !u.ativo)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAlternar(u.id, !u.ativo);
+                      }}
                     >
                       {u.ativo ? (
                         <EyeOff className="size-3.5 text-muted-foreground" />
@@ -714,6 +790,9 @@ function Administracao() {
   const [mostrarInativos, setMostrarInativos] = useState(false);
   const [filtroCartao, setFiltroCartao] = useState<FiltroCartao>("todos");
   const [aba, setAba] = useState("usuarios");
+  // Um diálogo só para a lista inteira, aberto pela linha clicada.
+  const [usuarioEditando, setUsuarioEditando] = useState<Usuario | undefined>(undefined);
+  const [edicaoAberta, setEdicaoAberta] = useState(false);
 
   const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
   const usuariosQuery = useQuery({ queryKey: ["usuarios"], queryFn: () => listarUsuariosFn() });
@@ -725,6 +804,10 @@ function Administracao() {
   // perto da de usuários, e cruzar aqui evita uma consulta nova no
   // servidor só para responder "esta pessoa recebe tarefa?".
   const recursosQuery = useQuery({ queryKey: ["recursos"], queryFn: () => listarRecursosFn() });
+  // O nome do perfil não vem na lista de usuários, só o id. A lista de
+  // perfis tem meia dúzia de linhas: cruzar aqui sai mais barato do que
+  // acrescentar um JOIN que toda tela de usuário passaria a pagar.
+  const perfisQuery = useQuery({ queryKey: ["perfis"], queryFn: () => listarPerfisFn() });
   const notificacoes = useQuery({
     queryKey: ["notificacoes"],
     queryFn: () => listarNotificacoesFn(),
@@ -733,6 +816,11 @@ function Administracao() {
   const isAdmin = usuario.data?.admin ?? false;
   const usuarios = useMemo(() => usuariosQuery.data ?? [], [usuariosQuery.data]);
   const sistemas = useMemo(() => sistemasQuery.data ?? [], [sistemasQuery.data]);
+
+  const nomeDoPerfil = useMemo(() => {
+    const mapa = new Map((perfisQuery.data ?? []).map((p) => [p.id, p.nome]));
+    return (id: string | null) => (id ? (mapa.get(id) ?? "Perfil removido") : "Sem perfil");
+  }, [perfisQuery.data]);
 
   /** Ids de usuário que têm recurso ativo — são os que recebem tarefa. */
   const usuariosComRecurso = useMemo(() => {
@@ -859,6 +947,11 @@ function Administracao() {
 
   const carregando = usuariosQuery.isPending || sistemasQuery.isPending;
 
+  function abrirEdicao(u: Usuario) {
+    setUsuarioEditando(u);
+    setEdicaoAberta(true);
+  }
+
   function alternarCartao(f: FiltroCartao) {
     setFiltroCartao((atual) => (atual === f ? "todos" : f));
     setAba("usuarios");
@@ -961,6 +1054,12 @@ function Administracao() {
               ) : null}
             </div>
 
+            {isAdmin ? (
+              <p className="text-xs text-muted-foreground">
+                Clique em qualquer linha para editar o usuário.
+              </p>
+            ) : null}
+
             {filtroCartao !== "todos" ? (
               <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 Mostrando apenas {filtroCartao === "admins" ? "administradores" : "atendentes"}.
@@ -990,6 +1089,8 @@ function Administracao() {
                     usuarios={paginaComRecurso.visiveis}
                     isAdmin={isAdmin}
                     alternando={alternarUsuario.isPending}
+                    nomeDoPerfil={nomeDoPerfil}
+                    onEditar={abrirEdicao}
                     onAlternar={(id, ativo) => alternarUsuario.mutate({ id, ativo })}
                   />
                   <Paginacao {...paginaComRecurso.controles} rotulo="com recurso" />
@@ -1012,6 +1113,8 @@ function Administracao() {
                     usuarios={paginaSemRecurso.visiveis}
                     isAdmin={isAdmin}
                     alternando={alternarUsuario.isPending}
+                    nomeDoPerfil={nomeDoPerfil}
+                    onEditar={abrirEdicao}
                     onAlternar={(id, ativo) => alternarUsuario.mutate({ id, ativo })}
                   />
                   <Paginacao {...paginaSemRecurso.controles} rotulo="usuários" />
@@ -1235,6 +1338,17 @@ function Administracao() {
           </TabsContent>
         </Tabs>
       )}
+
+      {/* Fora das abas: é a linha da tabela que o abre, e mantê-lo aqui
+          evita remontá-lo a cada troca de aba ou de página. */}
+      <UserDialog
+        user={usuarioEditando}
+        open={edicaoAberta}
+        onOpenChange={(v) => {
+          setEdicaoAberta(v);
+          if (!v) setUsuarioEditando(undefined);
+        }}
+      />
     </AppShell>
   );
 }

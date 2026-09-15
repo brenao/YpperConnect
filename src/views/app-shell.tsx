@@ -31,13 +31,21 @@ import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functio
  */
 const PORTAL_CHAMADOS = (import.meta.env["VITE_URL_ABRIR_CHAMADO"] ?? "").trim();
 
+/**
+ * A ordem do menu é a da jornada, não a do histórico do produto.
+ *
+ * Visão diretoria vem primeiro porque é a tela inicial de quem tem
+ * acesso a ela — a raiz redireciona para lá. Um item de menu que é o
+ * destino padrão e aparece no meio da lista faz a pessoa procurar onde
+ * já está.
+ */
 const nav = [
+  { to: "/diretoria", label: "Visão diretoria", icon: PieChart },
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
   { to: "/chamados", label: "Chamados", icon: Ticket },
   { to: "/backlog", label: "Backlog de Projetos", icon: Inbox },
   { to: "/projetos", label: "Projetos e cronograma", icon: GanttChartSquare },
   { to: "/recursos", label: "Recursos e capacidade", icon: Users },
-  { to: "/diretoria", label: "Visão diretoria", icon: PieChart },
   { to: "/catalogo", label: "Catálogo de serviços", icon: Boxes },
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },
   { to: "/governanca", label: "Governança ITIL", icon: ShieldCheck },
@@ -51,10 +59,10 @@ const nav = [
  *
  * Quem autentica é o OpenResty; a aplicação não tem sessão própria para
  * limpar. Sair é derrubar o token no sistema de login — depois disso, a
- * próxima visita a /beagleone é barrada pelo check-token.lua e redirecionada
+ * próxima visita a /ypper é barrada pelo check-token.lua e redirecionada
  * para a tela de login.
  *
- * A URL é montada a partir da origem porque /vuelogin e /beagleone são
+ * A URL é montada a partir da origem porque /vuelogin e /ypper são
  * caminhos do mesmo domínio: assim teste e produção funcionam sem
  * configuração, e não há endereço fixo para alguém esquecer de trocar.
  */

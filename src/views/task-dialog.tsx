@@ -62,7 +62,6 @@ interface Form {
   progresso: number;
   quadro: QuadroTarefa;
   marco: boolean;
-  alocacao: number;
   responsaveis: string[];
   predecessoras: string[];
 }
@@ -103,7 +102,6 @@ export function TaskDialog({
     progresso: 0,
     quadro: "backlog",
     marco: false,
-    alocacao: 100,
     responsaveis: [],
     predecessoras: [],
   });
@@ -127,7 +125,6 @@ export function TaskDialog({
             progresso: tarefa.progresso,
             quadro: tarefa.quadro,
             marco: tarefa.marco,
-            alocacao: tarefa.alocacaoPct ?? 100,
             responsaveis: responsaveisAtuais ?? [],
             predecessoras: predecessorasAtuais ?? [],
           }
@@ -199,7 +196,6 @@ export function TaskDialog({
       progresso: form.progresso,
       quadro: form.quadro,
       marco: form.marco,
-      alocacaoPct: form.alocacao,
       responsaveis: form.responsaveis,
       predecessoras: form.predecessoras,
     };
@@ -219,8 +215,9 @@ export function TaskDialog({
         <DialogHeader>
           <DialogTitle>{tarefa ? "Editar tarefa" : "Nova tarefa"}</DialogTitle>
           <DialogDescription>
-            O término é calculado a partir do esforço, da alocação e da capacidade diária de quem
-            executa. Para ajustar a data final à mão, use a grade do cronograma.
+            O término é calculado a partir do esforço e da capacidade diária de quem executa —
+            aquele percentual definido em Recursos. Para ajustar a data final à mão, use a grade do
+            cronograma.
           </DialogDescription>
         </DialogHeader>
 
@@ -329,36 +326,33 @@ export function TaskDialog({
             </div>
           </div>
 
+          {/* Barra e campo apontam para o mesmo valor: a barra serve para
+              o ajuste grosseiro, o campo para quem já sabe o número e
+              não quer caçar a marca de 35% arrastando. */}
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
-              <Label>Progresso</Label>
-              <span className="font-mono text-sm">{form.progresso}%</span>
+              <Label htmlFor="tsk-progresso">Progresso</Label>
+              <span className="flex items-center gap-1">
+                <Input
+                  id="tsk-progresso"
+                  inputMode="numeric"
+                  className="h-8 w-16 text-right font-mono"
+                  value={String(form.progresso)}
+                  onChange={(e) => {
+                    const n = Number(e.target.value.replace(/\D/g, ""));
+                    setForm({ ...form, progresso: Math.min(100, Number.isFinite(n) ? n : 0) });
+                  }}
+                />
+                <span className="text-sm text-muted-foreground">%</span>
+              </span>
             </div>
             <Slider
               min={0}
               max={100}
-              step={5}
+              step={1}
               value={[form.progresso]}
               onValueChange={([v]) => setForm({ ...form, progresso: v ?? 0 })}
             />
-          </div>
-
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between">
-              <Label>Alocação do responsável</Label>
-              <span className="font-mono text-sm">{form.alocacao}%</span>
-            </div>
-            <Slider
-              min={0}
-              max={100}
-              step={10}
-              value={[form.alocacao]}
-              onValueChange={([v]) => setForm({ ...form, alocacao: v ?? 0 })}
-            />
-            <p className="text-xs text-muted-foreground">
-              Quanto da capacidade diária do responsável esta tarefa consome. Metade da alocação
-              dobra o prazo sem mudar o esforço.
-            </p>
           </div>
 
           <div className="grid gap-2">
