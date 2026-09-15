@@ -8,7 +8,10 @@
  */
 
 import { enfileirar } from "@/repositories/notificacoes.repo";
-import { projetosSemAtualizacao } from "@/repositories/projetos.repo";
+import {
+  paralisarProjetosSemMovimento,
+  projetosSemAtualizacao,
+} from "@/repositories/projetos.repo";
 
 /**
  * A partir de quantos dias sem atualização o gerente é cobrado.
@@ -18,11 +21,28 @@ import { projetosSemAtualizacao } from "@/repositories/projetos.repo";
  */
 const DIAS_PARA_AVISAR = 6;
 
+/**
+ * A partir de quantos dias parado o projeto é dado como paralisado.
+ *
+ * Bem mais folgado que o prazo do lembrete, e de propósito: o e-mail
+ * cobra um registro esquecido, enquanto mudar o status é afirmar que o
+ * projeto de fato parou. Duas semanas e meia sem nenhum movimento — nem
+ * de cronograma, nem de progresso, nem de cadastro — é tempo suficiente
+ * para essa afirmação não ser precipitada.
+ *
+ * Sair de paralisado não depende de prazo nenhum: o primeiro percentual
+ * lançado devolve o projeto para execução, pelo ajuste automático que
+ * roda a cada mudança de cronograma.
+ */
+const DIAS_PARA_PARALISAR = 15;
+
 export interface ResultadoLembretes {
   avaliados: number;
   enfileirados: number;
   semGerente: number;
   jaAvisadosHoje: number;
+  /** Projetos que a rotina marcou como paralisados nesta passada. */
+  paralisados: number;
 }
 
 /**
@@ -31,14 +51,22 @@ export interface ResultadoLembretes {
  * Um por projeto por dia, garantido pela própria fila de notificações:
  * a partir de 6 dias o aviso passa a sair todo dia até alguém registrar
  * a atualização. Rodar a rotina duas vezes no mesmo dia não duplica.
+ *
+ * A revisão de projetos parados vem antes da varredura, e não depois:
+ * assim o lembrete que sai nesta mesma execução já reflete a situação
+ * que a rotina acabou de gravar, em vez de descrever um estado que
+ * deixou de valer segundos atrás.
  */
 export async function gerarLembretesProjeto(): Promise<ResultadoLembretes> {
+  const paralisados = await paralisarProjetosSemMovimento(DIAS_PARA_PARALISAR);
+
   const projetos = await projetosSemAtualizacao(DIAS_PARA_AVISAR);
   const r: ResultadoLembretes = {
     avaliados: projetos.length,
     enfileirados: 0,
     semGerente: 0,
     jaAvisadosHoje: 0,
+    paralisados,
   };
 
   for (const p of projetos) {
