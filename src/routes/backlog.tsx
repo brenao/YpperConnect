@@ -7,13 +7,14 @@ import {
   LayoutGrid,
   List,
   Loader2,
-  Pencil,
+  Lock,
   Search,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { ProjectDialog } from "@/views/project-dialogs";
+import { DialogoSolicitarAcesso } from "@/views/dialogo-solicitar-acesso";
 import { Paginacao, usePaginacao } from "@/views/paginacao";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ import {
   promoverDemandaFn,
   descartarDemandaFn,
 } from "@/services/backlog.functions";
+import { idsComAcessoFn, listarMinhasSolicitacoesFn } from "@/services/acesso-projeto.functions";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/backlog")({
@@ -103,6 +105,16 @@ function pessoasDe(
   return [...mapa].map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome));
 }
 
+/**
+ * O que a pessoa pode fazer com aquela linha.
+ *
+ * Três estados, e não dois: sem acesso, pedido em análise, e acesso
+ * liberado. O estado do meio existe porque, sem ele, o botão continuaria
+ * dizendo "Solicitar acesso" depois de a pessoa já ter solicitado — e
+ * ela pediria de novo.
+ */
+type EstadoAcesso = "liberado" | "pendente" | "bloqueado";
+
 function Backlog() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
@@ -110,8 +122,51 @@ function Backlog() {
   const [filtroSponsor, setFiltroSponsor] = useState(TODOS);
   const [visao, setVisao] = useState<"lista" | "matriz">("lista");
   const [aba, setAba] = useState<"fila" | "priorizados">("fila");
+  // Uma instância só do formulário, aberta pela linha clicada. Um
+  // diálogo por linha seria centenas de componentes montados só para
+  // esperar um clique — o mesmo motivo que tirou o Dialog de dentro da
+  // tabela de usuários em Administração.
+  const [editando, setEditando] = useState<ProjetoBacklog | undefined>(undefined);
+  const [edicaoAberta, setEdicaoAberta] = useState(false);
 
-  const q = useQuery({ queryKey: ["backlog"], queryFn: () => listarBacklogFn() });
+  function abrirEdicao(d: ProjetoBacklog) {
+    setEditando(d);
+    setEdicaoAberta(true);
+  }
+
+  const q = useQuery({
+    queryKey: ["backlog"],
+    queryFn: () => listarBacklogFn(),
+  });
+
+  /**
+   * O backlog passou a listar a carteira inteira, e não só o que a
+   * pessoa pode abrir: ver o nome de todos os projetos é o que evita
+   * duas áreas cadastrarem a mesma demanda sem saber uma da outra.
+   *
+   * Estas duas consultas são o que separa "vejo o nome" de "posso
+   * abrir". Vêm de uma vez, e não por linha: são centenas de projetos na
+   * tela, e uma consulta por cartão seria uma enxurrada para responder
+   * algo que cabe em dois conjuntos.
+   */
+  const acessos = useQuery({
+    queryKey: ["ids-com-acesso"],
+    queryFn: () => idsComAcessoFn(),
+  });
+  const minhas = useQuery({
+    queryKey: ["minhas-solicitacoes"],
+    queryFn: () => listarMinhasSolicitacoesFn(),
+  });
+
+  const comAcesso = useMemo(() => new Set(acessos.data ?? []), [acessos.data]);
+  const pedidosPendentes = useMemo(
+    () =>
+      new Set((minhas.data ?? []).filter((s) => s.situacao === "pendente").map((s) => s.projetoId)),
+    [minhas.data],
+  );
+
+  const estadoDe = (id: string): EstadoAcesso =>
+    comAcesso.has(id) ? "liberado" : pedidosPendentes.has(id) ? "pendente" : "bloqueado";
 
   const modelo: ModeloPriorizacao = q.data?.modelo ?? "simples";
   const podeGerir = q.data?.podeGerir ?? false;
@@ -377,7 +432,9 @@ function Backlog() {
                         item={d}
                         modelo={modelo}
                         podeGerir={podeGerir}
+                        acesso={estadoDe(d.id)}
                         promovendo={promover.isPending}
+                        onEditar={() => abrirEdicao(d)}
                         onPromover={() => promover.mutate(d.id)}
                         onDescartar={() => descartar.mutate(d.id)}
                       />
@@ -401,7 +458,12 @@ function Backlog() {
                   <Paginacao {...paginaPriorizados.controles} rotulo="priorizados" posicao="topo" />
                   <ul className="divide-y divide-border">
                     {paginaPriorizados.visiveis.map((d) => (
-                      <LinhaPriorizada key={d.id} item={d} modelo={modelo} />
+                      <LinhaPriorizada
+                        key={d.id}
+                        item={d}
+                        acesso={estadoDe(d.id)}
+                        onEditar={() => abrirEdicao(d)}
+                      />
                     ))}
                   </ul>
                   <Paginacao {...paginaPriorizados.controles} rotulo="priorizados" />
@@ -411,7 +473,47 @@ function Backlog() {
           </Tabs>
         )}
       </div>
+
+      {/* Fora das abas: é a linha da lista que o abre, e mantê-lo aqui
+          evita remontá-lo a cada troca de aba ou de página. */}
+      <ProjectDialog
+        project={editando ? comoProjeto(editando) : undefined}
+        modelo={modelo}
+        open={edicaoAberta}
+        onOpenChange={(v) => {
+          setEdicaoAberta(v);
+          if (!v) setEditando(undefined);
+        }}
+      />
     </AppShell>
+  );
+}
+
+/**
+ * Ações de uma linha para quem ainda não tem acesso.
+ *
+ * O estado fica na própria linha, e não numa caixa de entrada separada:
+ * a pessoa descobre que o pedido está em análise no mesmo lugar onde
+ * ela pediu, sem precisar lembrar de visitar outra tela.
+ */
+function AcoesSemAcesso({ item: d, acesso }: { item: ProjetoBacklog; acesso: EstadoAcesso }) {
+  if (acesso === "pendente") {
+    return (
+      <Badge variant="outline" className="border-warning/40 text-[10px] text-warning">
+        Acesso em análise
+      </Badge>
+    );
+  }
+  return (
+    <DialogoSolicitarAcesso
+      projetoId={d.id}
+      projetoNome={d.nome}
+      trigger={
+        <Button variant="outline" size="sm" className="gap-1.5">
+          <Lock className="size-3.5" /> Solicitar acesso
+        </Button>
+      }
+    />
   );
 }
 
@@ -420,28 +522,49 @@ function LinhaBacklog({
   item: d,
   modelo,
   podeGerir,
+  acesso,
   promovendo,
   onPromover,
   onDescartar,
+  onEditar,
 }: {
   posicao: number;
   item: ProjetoBacklog;
   modelo: ModeloPriorizacao;
   podeGerir: boolean;
+  acesso: EstadoAcesso;
   promovendo: boolean;
   onPromover: () => void;
   onDescartar: () => void;
+  onEditar: () => void;
 }) {
   const score = calcularScore(modelo, d);
   const quadrante = quadranteDe(d);
-  const resumo = d.objetivo ?? d.justificativa;
+  const liberado = acesso === "liberado";
+  // Sem acesso, o resumo não aparece: o combinado é que todo mundo veja
+  // o nome para não cadastrar em duplicidade, não que todo mundo leia o
+  // objetivo e a justificativa de qualquer área.
+  const resumo = liberado ? (d.objetivo ?? d.justificativa) : null;
 
   return (
-    <li className="flex items-start gap-3 p-4">
+    /* A linha inteira abre a edição: o lápis era um alvo de 14px numa
+       linha de 900, e quem quer editar clica no nome. As ações param a
+       propagação para não abrir o formulário junto. Sem acesso não há o
+       que editar, e aí a linha não é clicável. */
+    <li
+      onClick={liberado ? onEditar : undefined}
+      className={cn(
+        "flex items-start gap-3 p-4",
+        liberado ? "cursor-pointer transition-colors hover:bg-secondary/40" : "",
+      )}
+    >
       <span className="mt-0.5 w-6 shrink-0 font-mono text-sm text-muted-foreground">{posicao}</span>
 
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{d.nome}</p>
+        <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+          {d.nome}
+          {d.sigiloso ? <Lock className="size-3 shrink-0 text-warning" /> : null}
+        </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {d.areaDemandante ?? "Sem área"}
           {d.gerenteNome ? ` · ${d.gerenteNome}` : ""}
@@ -451,52 +574,52 @@ function LinhaBacklog({
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{resumo}</p>
         ) : null}
 
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {score === null ? (
-            <Badge variant="outline" className="border-warning/40 text-[10px] text-warning">
-              Sem pontuação
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="font-mono text-[10px]">
-              score {score}
-            </Badge>
-          )}
-          {d.valor !== null ? (
-            <Badge variant="outline" className="text-[10px]">
-              valor {d.valor}
-            </Badge>
-          ) : null}
-          {d.esforco !== null ? (
-            <Badge variant="outline" className="text-[10px]">
-              esforço {rotuloEsforco(modelo, d.esforco)}
-            </Badge>
-          ) : null}
-          {quadrante ? (
-            <Badge variant="outline" className="text-[10px]">
-              {QUADRANTE_LABEL[quadrante]}
-            </Badge>
-          ) : null}
-        </div>
+        {liberado ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {score === null ? (
+              <Badge variant="outline" className="border-warning/40 text-[10px] text-warning">
+                Sem pontuação
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="font-mono text-[10px]">
+                score {score}
+              </Badge>
+            )}
+            {d.valor !== null ? (
+              <Badge variant="outline" className="text-[10px]">
+                valor {d.valor}
+              </Badge>
+            ) : null}
+            {d.esforco !== null ? (
+              <Badge variant="outline" className="text-[10px]">
+                esforço {rotuloEsforco(modelo, d.esforco)}
+              </Badge>
+            ) : null}
+            {quadrante ? (
+              <Badge variant="outline" className="text-[10px]">
+                {QUADRANTE_LABEL[quadrante]}
+              </Badge>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        <ProjectDialog
-          project={comoProjeto(d)}
-          modelo={modelo}
-          trigger={
-            <Button variant="ghost" size="icon" className="size-7" title="Editar projeto">
-              <Pencil className="size-3.5" />
-            </Button>
-          }
-        />
-        {podeGerir ? (
+        {!liberado ? (
+          <span onClick={(e) => e.stopPropagation()}>
+            <AcoesSemAcesso item={d} acesso={acesso} />
+          </span>
+        ) : podeGerir ? (
           <>
             <Button
               variant="ghost"
               size="icon"
               className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               title="Descartar"
-              onClick={onDescartar}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDescartar();
+              }}
             >
               <Trash2 className="size-3.5" />
             </Button>
@@ -506,7 +629,10 @@ function LinhaBacklog({
               className="gap-1.5"
               disabled={promovendo}
               title="Mover para Projetos e começar o cronograma"
-              onClick={onPromover}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPromover();
+              }}
             >
               Priorizar <ArrowRight className="size-3.5" />
             </Button>
@@ -524,14 +650,33 @@ function LinhaBacklog({
  * ações da fila não fazem mais sentido. O que interessa é a situação e
  * o quanto andou — e o caminho para o cronograma.
  */
-function LinhaPriorizada({ item: d, modelo }: { item: ProjetoBacklog; modelo: ModeloPriorizacao }) {
+function LinhaPriorizada({
+  item: d,
+  acesso,
+  onEditar,
+}: {
+  item: ProjetoBacklog;
+  acesso: EstadoAcesso;
+  onEditar: () => void;
+}) {
   const encerrado = d.status === "concluido" || d.status === "cancelado";
-  const resumo = d.objetivo ?? d.justificativa;
+  const liberado = acesso === "liberado";
+  const resumo = liberado ? (d.objetivo ?? d.justificativa) : null;
 
   return (
-    <li className={cn("flex items-start gap-3 p-4", encerrado ? "opacity-60" : "")}>
+    <li
+      onClick={liberado ? onEditar : undefined}
+      className={cn(
+        "flex items-start gap-3 p-4",
+        encerrado ? "opacity-60" : "",
+        liberado ? "cursor-pointer transition-colors hover:bg-secondary/40" : "",
+      )}
+    >
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{d.nome}</p>
+        <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+          {d.nome}
+          {d.sigiloso ? <Lock className="size-3 shrink-0 text-warning" /> : null}
+        </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {d.areaDemandante ?? "Sem área"}
           {d.gerenteNome ? ` · ${d.gerenteNome}` : ""}
@@ -545,35 +690,41 @@ function LinhaPriorizada({ item: d, modelo }: { item: ProjetoBacklog; modelo: Mo
           <Badge variant="outline" className={cn("text-[10px]", classeStatus(d.status))}>
             {PROJECT_STATUS_LABEL[d.status as ProjectStatus] ?? d.status}
           </Badge>
-          <Badge variant="outline" className="font-mono text-[10px]">
-            {d.progresso}%
-          </Badge>
-          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-secondary">
-            <span
-              className="block h-full rounded-full bg-primary/70"
-              style={{ width: `${d.progresso}%` }}
-            />
-          </span>
+          {/* Progresso só para quem tem acesso: é número de andamento
+              interno, não identificação do projeto. */}
+          {liberado ? (
+            <>
+              <Badge variant="outline" className="font-mono text-[10px]">
+                {d.progresso}%
+              </Badge>
+              <span className="h-1.5 w-24 overflow-hidden rounded-full bg-secondary">
+                <span
+                  className="block h-full rounded-full bg-primary/70"
+                  style={{ width: `${d.progresso}%` }}
+                />
+              </span>
+            </>
+          ) : null}
         </div>
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        <ProjectDialog
-          project={comoProjeto(d)}
-          modelo={modelo}
-          trigger={
-            <Button variant="ghost" size="icon" className="size-7" title="Editar projeto">
-              <Pencil className="size-3.5" />
-            </Button>
-          }
-        />
-        <Link
-          to="/projetos/$projectId"
-          params={{ projectId: d.id }}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-primary hover:underline"
-        >
-          Cronograma <ArrowUpRight className="size-3.5" />
-        </Link>
+        {!liberado ? (
+          <span onClick={(e) => e.stopPropagation()}>
+            <AcoesSemAcesso item={d} acesso={acesso} />
+          </span>
+        ) : (
+          /* O link navega; sem parar a propagação ele abriria o
+             formulário de edição no caminho de saída. */
+          <Link
+            to="/projetos/$projectId"
+            params={{ projectId: d.id }}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-primary hover:underline"
+          >
+            Cronograma <ArrowUpRight className="size-3.5" />
+          </Link>
+        )}
       </div>
     </li>
   );

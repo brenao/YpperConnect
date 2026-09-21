@@ -36,6 +36,21 @@ export const FEATURE_PROJETOS_DIRETORIA = "projetos.visao_diretoria";
  */
 export const FEATURE_PROJETOS_PORTFOLIO = "projetos.portfolio";
 
+/**
+ * Vê o instrutor de cronograma no detalhe do projeto.
+ *
+ * Diferente das duas de cima, esta não protege dado nenhum: o painel lê
+ * o que a pessoa já está vendo na tela. É preferência de uso — há quem
+ * queira a leitura automática do cronograma e há quem considere ruído
+ * numa tela já densa —, e por isso é ligada por perfil em vez de por
+ * usuário ou por um seletor escondido.
+ *
+ * Fora do perfil, o painel não aparece. A migration marca a chave nos
+ * perfis de sistema para que a mudança não apague um recurso que hoje
+ * está em uso.
+ */
+export const FEATURE_PROJETOS_COACH = "projetos.coach";
+
 export interface ContextoUsuario {
   id: string;
   nome: string;
@@ -54,6 +69,14 @@ export interface ContextoUsuario {
   /** Atalhos dos papéis de projeto, para não espalhar string mágica. */
   visaoDiretoriaProjetos: boolean;
   gestorPortfolio: boolean;
+  /**
+   * Instrutor de cronograma ligado.
+   *
+   * O administrador vê sempre: ele é quem configura a chave, e um
+   * recurso que ele não consegue enxergar é um recurso que ele não
+   * consegue avaliar antes de liberar para os outros.
+   */
+  coachProjetos: boolean;
 }
 
 /**
@@ -242,16 +265,18 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
   }
 
   const funcionalidades = (linha.funcionalidades ?? "").split(",").filter(Boolean);
+  const admin = linha.admin === 1;
 
   return {
     id: linha.id,
     nome: linha.nome,
     email: linha.email ?? "",
-    admin: linha.admin === 1,
+    admin,
     perfilId: linha.perfilId,
     equipeId: linha.equipeId,
     funcionalidades,
     visaoDiretoriaProjetos: funcionalidades.includes(FEATURE_PROJETOS_DIRETORIA),
     gestorPortfolio: funcionalidades.includes(FEATURE_PROJETOS_PORTFOLIO),
+    coachProjetos: admin || funcionalidades.includes(FEATURE_PROJETOS_COACH),
   };
 }

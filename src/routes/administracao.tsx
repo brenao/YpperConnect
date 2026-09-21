@@ -93,6 +93,17 @@ export const Route = createFileRoute("/administracao")({
 /** Radix não aceita SelectItem com value vazio. */
 const SEM = "__nenhum__";
 
+/**
+ * Texto que sempre dá para chamar `.trim()`.
+ *
+ * O tipo `Usuario` promete `nome`, `email` e `login` como string, mas a
+ * carga do GLPI grava nulo em quem não tem e-mail ou login de rede — e
+ * o diálogo explodia ao abrir essas linhas, antes mesmo de desenhar o
+ * formulário. A guarda fica na fronteira entre o dado e o estado do
+ * formulário, que é onde o nulo deixa de ser aceitável.
+ */
+const texto = (v: string | null | undefined): string => v ?? "";
+
 function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="panel p-4">
@@ -183,13 +194,13 @@ function UserDialog({
     setForm(
       user
         ? {
-            nome: user.nome,
-            email: user.email,
-            login: user.login,
-            departamento: user.departamento ?? "",
+            nome: texto(user.nome),
+            email: texto(user.email),
+            login: texto(user.login),
+            departamento: texto(user.departamento),
             equipeId: user.equipeId ?? SEM,
             perfilId: user.perfilId ?? SEM,
-            admin: user.admin,
+            admin: user.admin ?? false,
           }
         : usuarioVazio,
     );
@@ -219,14 +230,18 @@ function UserDialog({
   // Uma fonte só para a regra: o texto embaixo do campo, a borda
   // vermelha e a recusa ao salvar leem daqui. Duplicar a condição faria
   // o campo ficar vermelho sem impedir o envio, ou o contrário.
-  const erroNome = form.nome.trim().length < 3 ? "Informe o nome completo." : null;
+  //
+  // `texto()` de novo aqui, e não só na carga: quem veio do GLPI sem
+  // e-mail precisa cair na mensagem de campo obrigatório, não numa
+  // tela branca.
+  const nome = texto(form.nome).trim();
+  const email = texto(form.email).trim();
+  const login = texto(form.login).trim();
+
+  const erroNome = nome.length < 3 ? "Informe o nome completo." : null;
   const erroEmail =
-    form.email.trim() === ""
-      ? "Campo obrigatório."
-      : !form.email.includes("@")
-        ? "Informe um e-mail válido."
-        : null;
-  const erroLogin = form.login.trim().length < 3 ? "Informe o login de rede." : null;
+    email === "" ? "Campo obrigatório." : !email.includes("@") ? "Informe um e-mail válido." : null;
+  const erroLogin = login.length < 3 ? "Informe o login de rede." : null;
 
   const classeErro = "border-destructive focus-visible:ring-destructive/40";
 
@@ -238,10 +253,10 @@ function UserDialog({
     }
 
     const payload = {
-      nome: form.nome.trim(),
-      email: form.email.trim(),
-      login: form.login.trim(),
-      departamento: form.departamento.trim() || null,
+      nome,
+      email,
+      login,
+      departamento: texto(form.departamento).trim() || null,
       equipeId: form.equipeId === SEM ? null : form.equipeId,
       perfilId: form.perfilId === SEM ? null : form.perfilId,
       admin: form.admin,
@@ -430,8 +445,8 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
     setForm(
       system
         ? {
-            nome: system.nome,
-            descricao: system.descricao ?? "",
+            nome: texto(system.nome),
+            descricao: texto(system.descricao),
             categoriaId: system.categoriaId ?? SEM,
             responsavelId: system.responsavelId ?? SEM,
             atribuicaoId: system.atribuicaoId ?? SEM,
@@ -464,14 +479,15 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
   const salvando = criar.isPending || atualizar.isPending;
 
   function salvar() {
-    if (form.nome.trim().length < 2) {
+    const nome = texto(form.nome).trim();
+    if (nome.length < 2) {
       toast.error("Informe o nome do sistema.");
       return;
     }
 
     const payload = {
-      nome: form.nome.trim(),
-      descricao: form.descricao.trim() || null,
+      nome,
+      descricao: texto(form.descricao).trim() || null,
       categoriaId: form.categoriaId === SEM ? null : form.categoriaId,
       responsavelId: form.responsavelId === SEM ? null : form.responsavelId,
       atribuicaoId: form.atribuicaoId === SEM ? null : form.atribuicaoId,
@@ -721,14 +737,16 @@ function TabelaUsuarios({
             >
               <td className="px-4 py-2">
                 <span className="flex items-center gap-2">
-                  {u.nome}
+                  {u.nome ?? "—"}
                   {u.admin ? (
                     <Badge variant="outline" className="gap-1 text-[10px]">
                       <ShieldCheck className="size-3" /> admin
                     </Badge>
                   ) : null}
                 </span>
-                <span className="block text-[11px] text-muted-foreground">{u.email}</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  {u.email ?? "sem e-mail cadastrado"}
+                </span>
               </td>
               <td className="px-4 py-2 text-muted-foreground">{u.departamento ?? "—"}</td>
               <td className="px-4 py-2 text-muted-foreground">{u.equipeNome ?? "—"}</td>
@@ -912,9 +930,9 @@ function Administracao() {
       .filter(
         (u) =>
           !q ||
-          (u.nome ?? "").toLowerCase().includes(q) ||
-          (u.email ?? "").toLowerCase().includes(q) ||
-          (u.departamento ?? "").toLowerCase().includes(q),
+          texto(u.nome).toLowerCase().includes(q) ||
+          texto(u.email).toLowerCase().includes(q) ||
+          texto(u.departamento).toLowerCase().includes(q),
       );
   }, [usuarios, busca, mostrarInativos, filtroCartao]);
 

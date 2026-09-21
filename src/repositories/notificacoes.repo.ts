@@ -52,13 +52,39 @@ export async function contarPorStatus(): Promise<Record<string, number>> {
   return mapa;
 }
 
+/**
+ * Tipos aceitos na fila.
+ *
+ * A união espelha o `CHECK` da tabela: quem acrescentar um valor aqui
+ * sem a migration correspondente descobre o erro só no INSERT, em
+ * produção. O banco é a fonte da verdade; isto é a cópia que o
+ * TypeScript enxerga.
+ */
+export type TipoNotificacao =
+  | "chamado_criado"
+  | "chamado_status"
+  | "projeto_lembrete"
+  /** Pedido de acesso a projeto, endereçado a quem decide. */
+  | "acesso_solicitado"
+  /** Resposta do gerente ao pedido, endereçada a quem pediu. */
+  | "acesso_decidido";
+
+/**
+ * A que registro a notificação se refere.
+ *
+ * `solicitacao_acesso` aponta para `projeto_solicitacoes_acesso.id`. O
+ * nome é curto porque a coluna é VARCHAR(20) — algo como
+ * "projeto_solicitacao_acesso" seria truncado pelo banco.
+ */
+export type ReferenciaNotificacao = "chamado" | "projeto" | "solicitacao_acesso";
+
 export interface NovaNotificacao {
-  tipo: "chamado_criado" | "chamado_status" | "projeto_lembrete";
+  tipo: TipoNotificacao;
   destinatarioId?: string | null | undefined;
   destinatarioEmail: string;
   assunto: string;
   corpo?: string | null | undefined;
-  referenciaTipo?: "chamado" | "projeto" | undefined;
+  referenciaTipo?: ReferenciaNotificacao | undefined;
   referenciaId?: string | undefined;
 }
 

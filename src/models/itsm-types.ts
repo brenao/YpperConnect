@@ -443,6 +443,23 @@ export const APP_FEATURES: AppFeature[] = [
       "Depende da equipe cadastrada no usuário.",
     grupo: "Projetos",
   },
+  /**
+   * Esta não protege dado nenhum: o instrutor lê o que a pessoa já está
+   * vendo na tela. É preferência de uso — há quem queira a leitura
+   * automática do cronograma e há quem considere ruído numa tela já
+   * densa —, e por isso vive aqui e não num seletor escondido.
+   *
+   * Sem a chave, o painel não aparece. O administrador vê sempre, porque
+   * é ele quem decide liberá-la para os demais.
+   */
+  {
+    key: "projetos.coach",
+    label: "Instrutor de cronograma",
+    descricao:
+      "Exibe o painel de leitura automática do cronograma no detalhe do projeto. " +
+      "Desmarcado, o painel some para quem usa este perfil.",
+    grupo: "Projetos",
+  },
   {
     key: "recurso.editar",
     label: "Gerir recursos",

@@ -40,9 +40,7 @@ const Email = ({ assunto, corpo, rodape }: Props) => {
             )}
           </Section>
           <Hr style={hr} />
-          <Text style={footer}>
-            {rodape ?? "Mensagem automática do BeagleOne — Gestão de TI."}
-          </Text>
+          <Text style={footer}>{rodape ?? "Mensagem automática do BeagleOne — Gestão de TI."}</Text>
         </Container>
       </Body>
     </Html>

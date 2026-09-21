@@ -4,9 +4,9 @@ O app roda em um container Docker e o OpenResty da borda o publica atrás do
 login unificado. **Desde 2026-09-14 teste e produção são iguais em nome e
 prefixo**; só mudam as máquinas e o banco:
 
-| Ambiente | Borda | Prefixo | Container | Script |
-| --- | --- | --- | --- | --- |
-| teste | rosset16 | `/beagleone/` | `beagleone-app` no rosset29 | `rosset29/atualizar-beagleone.sh` |
+| Ambiente | Borda    | Prefixo       | Container                   | Script                            |
+| -------- | -------- | ------------- | --------------------------- | --------------------------------- |
+| teste    | rosset16 | `/beagleone/` | `beagleone-app` no rosset29 | `rosset29/atualizar-beagleone.sh` |
 | produção | rosset30 | `/beagleone/` | `beagleone-app` no rosset17 | `rosset17/atualizar-beagleone.sh` |
 
 ```
@@ -70,7 +70,7 @@ o `.env` de cada servidor — nada disso é build-time.
 ## Por que Node e não nginx na imagem
 
 O app é TanStack Start com **SSR**: cada requisição é renderizada no servidor e
-as *server functions* falam com o banco. Não é site estático, então a imagem
+as _server functions_ falam com o banco. Não é site estático, então a imagem
 final roda `node .output/server/index.mjs`. É diferente do `frontend-auth`, que
 é build estático servido por nginx.
 
@@ -217,7 +217,7 @@ navegador em `http://localhost:8083/ypper/`:
 - `/` responde 307 para `/ypper/`; `/ypper/` responde 200 com HTML de SSR.
 - Os 8 assets citados no HTML respondem 200 sob `/ypper/assets/...`.
 - Três chamadas `GET /ypper/_serverFn/<id>` responderam 200 — o prefixo chega
-  às *server functions*, que era o ponto de maior risco.
+  às _server functions_, que era o ponto de maior risco.
 - Telas de Chamados, Recursos e Projetos renderizaram com dados vindos do
   Oracle. Nenhum erro no console do navegador.
 

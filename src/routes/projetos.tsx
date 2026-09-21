@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { ProjectDialog } from "@/views/project-dialogs";
+import { SeletorStatusProjeto } from "@/views/seletor-status-projeto";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,26 +67,6 @@ export const Route = createFileRoute("/projetos")({
   }),
   component: Projetos,
 });
-
-const statusStyle: Record<ProjectStatus, string> = {
-  planejamento: "bg-info/12 text-info border-info/30",
-  execucao: "bg-primary/12 text-primary border-primary/30",
-  paralisado: "bg-warning/12 text-warning border-warning/30",
-  cancelado: "bg-muted text-muted-foreground border-border",
-  concluido: "bg-success/12 text-success border-success/30",
-  backlog: "bg-muted text-muted-foreground border-border",
-};
-
-/**
- * Situações oferecidas no card.
- *
- * `backlog` fica de fora: voltar para a fila de priorização tem regra
- * própria — recusa projeto com cronograma e recalcula a posição — e não
- * é uma troca de rótulo como as outras.
- */
-const STATUS_NO_CARD = (Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).filter(
-  (s) => s !== "backlog",
-);
 
 type Saude = "no_prazo" | "atencao" | "atrasado" | "encerrado";
 
@@ -337,17 +318,6 @@ function CardProjeto({
     qc.invalidateQueries({ queryKey: ["projeto", p.id] });
   };
 
-  const mudarStatus = useMutation({
-    mutationFn: (novo: ProjectStatus) =>
-      definirStatusProjetoFn({ data: { id: p.id, status: novo } }),
-    onSuccess: (_r, novo) => {
-      invalidar();
-      toast.success(`Situação alterada para ${PROJECT_STATUS_LABEL[novo]}`);
-    },
-    onError: (e: Error) =>
-      toast.error("Não foi possível alterar a situação", { description: e.message }),
-  });
-
   /**
    * O que impede apagar, buscado só quando a confirmação abre.
    *
@@ -380,6 +350,10 @@ function CardProjeto({
     onError: (e: Error) => toast.error("Não foi possível excluir", { description: e.message }),
   });
 
+  /**
+   * Cancelar continua aqui, e não no seletor compartilhado: é a saída
+   * do diálogo de exclusão, com fechamento e mensagem próprios.
+   */
   const cancelar = useMutation({
     mutationFn: () => definirStatusProjetoFn({ data: { id: p.id, status: "cancelado" } }),
     onSuccess: () => {
@@ -423,36 +397,9 @@ function CardProjeto({
           </div>
 
           <span className="pointer-events-auto flex shrink-0 items-center gap-1">
-            {editavel ? (
-              <Select
-                value={p.status}
-                onValueChange={(v) => mudarStatus.mutate(v as ProjectStatus)}
-                disabled={mudarStatus.isPending}
-              >
-                <SelectTrigger
-                  className={cn("h-7 gap-1 border px-2 text-xs font-medium", statusStyle[p.status])}
-                  title="Alterar a situação do projeto"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_NO_CARD.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {PROJECT_STATUS_LABEL[s]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <span
-                className={cn(
-                  "rounded-md border px-2 py-0.5 text-xs font-medium",
-                  statusStyle[p.status],
-                )}
-              >
-                {PROJECT_STATUS_LABEL[p.status]}
-              </span>
-            )}
+            {/* Mesmo componente do detalhe do projeto: a mutação, o
+                toast e as chaves de invalidação vivem lá dentro. */}
+            <SeletorStatusProjeto projetoId={p.id} status={p.status} editavel={editavel} />
 
             {editavel ? (
               <Button

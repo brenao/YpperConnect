@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Loader2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { ProjectDialog } from "@/views/project-dialogs";
@@ -10,7 +10,7 @@ import { TaskDialog } from "@/views/task-dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PROJECT_STATUS_LABEL, formatarValor, type ProjectStatus } from "@/models/itsm-types";
+import { formatarValor } from "@/models/itsm-types";
 import type { Tarefa, TarefaCalculada } from "@/repositories/projetos.repo";
 import {
   detalheProjetoFn,
@@ -31,11 +31,14 @@ import {
   type AtencaoUpdateInput,
 } from "@/services/projetos.functions";
 import { listarRecursosFn } from "@/services/recursos.functions";
+import { listarSolicitacoesParaAprovarFn } from "@/services/acesso-projeto.functions";
 import { ProjectSchedule } from "@/views/project-schedule";
 import { ProjectTasks } from "@/views/project-tasks";
 import { ProjectBaseline } from "@/views/project-baseline";
 import { ProjectCoach } from "@/views/project-coach";
 import { PainelAtencoes, PainelAtualizacoes, PainelRiscos } from "@/views/project-registros";
+import { PainelAcessos } from "@/views/project-acessos";
+import { SeletorStatusProjeto } from "@/views/seletor-status-projeto";
 import {
   compararComBaseline,
   diasSemAtualizar,
@@ -52,15 +55,6 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/projetos_/$projectId")({
   component: DetalheProjeto,
 });
-
-const statusStyle: Record<ProjectStatus, string> = {
-  backlog: "bg-muted text-muted-foreground border-border",
-  planejamento: "bg-info/12 text-info border-info/30",
-  execucao: "bg-primary/12 text-primary border-primary/30",
-  paralisado: "bg-warning/12 text-warning border-warning/30",
-  cancelado: "bg-muted text-muted-foreground border-border",
-  concluido: "bg-success/12 text-success border-success/30",
-};
 
 /** Teto do histórico quando a pessoa pede para ver tudo ou busca por texto. */
 const LIMITE_HISTORICO = 200;
@@ -102,7 +96,10 @@ function DetalheProjeto() {
     queryKey: ["projeto", projectId],
     queryFn: () => detalheProjetoFn({ data: { id: projectId } }),
   });
-  const recursosQuery = useQuery({ queryKey: ["recursos"], queryFn: () => listarRecursosFn() });
+  const recursosQuery = useQuery({
+    queryKey: ["recursos"],
+    queryFn: () => listarRecursosFn(),
+  });
 
   const [editando, setEditando] = useState<Tarefa | undefined>(undefined);
   const [tarefaAberta, setTarefaAberta] = useState(false);
@@ -134,6 +131,19 @@ function DetalheProjeto() {
         },
       }),
     enabled: historicoAtivo,
+  });
+
+  /**
+   * Pedidos de acesso pendentes, só para o contador da aba.
+   *
+   * A aba "Acesso" não se anuncia sozinha: sem o número ao lado do
+   * rótulo, um pedido esperando aprovação fica invisível para quem abre
+   * o projeto pelo cronograma — que é como todo mundo abre.
+   */
+  const pedidos = useQuery({
+    queryKey: ["solicitacoes-aprovar"],
+    queryFn: () => listarSolicitacoesParaAprovarFn({ data: { incluirDecididas: false } }),
+    enabled: q.data?.editavel ?? false,
   });
 
   // A tela espelha a regra do repositório, mas não a recalcula: o
@@ -267,6 +277,7 @@ function DetalheProjeto() {
     planejado,
     planejadoAtual,
     editavel,
+    mostrarCoach,
   } = q.data;
 
   const wbs = achatarWbs(tarefas);
@@ -294,6 +305,18 @@ function DetalheProjeto() {
   const atencoesAbertas = atencoes.filter((a) => a.status === "aberto");
   const riscosAbertos = riscos.filter((r) => r.status !== "mitigado");
   const atrasado = new Date(projeto.fim) < new Date() && projeto.status === "execucao";
+
+  const pendentesAcesso = (pedidos.data ?? []).filter((s) => s.projetoId === projectId).length;
+
+  /**
+   * A aba de acesso só aparece para quem tem o que fazer nela.
+   *
+   * Para quem só lê o projeto, uma aba que lista permissões alheias é
+   * ruído. Ela entra quando a pessoa pode decidir (editavel) ou quando
+   * o projeto é sigiloso — aí a lista de quem enxerga é informação
+   * relevante mesmo para quem não mexe.
+   */
+  const mostrarAcesso = editavel || projeto.sigiloso;
 
   // Com busca ou "ver todas", a lista vem da consulta sob demanda;
   // caso contrário, da janela que veio no detalhe.
@@ -327,14 +350,24 @@ function DetalheProjeto() {
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div className="panel p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Situação</p>
-            <span
-              className={cn(
-                "mt-2 inline-block rounded-md border px-2 py-0.5 text-sm font-medium",
-                statusStyle[projeto.status],
-              )}
-            >
-              {PROJECT_STATUS_LABEL[projeto.status]}
-            </span>
+            {/* Trocar a situação aqui, e não só no card do portfólio:
+                quem está olhando o cronograma é justamente quem sabe
+                que o projeto paralisou. É o mesmo componente da lista. */}
+            <div className="mt-2">
+              <SeletorStatusProjeto
+                projetoId={projectId}
+                status={projeto.status}
+                editavel={editavel}
+              />
+            </div>
+            {/* O sigilo fica ao lado da situação porque é da mesma
+                natureza: descreve o projeto como um todo, e quem abre
+                precisa saber que o que está lendo não é público. */}
+            {projeto.sigiloso ? (
+              <p className="mt-1.5 flex items-center gap-1 text-xs text-warning">
+                <Lock className="size-3.5" /> Sigiloso
+              </p>
+            ) : null}
             {atrasado ? (
               <p className="mt-1.5 flex items-center gap-1 text-xs text-destructive">
                 <AlertTriangle className="size-3.5" /> Prazo vencido
@@ -450,6 +483,16 @@ function DetalheProjeto() {
             <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
             <TabsTrigger value="gantt">Gantt</TabsTrigger>
             <TabsTrigger value="kanban">Kanban</TabsTrigger>
+            {mostrarAcesso ? (
+              <TabsTrigger value="acesso" className="gap-1.5">
+                Acesso
+                {pendentesAcesso > 0 ? (
+                  <span className="rounded-full bg-warning px-1.5 text-[10px] font-semibold text-background">
+                    {pendentesAcesso}
+                  </span>
+                ) : null}
+              </TabsTrigger>
+            ) : null}
           </TabsList>
 
           {/* ----------------------------------------------------- tarefas */}
@@ -523,24 +566,29 @@ function DetalheProjeto() {
               />
             </div>
 
-            <ProjectCoach
-              resumo={resumoParaIa({
-                nome: projeto.nome,
-                inicio: projeto.inicio,
-                fim: projeto.fim,
-                status: projeto.status,
-                tarefas,
-                cpm,
-                predecessoras: vinculos.predecessoras,
-                responsaveis: vinculos.responsaveis,
-                riscosAbertos: riscosAbertos.length,
-                atencoesAbertas: atencoesAbertas.length,
-                diasSemAtualizar: semAtualizar,
-                temBaseline: estadoBaseline.temBaseline,
-                esperado,
-                real: progresso,
-              })}
-            />
+            {/* O instrutor é opcional por perfil: para quem não o
+                quer, é ruído no fim de uma tela já densa. A chave vive
+                em Perfis de acesso, e o servidor já resolveu se vale. */}
+            {mostrarCoach ? (
+              <ProjectCoach
+                resumo={resumoParaIa({
+                  nome: projeto.nome,
+                  inicio: projeto.inicio,
+                  fim: projeto.fim,
+                  status: projeto.status,
+                  tarefas,
+                  cpm,
+                  predecessoras: vinculos.predecessoras,
+                  responsaveis: vinculos.responsaveis,
+                  riscosAbertos: riscosAbertos.length,
+                  atencoesAbertas: atencoesAbertas.length,
+                  diasSemAtualizar: semAtualizar,
+                  temBaseline: estadoBaseline.temBaseline,
+                  esperado,
+                  real: progresso,
+                })}
+              />
+            ) : null}
           </TabsContent>
 
           {/* -------------------------------------------------------- gantt */}
@@ -583,6 +631,17 @@ function DetalheProjeto() {
               />
             )}
           </TabsContent>
+
+          {/* ------------------------------------------------------- acesso */}
+          {mostrarAcesso ? (
+            <TabsContent value="acesso" className="mt-4">
+              <PainelAcessos
+                projetoId={projectId}
+                sigiloso={projeto.sigiloso}
+                editavel={editavel}
+              />
+            </TabsContent>
+          ) : null}
         </Tabs>
       </div>
 

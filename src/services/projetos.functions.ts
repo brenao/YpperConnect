@@ -113,6 +113,14 @@ export const detalheProjetoFn = createServerFn({ method: "GET" })
        * projeto sem poder editá-lo.
        */
       editavel,
+      /**
+       * Instrutor de cronograma ligado para este perfil.
+       *
+       * Vem junto com o detalhe, e não numa consulta própria: é uma
+       * chave que a tela já poderia ter recebido com o resto, e uma
+       * requisição a mais para responder um booleano não se paga.
+       */
+      mostrarCoach: usuario.coachProjetos,
     };
   });
 
@@ -127,6 +135,15 @@ const ProjetoSchema = z.object({
   gerenteId: z.string().nullable().optional(),
   status: z.enum(STATUS).optional(),
   usaDiasUteis: z.boolean().optional(),
+  /**
+   * Sigilo: esconde o projeto de quem não participa dele.
+   *
+   * Opcional e sem `default`, como os demais booleanos daqui. O padrão
+   * é do banco (`sigiloso` nasce 0) e do repositório, e repeti-lo no
+   * schema criaria dois lugares para divergir — um payload sem o campo
+   * passaria a significar "torne público" em vez de "não mexa nisto".
+   */
+  sigiloso: z.boolean().optional(),
   /** Investimento previsto. Opcional; a moeda acompanha o valor. */
   capex: z.number().min(0).max(999_999_999).nullable().optional(),
   moeda: z.enum(["BRL", "USD"]).nullable().optional(),
@@ -344,18 +361,27 @@ export const inserirAbaixoFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const { inserirAbaixo } = await import("@/repositories/projetos.repo");
-    return { id: await inserirAbaixo(await ctx(), data.referenciaId, data.comoFilha) };
+    return {
+      id: await inserirAbaixo(await ctx(), data.referenciaId, data.comoFilha),
+    };
   });
 
 // ---------------------------------------------------------------- baseline
 
 export const salvarBaselineFn = createServerFn({ method: "POST" })
   .validator((d: unknown) =>
-    z.object({ projetoId: z.string(), descricao: z.string().nullable().optional() }).parse(d),
+    z
+      .object({
+        projetoId: z.string(),
+        descricao: z.string().nullable().optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data }) => {
     const { salvarBaseline } = await import("@/repositories/projetos.repo");
-    return { id: await salvarBaseline(await ctx(), data.projetoId, data.descricao) };
+    return {
+      id: await salvarBaseline(await ctx(), data.projetoId, data.descricao),
+    };
   });
 
 /** Tarefas de uma versão específica, para o histórico de baselines. */
@@ -391,7 +417,9 @@ export const criarRiscoFn = createServerFn({ method: "POST" })
  * abriria a porta para mover registro de um projeto para outro por
  * payload adulterado.
  */
-const RiscoUpdateSchema = RiscoSchema.omit({ projetoId: true }).extend({ id: z.string() });
+const RiscoUpdateSchema = RiscoSchema.omit({ projetoId: true }).extend({
+  id: z.string(),
+});
 export type RiscoUpdateInput = z.infer<typeof RiscoUpdateSchema>;
 
 export const atualizarRiscoFn = createServerFn({ method: "POST" })
@@ -420,7 +448,9 @@ export const criarAtualizacaoFn = createServerFn({ method: "POST" })
     return { id: await criarAtualizacao(await ctx(), data) };
   });
 
-const AtualizacaoUpdateSchema = AtualizacaoSchema.omit({ projetoId: true }).extend({
+const AtualizacaoUpdateSchema = AtualizacaoSchema.omit({
+  projetoId: true,
+}).extend({
   id: z.string(),
 });
 export type AtualizacaoUpdateInput = z.infer<typeof AtualizacaoUpdateSchema>;
@@ -481,7 +511,9 @@ export const criarAtencaoFn = createServerFn({ method: "POST" })
     return { id: await criarAtencao(await ctx(), data) };
   });
 
-const AtencaoUpdateSchema = AtencaoSchema.omit({ projetoId: true }).extend({ id: z.string() });
+const AtencaoUpdateSchema = AtencaoSchema.omit({ projetoId: true }).extend({
+  id: z.string(),
+});
 export type AtencaoUpdateInput = z.infer<typeof AtencaoUpdateSchema>;
 
 export const atualizarAtencaoFn = createServerFn({ method: "POST" })

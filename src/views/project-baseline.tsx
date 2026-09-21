@@ -74,6 +74,19 @@ export function ProjectBaseline({
     estado.removidas > 0 ? `${estado.removidas} removida(s)` : "",
   ].filter(Boolean);
 
+  /**
+   * Registrar baseline nunca é bloqueado.
+   *
+   * O botão ficava desabilitado quando a comparação não acusava
+   * diferença de datas, e isso trancava casos legítimos: replanejamento
+   * que mudou responsável ou esforço sem mexer no calendário, marco
+   * contratual que o gerente quer congelar, ou simplesmente uma
+   * comparação que não detectou o que ele está vendo. Quem responde
+   * pelo projeto decide quando o plano vira referência — o sistema no
+   * máximo avisa que nada mudou, e o diálogo faz isso.
+   */
+  const semMudanca = !primeira && mudancas.length === 0;
+
   return (
     <section className={cn("panel p-4", primeira ? "border-warning/40" : "")}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -91,6 +104,12 @@ export function ProjectBaseline({
                 v{atual?.versao} · {fmt(atual?.criadoEm)}
                 {atual?.autorNome ? (
                   <span className="font-normal text-muted-foreground"> · {atual.autorNome}</span>
+                ) : null}
+                {baselines.length > 1 ? (
+                  <span className="font-normal text-muted-foreground">
+                    {" "}
+                    · {baselines.length} versões
+                  </span>
                 ) : null}
               </p>
               {atual?.descricao ? (
@@ -110,24 +129,27 @@ export function ProjectBaseline({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          {baselines.length > 1 ? (
+          {/* Aparece desde a primeira versão: ver o que foi congelado é
+              útil mesmo quando só existe uma, e esconder o botão fazia
+              parecer que o histórico não existia. */}
+          {baselines.length > 0 ? (
             <Button
               variant="ghost"
               size="sm"
               className="gap-1.5"
               onClick={() => setHistorico(true)}
             >
-              <History className="size-3.5" /> Histórico
+              <History className="size-3.5" />
+              {baselines.length > 1 ? `Histórico (${baselines.length})` : "Ver baseline"}
             </Button>
           ) : null}
           {editavel ? (
             <Button
               size="sm"
-              variant={primeira || estado.precisaNovaBaseline ? "default" : "outline"}
-              disabled={!primeira && !estado.precisaNovaBaseline}
+              variant={primeira || mudancas.length > 0 ? "default" : "outline"}
               title={
-                !primeira && !estado.precisaNovaBaseline
-                  ? "Sem mudanças no cronograma desde a última baseline"
+                semMudanca
+                  ? "O cronograma está igual à baseline vigente, mas você pode registrar uma nova versão mesmo assim"
                   : undefined
               }
               onClick={() => setDialogo(true)}
@@ -145,7 +167,7 @@ export function ProjectBaseline({
             <DialogDescription>
               {primeira
                 ? "Congela o cronograma atual como plano de referência. É contra ele que o desvio de prazo passa a ser medido."
-                : "A baseline anterior continua guardada. Explique o que motivou o replanejamento."}
+                : `A baseline vigente (v${atual?.versao}) continua guardada e passa a fazer parte do histórico. Explique o que motivou o replanejamento.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -165,7 +187,15 @@ export function ProjectBaseline({
                 <p className="text-xs text-muted-foreground">
                   Serão congeladas as datas atuais: {mudancas.join(", ")}.
                 </p>
-              ) : null}
+              ) : (
+                /* O aviso substitui o botão desabilitado: informa sem
+                   impedir, porque a comparação olha só datas e o motivo
+                   do replanejamento pode ser outro. */
+                <p className="text-xs text-muted-foreground">
+                  As datas estão iguais às da v{atual?.versao}. A nova versão registra o mesmo
+                  cronograma, com a justificativa e a data de hoje.
+                </p>
+              )}
             </div>
           ) : null}
 
@@ -199,12 +229,22 @@ function HistoricoBaselines({
   onFechar: () => void;
   baselines: Baseline[];
 }) {
-  const [selecionada, setSelecionada] = useState<string | null>(null);
+  /**
+   * A versão vigente vem escolhida.
+   *
+   * Abrir numa tela vazia pedindo para escolher é um clique a mais para
+   * a resposta que quase todo mundo quer — "o que está congelado hoje".
+   * As versões antigas continuam a um clique na coluna da esquerda.
+   */
+  const inicial = baselines[0]?.id ?? null;
+  const [selecionada, setSelecionada] = useState<string | null>(inicial);
+
+  const alvo = selecionada ?? inicial;
 
   const tarefas = useQuery({
-    queryKey: ["baseline-tarefas", selecionada],
-    queryFn: () => tarefasDaBaselineFn({ data: { baselineId: selecionada ?? "" } }),
-    enabled: aberto && selecionada !== null,
+    queryKey: ["baseline-tarefas", alvo],
+    queryFn: () => tarefasDaBaselineFn({ data: { baselineId: alvo ?? "" } }),
+    enabled: aberto && alvo !== null,
   });
 
   return (
@@ -221,25 +261,31 @@ function HistoricoBaselines({
         <DialogHeader>
           <DialogTitle>Histórico de baselines</DialogTitle>
           <DialogDescription>
-            Cada versão guarda as datas de todas as tarefas no momento em que foi registrada.
+            Cada versão guarda as datas de todas as tarefas no momento em que foi registrada. A mais
+            recente é a referência usada no cálculo de desvio.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 md:grid-cols-[16rem_1fr]">
-          <ul className="space-y-1">
-            {baselines.map((b) => (
+          <ul className="max-h-72 space-y-1 overflow-y-auto">
+            {baselines.map((b, i) => (
               <li key={b.id}>
                 <button
                   type="button"
                   onClick={() => setSelecionada(b.id)}
                   className={cn(
                     "w-full rounded-lg border p-2 text-left text-xs transition-colors",
-                    selecionada === b.id
+                    alvo === b.id
                       ? "border-primary/50 bg-primary/5"
                       : "border-border hover:border-primary/30",
                   )}
                 >
                   <span className="font-medium">v{b.versao}</span>
+                  {i === 0 ? (
+                    <span className="ml-1 rounded border border-primary/40 px-1 text-[10px] text-primary">
+                      vigente
+                    </span>
+                  ) : null}
                   <span className="text-muted-foreground"> · {fmt(b.criadoEm)}</span>
                   {b.autorNome ? (
                     <span className="block text-[11px] text-muted-foreground">{b.autorNome}</span>
@@ -251,9 +297,9 @@ function HistoricoBaselines({
           </ul>
 
           <div className="min-h-40 rounded-lg border border-border p-3">
-            {selecionada === null ? (
+            {alvo === null ? (
               <p className="py-12 text-center text-sm text-muted-foreground">
-                Escolha uma versão para ver o cronograma congelado.
+                Nenhuma baseline registrada ainda.
               </p>
             ) : tarefas.isPending ? (
               <p className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">

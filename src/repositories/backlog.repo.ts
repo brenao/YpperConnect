@@ -5,7 +5,7 @@ import {
   emTransacao,
 } from "@/integrations/postgres/client.server";
 import { ErroDominio } from "./tipos";
-import { filtroVisibilidadeProjetos } from "./projetos.repo";
+import { SQL_PODE_VER_NOME_PROJETO, bindsDeAcesso } from "./acesso-projeto.repo";
 import { MODELO_PADRAO, type ModeloPriorizacao } from "@/services/priorizacao";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
@@ -31,6 +31,14 @@ export interface ProjetoBacklog {
   sponsorId: string | null;
   sponsorNome: string | null;
   usaDiasUteis: boolean;
+  /**
+   * Projeto sigiloso: só aparece nesta lista para quem tem acesso.
+   *
+   * Vem para a tela porque o cadeado marca a linha — quem tem acesso
+   * precisa saber que aquele projeto não é público antes de comentá-lo
+   * num corredor.
+   */
+  sigiloso: boolean;
   capex: number | null;
   moeda: string | null;
   valor: number | null;
@@ -62,6 +70,7 @@ const SELECT_BACKLOG = `
          p.gerente_id, ug.nome AS gerente_nome,
          p.sponsor_id, us.nome AS sponsor_nome,
          (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+         (p.sigiloso = 1) AS sigiloso,
          p.capex, p.moeda,
          p.valor, p.esforco, p.alcance, p.confianca, p.ordem_backlog,
          p.status, p.inicio, p.fim,
@@ -112,30 +121,31 @@ export async function definirModeloPriorizacao(
 // ------------------------------------------------------------ leitura
 
 /**
- * Carteira inteira visível para este usuário: o que está na fila e o
- * que já saiu dela.
+ * Carteira inteira: o que está na fila e o que já saiu dela.
  *
- * Antes a consulta filtrava `status = 'backlog'`, e quem cadastrava um
- * projeto já priorizado não o via mais aqui — ficava procurando um
- * registro que existia em outra tela. Mostrar tudo devolve ao backlog o
- * papel de índice do portfólio; a situação de cada linha diz em que
- * ponto ele está.
+ * Aqui a visibilidade é a de NOME, não a de conteúdo. É a diferença
+ * que o sigilo introduziu: esta lista é o índice do portfólio da
+ * empresa, e esconder dela os projetos alheios era o que fazia duas
+ * áreas cadastrarem a mesma demanda sem saber uma da outra. Todo mundo
+ * vê que o projeto existe; quem não tem acesso vê só nome, área e
+ * gerente, e pede acesso ao resto.
+ *
+ * Projeto sigiloso continua fora: para quem não tem acesso, ele não
+ * aparece nem como linha.
+ *
+ * O detalhe do projeto NÃO usa este predicado — lá vale o
+ * `filtroVisibilidadeProjetos`, que é mais restrito. Confundir os dois
+ * abriria o cronograma alheio junto com o nome.
  *
  * A ordem separa os dois mundos: quem está na fila vem primeiro, na
  * ordem que o gestor arrastou; depois o resto, pela atenção que cada
  * situação merece — em execução no topo, encerrados no fim. Misturar os
  * dois faria a numeração da fila saltar números.
- *
- * Sem ordem gravada a demanda vai para o fim da fila: é o que acontece
- * com a recém-criada, e o topo pertence a quem já foi priorizado. O
- * desempate é pela criação, para a ordem não dançar entre recargas.
  */
 export async function listarBacklog(ctx: ContextoUsuario): Promise<ProjetoBacklog[]> {
-  const f = filtroVisibilidadeProjetos(ctx);
-
   return consultar<ProjetoBacklog>(
     `${SELECT_BACKLOG}
-      WHERE ${f.clausula}
+      WHERE ${SQL_PODE_VER_NOME_PROJETO}
       ORDER BY CASE WHEN p.status = 'backlog' THEN 0 ELSE 1 END,
                p.ordem_backlog NULLS LAST,
                CASE p.status
@@ -147,7 +157,7 @@ export async function listarBacklog(ctx: ContextoUsuario): Promise<ProjetoBacklo
                  ELSE 6
                END,
                p.criado_em`,
-    f.binds,
+    bindsDeAcesso(ctx),
   );
 }
 
@@ -155,11 +165,10 @@ export async function buscarNoBacklog(
   ctx: ContextoUsuario,
   id: string,
 ): Promise<ProjetoBacklog | null> {
-  const f = filtroVisibilidadeProjetos(ctx);
-  return consultarUm<ProjetoBacklog>(`${SELECT_BACKLOG} WHERE p.id = :id AND (${f.clausula})`, {
-    ...f.binds,
-    id,
-  });
+  return consultarUm<ProjetoBacklog>(
+    `${SELECT_BACKLOG} WHERE p.id = :id AND ${SQL_PODE_VER_NOME_PROJETO}`,
+    { ...bindsDeAcesso(ctx), id },
+  );
 }
 
 // ------------------------------------------------------------ escrita

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,12 +39,7 @@ import {
 } from "@/services/projetos.functions";
 import { SeletorUsuario } from "@/views/seletor-usuario";
 import { Switch } from "@/components/ui/switch";
-import {
-  ESFORCOS,
-  VALORES,
-  calcularScore,
-  type ModeloPriorizacao,
-} from "@/services/priorizacao";
+import { ESFORCOS, VALORES, calcularScore, type ModeloPriorizacao } from "@/services/priorizacao";
 import { cn } from "@/lib/utils";
 
 /** Radix não aceita SelectItem com value vazio. */
@@ -57,6 +52,7 @@ interface Form {
   gerenteId: string;
   status: ProjectStatus;
   usaDiasUteis: boolean;
+  sigiloso: boolean;
   /**
    * Centavos, só dígitos. Guardar o valor formatado obrigaria a
    * reinterpretar a máscara a cada tecla, e o cursor saltaria.
@@ -78,6 +74,10 @@ const vazio = (status: ProjectStatus): Form => ({
   gerenteId: SEM,
   status,
   usaDiasUteis: true,
+  // Nasce aberto. Sigilo é exceção, e exceção que vem marcada por
+  // padrão deixa de ser exceção — em pouco tempo metade da carteira
+  // estaria invisível sem ninguém ter decidido isso.
+  sigiloso: false,
   capex: "",
   moeda: "BRL",
   areaDemandante: "",
@@ -105,16 +105,36 @@ export function ProjectDialog({
   statusInicial = "planejamento",
   modelo = "simples",
   aoSalvar,
+  open: openProp,
+  onOpenChange,
 }: {
-  project?: Projeto;
-  trigger?: ReactNode;
+  /**
+   * `| undefined` explícito em todas as opcionais: sob
+   * `exactOptionalPropertyTypes`, `prop?: T` recusa quem passa
+   * `undefined` de propósito — que é justamente o caso da lista, cujo
+   * estado é `Projeto | undefined` enquanto nenhuma linha está aberta.
+   */
+  project?: Projeto | undefined;
+  trigger?: ReactNode | undefined;
   /** Estado em que o projeto nasce. O backlog cria já em "backlog". */
-  statusInicial?: ProjectStatus;
-  modelo?: ModeloPriorizacao;
-  aoSalvar?: () => void;
+  statusInicial?: ProjectStatus | undefined;
+  modelo?: ModeloPriorizacao | undefined;
+  aoSalvar?: (() => void) | undefined;
+  /**
+   * Controle externo, para a lista abrir a edição pelo clique na linha.
+   *
+   * Mesma solução do diálogo de usuário em Administração: uma única
+   * instância montada para a lista inteira, em vez de um Dialog por
+   * linha esperando um clique que quase nunca vem. Sem os dois, o
+   * componente se vira sozinho com o próprio estado.
+   */
+  open?: boolean | undefined;
+  onOpenChange?: ((v: boolean) => void) | undefined;
 }) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [interno, setInterno] = useState(false);
+  const open = openProp ?? interno;
+  const setOpen = onOpenChange ?? setInterno;
   const [form, setForm] = useState<Form>(() => vazio(statusInicial));
 
   useEffect(() => {
@@ -128,11 +148,9 @@ export function ProjectDialog({
             gerenteId: project.gerenteId ?? SEM,
             status: project.status,
             usaDiasUteis: project.usaDiasUteis,
+            sigiloso: project.sigiloso ?? false,
             // Reais para centavos: 1500 gravado vira "150000" digitado.
-            capex:
-              project.capex === null
-                ? ""
-                : String(Math.round(Number(project.capex) * 100)),
+            capex: project.capex === null ? "" : String(Math.round(Number(project.capex) * 100)),
             moeda: project.moeda === "USD" ? "USD" : "BRL",
             areaDemandante: project.areaDemandante ?? "",
             justificativa: project.justificativa ?? "",
@@ -151,6 +169,9 @@ export function ProjectDialog({
     qc.invalidateQueries({ queryKey: ["projetos"] });
     qc.invalidateQueries({ queryKey: ["backlog"] });
     qc.invalidateQueries({ queryKey: ["projeto", project?.id] });
+    // O sigilo muda quem enxerga o quê: o conjunto de ids com acesso
+    // que o backlog carregou precisa ser refeito.
+    qc.invalidateQueries({ queryKey: ["ids-com-acesso"] });
     toast.success(project ? "Projeto atualizado" : "Projeto criado");
     aoSalvar?.();
     setOpen(false);
@@ -191,7 +212,10 @@ export function ProjectDialog({
    * ele, o banco recusaria o insert depois de a pessoa ter digitado.
    */
   function aoDigitarCapex(texto: string) {
-    const digitos = texto.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 15);
+    const digitos = texto
+      .replace(/\D/g, "")
+      .replace(/^0+(?=\d)/, "")
+      .slice(0, 15);
     setForm((f) => ({ ...f, capex: digitos }));
   }
 
@@ -217,6 +241,7 @@ export function ProjectDialog({
       gerenteId: form.gerenteId === SEM ? null : form.gerenteId,
       status: form.status,
       usaDiasUteis: form.usaDiasUteis,
+      sigiloso: form.sigiloso,
       // Campo vazio é "não informado", não zero: zero significaria
       // projeto aprovado sem desembolso, que é outra afirmação.
       capex: capexNumero,
@@ -239,13 +264,17 @@ export function ProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {trigger ?? (
+      {/* Controlado de fora não desenha gatilho: quem abre é a linha da
+          lista, e um botão solto apareceria no meio da tela. */}
+      {trigger ? (
+        <DialogTrigger asChild>{trigger}</DialogTrigger>
+      ) : openProp === undefined ? (
+        <DialogTrigger asChild>
           <Button size="sm" className="gap-2">
             <Plus className="size-4" /> Novo projeto
           </Button>
-        )}
-      </DialogTrigger>
+        </DialogTrigger>
+      ) : null}
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{project ? "Editar projeto" : "Novo projeto"}</DialogTitle>
@@ -266,6 +295,13 @@ export function ProjectDialog({
               onChange={(e) => setForm({ ...form, nome: e.target.value })}
               placeholder="Ex.: Migração do parque de estações"
             />
+            {/* O aviso fica sob o nome porque é o nome que vaza: todo
+                usuário enxerga o dos projetos não sigilosos. */}
+            <p className="text-xs text-muted-foreground">
+              {form.sigiloso
+                ? "Projeto sigiloso: nem o nome aparece para quem não tem acesso."
+                : "Todos os usuários verão este nome no backlog — é o que evita cadastro em duplicidade."}
+            </p>
           </div>
 
           <div className="grid gap-2">
@@ -330,6 +366,36 @@ export function ProjectDialog({
             <p className="text-xs text-muted-foreground">
               Sustenta a decisão quando o projeto for priorizado, adiado ou recusado.
             </p>
+          </div>
+
+          {/* ----------------------------------------------------- sigilo */}
+          <div
+            className={cn(
+              "flex items-start gap-3 rounded-lg border p-3 transition-colors",
+              form.sigiloso ? "border-warning/50 bg-warning/5" : "border-border bg-surface",
+            )}
+          >
+            <Switch
+              id="prj-sigiloso"
+              checked={form.sigiloso}
+              onCheckedChange={(v) => setForm({ ...form, sigiloso: v })}
+            />
+            <div className="grid gap-0.5">
+              <Label htmlFor="prj-sigiloso" className="flex items-center gap-1.5 text-sm">
+                <Lock className="size-3.5" /> Projeto sigiloso
+              </Label>
+              <span className="text-xs text-muted-foreground">
+                Some da carteira para quem não participa: nem o nome aparece, e ninguém consegue
+                pedir acesso a ele. Use para aquisição, reestruturação e afins — o preço é que outra
+                área pode cadastrar a mesma coisa sem saber.
+              </span>
+              {form.sigiloso ? (
+                <span className="mt-1 text-xs text-warning">
+                  Gerente, patrocinador e responsáveis por tarefa continuam enxergando. Os demais
+                  entram um a um, pela aba Acesso do projeto.
+                </span>
+              ) : null}
+            </div>
           </div>
 
           {/* Investimento fica fora do bloco de priorização: é
@@ -455,7 +521,10 @@ export function ProjectDialog({
                       key={e.valor}
                       type="button"
                       onClick={() =>
-                        setForm({ ...form, esforco: form.esforco === e.valor ? null : e.valor })
+                        setForm({
+                          ...form,
+                          esforco: form.esforco === e.valor ? null : e.valor,
+                        })
                       }
                       aria-pressed={form.esforco === e.valor}
                       className={cn(
@@ -466,9 +535,7 @@ export function ProjectDialog({
                       )}
                     >
                       <span className="block text-sm font-semibold">{e.rotulo}</span>
-                      <span className="block text-[11px] text-muted-foreground">
-                        {e.descricao}
-                      </span>
+                      <span className="block text-[11px] text-muted-foreground">{e.descricao}</span>
                     </button>
                   ))}
                 </div>
@@ -520,8 +587,8 @@ export function ProjectDialog({
               </>
             ) : noBacklog ? (
               <>
-                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e
-                aí começa o cronograma.
+                O projeto nasce no <strong>Backlog</strong>. Promova quando ele for priorizado, e aí
+                começa o cronograma.
               </>
             ) : (
               <>

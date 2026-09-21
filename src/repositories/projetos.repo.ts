@@ -50,6 +50,15 @@ export interface Projeto {
    */
   usaDiasUteis: boolean;
   /**
+   * Projeto sigiloso: some da carteira para quem não participa.
+   *
+   * O padrão é aberto. Desde que o backlog passou a listar o nome de
+   * todos os projetos — para evitar que duas áreas cadastrem a mesma
+   * demanda —, esta é a única exceção a essa regra, e quem tem acesso
+   * entra um a um por `projeto_acessos`.
+   */
+  sigiloso: boolean;
+  /**
    * Investimento previsto e sua moeda. Nulos quando não informados —
    * boa parte dos projetos é esforço interno sem desembolso.
    */
@@ -136,6 +145,7 @@ const SELECT_PROJETO = `
          p.gerente_id, ug.nome AS gerente_nome,
          p.status, p.inicio, p.fim,
          (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+         (p.sigiloso = 1) AS sigiloso,
          p.capex, p.moeda,
          p.area_demandante, p.justificativa,
          p.valor, p.esforco, p.alcance, p.confianca,
@@ -195,7 +205,7 @@ export interface FiltroVisibilidade {
 }
 
 /**
- * O que este usuário pode enxergar do portfólio.
+ * O que este usuário pode ABRIR do portfólio.
  *
  * Antes a leitura era aberta: todo mundo via todos os projetos. Ficou
  * assim porque o módulo nasceu aberto à empresa inteira, mas isso
@@ -206,13 +216,28 @@ export interface FiltroVisibilidade {
  * pertencer à TI diz respeito a chamado, não a projeto. Um analista de
  * infraestrutura não tem por que editar o cronograma de um projeto do
  * comercial só por estar numa equipe.
+ *
+ * Não confundir com a visibilidade de NOME, que vive em
+ * `acesso-projeto.repo` e é bem mais ampla: o backlog mostra o nome de
+ * todo projeto não sigiloso a qualquer usuário, para evitar cadastro em
+ * duplicidade. Este predicado continua valendo para tudo o que abre o
+ * conteúdo — lista de projetos, detalhe, cronograma.
+ *
+ * O acesso concedido por solicitação entra aqui: quem foi aprovado pelo
+ * gerente passa a enxergar o projeto como qualquer participante — mas
+ * `exigirAcessoProjeto`, que é outra função, continua recusando a
+ * escrita.
  */
 export function filtroVisibilidadeProjetos(ctx: ContextoUsuario): FiltroVisibilidade {
   if (ctx.admin || ctx.visaoDiretoriaProjetos) {
     return { clausula: "TRUE", binds: {} };
   }
 
-  const partes = [SQL_EXECUTA_PROJETO];
+  const partes = [
+    SQL_EXECUTA_PROJETO,
+    `EXISTS (SELECT 1 FROM projeto_acessos pa
+              WHERE pa.projeto_id = p.id AND pa.usuario_id = :usuarioId)`,
+  ];
   const binds: Record<string, unknown> = { usuarioId: ctx.id };
 
   // Gestor sem equipe cadastrada cai na visão de colaborador. É cadastro
@@ -251,7 +276,9 @@ async function exigirLeituraProjeto(ctx: ContextoUsuario, projetoId: string): Pr
  * Escrita é de quem executa: gerente, patrocinador e responsáveis por
  * tarefa. Admin entra porque precisa destravar cadastro errado. Papéis
  * de acompanhamento — diretoria e portfólio — são leitura e ficam de
- * fora, mesmo enxergando o projeto na lista.
+ * fora, mesmo enxergando o projeto na lista. Acesso concedido por
+ * solicitação também é leitura: aprovar um pedido não faz de ninguém
+ * dono do cronograma alheio.
  */
 async function exigirAcessoProjeto(
   ctx: ContextoUsuario,
@@ -345,6 +372,7 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
             p.gerente_id, ug.nome AS gerente_nome,
             p.status, p.inicio, p.fim,
             (p.usa_dias_uteis = 1) AS usa_dias_uteis,
+            (p.sigiloso = 1) AS sigiloso,
             p.capex, p.moeda,
             p.area_demandante, p.justificativa,
             p.valor, p.esforco, p.alcance, p.confianca,
@@ -581,6 +609,12 @@ export interface DadosProjeto {
   gerenteId?: string | null | undefined;
   status?: ProjectStatus | undefined;
   usaDiasUteis?: boolean | undefined;
+  /**
+   * Sigilo. Ausente significa "não mexa nisto", não "torne público":
+   * na criação cai em aberto, e na edição o COALESCE preserva o que
+   * estava gravado.
+   */
+  sigiloso?: boolean | undefined;
   capex?: number | null | undefined;
   moeda?: string | null | undefined;
   areaDemandante?: string | null | undefined;
@@ -741,12 +775,12 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
   await executar(
     `INSERT INTO projetos
        (id, nome, objetivo, sponsor_id, gerente_id, status, inicio, fim,
-        usa_dias_uteis, capex, moeda, area_demandante, justificativa,
+        usa_dias_uteis, sigiloso, capex, moeda, area_demandante, justificativa,
         valor, esforco, alcance, confianca, ordem_backlog,
         criado_em, atualizado_em)
      VALUES
        (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status,
-        CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :capex, :moeda,
+        CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :sigiloso, :capex, :moeda,
         :area, :justificativa,
         :valor, :esforco, :alcance, :confianca,
         CASE WHEN CAST(:status AS varchar) = 'backlog'
@@ -764,6 +798,9 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
       gerenteId: d.gerenteId ?? ctx.id,
       status,
       usaDiasUteis: deBool(d.usaDiasUteis ?? true),
+      // Nasce aberto: o sigilo é exceção, e exceção por omissão deixa
+      // de ser exceção.
+      sigiloso: deBool(d.sigiloso ?? false),
       // Valor sem moeda o banco recusa: a moeda cai no real quando há
       // número e ninguém escolheu, que é o caso da esmagadora maioria.
       capex: d.capex ?? null,
@@ -792,6 +829,7 @@ export async function atualizarProjeto(
         SET nome = :nome, objetivo = :objetivo, sponsor_id = :sponsorId,
             gerente_id = :gerenteId, status = COALESCE(:status, status),
             usa_dias_uteis = COALESCE(:usaDiasUteis, usa_dias_uteis),
+            sigiloso = COALESCE(:sigiloso, sigiloso),
             capex = :capex, moeda = :moeda,
             area_demandante = :area, justificativa = :justificativa,
             valor = :valor, esforco = :esforco,
@@ -806,6 +844,10 @@ export async function atualizarProjeto(
       gerenteId: d.gerenteId ?? null,
       status: d.status ?? null,
       usaDiasUteis: d.usaDiasUteis === undefined ? null : deBool(d.usaDiasUteis),
+      // Campo ausente preserva o que está gravado, como o regime de
+      // dias: um payload parcial não pode tornar público um projeto
+      // sigiloso por omissão.
+      sigiloso: d.sigiloso === undefined ? null : deBool(d.sigiloso),
       capex: d.capex ?? null,
       moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
       area: d.areaDemandante?.trim() ?? null,
@@ -1135,7 +1177,12 @@ export async function moverTarefa(
             concluido_em = CASE WHEN :concluida = 1
                                 THEN COALESCE(concluido_em, LOCALTIMESTAMP) ELSE NULL END
       WHERE id = :id`,
-    { id, quadro, concluida: deBool(concluida), emAndamento: deBool(emAndamento) },
+    {
+      id,
+      quadro,
+      concluida: deBool(concluida),
+      emAndamento: deBool(emAndamento),
+    },
   );
 
   // Arrastar no kanban mexe no progresso, e progresso agora decide a

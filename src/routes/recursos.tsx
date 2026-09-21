@@ -454,10 +454,7 @@ function DialogoAdicionarUsuarios() {
               {visiveis.map((u) => (
                 <li key={u.id}>
                   <label className="flex cursor-pointer items-center gap-2 rounded-md p-2 hover:bg-secondary/40">
-                    <Checkbox
-                      checked={marcados.has(u.id)}
-                      onCheckedChange={() => alternar(u.id)}
-                    />
+                    <Checkbox checked={marcados.has(u.id)} onCheckedChange={() => alternar(u.id)} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">{u.nome}</span>
                       <span className="block truncate text-xs text-muted-foreground">
