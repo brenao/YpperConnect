@@ -366,14 +366,8 @@ export async function capacidadeDiariaDaTarefa(tarefaId: string): Promise<number
 export type TipoAusencia =
   "ferias" | "licenca_medica" | "licenca" | "treinamento" | "folga" | "outro";
 
-export const AUSENCIA_LABEL: Record<TipoAusencia, string> = {
-  ferias: "Férias",
-  licenca_medica: "Licença médica",
-  licenca: "Licença",
-  treinamento: "Treinamento",
-  folga: "Folga",
-  outro: "Outro",
-};
+// AUSENCIA_LABEL vive em @/services/resource-utils, pelo mesmo motivo de
+// capacidadeProjeto: o mapa de disponibilidade usa no navegador.
 
 export interface Ausencia {
   id: string;

@@ -1,4 +1,4 @@
-import type { Recurso } from "@/repositories/recursos.repo";
+import type { Recurso, TipoAusencia } from "@/repositories/recursos.repo";
 
 /**
  * Capacidade de recurso. Calculo puro, sem banco.
@@ -18,3 +18,13 @@ export function capacidadeProjeto(
 ): number {
   return Math.round(((r.horasDia * r.disponibilidadeProjetos) / 100) * 100) / 100;
 }
+
+/** Rotulo de tela de cada tipo de ausencia. */
+export const AUSENCIA_LABEL: Record<TipoAusencia, string> = {
+  ferias: "Férias",
+  licenca_medica: "Licença médica",
+  licenca: "Licença",
+  treinamento: "Treinamento",
+  folga: "Folga",
+  outro: "Outro",
+};

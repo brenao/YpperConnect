@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarRange, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Recurso } from "@/repositories/recursos.repo";
-import { AUSENCIA_LABEL, type TipoAusencia } from "@/repositories/recursos.repo";
+import type { Recurso, TipoAusencia } from "@/repositories/recursos.repo";
+import { AUSENCIA_LABEL } from "@/services/resource-utils";
 import { listarAusenciasFn } from "@/services/recursos.functions";
 import { cn } from "@/lib/utils";
 
