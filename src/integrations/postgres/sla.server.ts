@@ -1,7 +1,7 @@
 import { consultar } from "./client.server";
 
 /**
- * Cálculo de prazo de SLA.
+ * Cálculo de prazo de SLA e aritmética de dias úteis do cronograma.
  *
  * Regras acordadas:
  *   - Incidentes P1: regime 24×7, horas corridas.
@@ -15,6 +15,19 @@ import { consultar } from "./client.server";
  *
  * Não trata horário de verão. O Brasil não adota desde 2019; se voltar,
  * este cálculo precisa ser revisto.
+ *
+ * ---------------------------------------------------------------------
+ * CALENDÁRIO POR LOCALIDADE
+ *
+ * Desde a migration 16 o calendário tem três camadas — instalação,
+ * localidade e recurso. Este arquivo resolve as duas primeiras; a
+ * terceira (ausências de uma pessoa) entra como exceção sobre um
+ * calendário já carregado, via `comAusencias`.
+ *
+ * O SLA de chamados continua usando o calendário padrão, sem
+ * localidade: chamado é atendido pela equipe de TI, que é uma só. Quem
+ * precisa de localidade é o cronograma, onde cada responsável trabalha
+ * de onde trabalha.
  */
 
 export interface OpcoesPrazo {
@@ -33,16 +46,36 @@ interface Faixa {
   fim: number;
 }
 
-interface Calendario {
+export interface Calendario {
   /** índice 1..7 = segunda..domingo (ISO 8601) */
   faixasPorDia: Map<number, Faixa[]>;
   /** "MM-DD" dos feriados que se repetem todo ano */
   recorrentes: Set<string>;
   /** "YYYY-MM-DD" dos feriados de data específica */
   especificos: Set<string>;
+  /**
+   * "YYYY-MM-DD" que não valem para ESTA pessoa: férias, licença,
+   * treinamento. Vazio no calendário de localidade — só `comAusencias`
+   * preenche.
+   *
+   * Separado dos feriados de propósito: feriado é do calendário e vale
+   * para todos daquela localidade; ausência é de uma pessoa e some
+   * quando ela volta. Misturar os dois no mesmo conjunto impediria
+   * reaproveitar o calendário da localidade entre os recursos dela.
+   */
+  excecoes: Set<string>;
 }
 
-let cache: { dados: Calendario; expiraEm: number } | undefined;
+/**
+ * Um cache por localidade.
+ *
+ * A chave `__padrao__` é o calendário da instalação — o que o SLA usa e
+ * o que vale para quem não tem localidade. Antes havia um cache só, e
+ * com localidades ele passaria a devolver o calendário de quem chegou
+ * primeiro para todo mundo.
+ */
+const CHAVE_PADRAO = "__padrao__";
+const caches = new Map<string, { dados: Calendario; expiraEm: number }>();
 const TTL_MS = 10 * 60 * 1000;
 
 function chaveData(d: Date): string {
@@ -57,19 +90,50 @@ function chaveMesDia(d: Date): string {
   return `${m}-${dia}`;
 }
 
-async function carregarCalendario(): Promise<Calendario> {
+/**
+ * Carrega o calendário de uma localidade.
+ *
+ * Expediente: o da localidade quando ela cadastrou faixas próprias;
+ * senão, o da instalação. A herança é tudo-ou-nada — jornada meio
+ * herdada e meio própria produz horário que ninguém consegue conferir.
+ *
+ * Feriados: os nacionais sempre, mais os regionais e locais daquela
+ * localidade. Feriado municipal de Caxias não pode tirar o dia de quem
+ * trabalha em São Paulo, que é exatamente o problema que a migration 16
+ * veio resolver.
+ */
+async function carregarCalendario(localidadeId?: string | null): Promise<Calendario> {
+  const chave = localidadeId ?? CHAVE_PADRAO;
   const agora = Date.now();
+
+  const cache = caches.get(chave);
   if (cache && cache.expiraEm > agora) return cache.dados;
 
   const [expediente, feriados] = await Promise.all([
     consultar<{ diaSemana: number; minutoIni: number; minutoFim: number }>(
+      // CAST porque o bind repete e, dentro de IS NULL, o Postgres não
+      // tem coluna ao lado de onde inferir o tipo.
       `SELECT dia_semana, minuto_ini, minuto_fim
          FROM expediente
         WHERE ativo = 1
+          AND localidade_id IS NOT DISTINCT FROM (
+                CASE WHEN EXISTS (SELECT 1 FROM expediente e2
+                                   WHERE e2.ativo = 1
+                                     AND e2.localidade_id = CAST(:localidadeId AS varchar))
+                     THEN CAST(:localidadeId AS varchar)
+                     ELSE NULL END)
         ORDER BY dia_semana, minuto_ini`,
+      { localidadeId: localidadeId ?? null },
     ),
     consultar<{ dataFeriado: Date; recorrente: number }>(
-      `SELECT data_feriado, recorrente FROM feriados WHERE ativo = 1`,
+      // `tipo` é a abrangência: nacional vale para todos, estadual e
+      // municipal só para a localidade que os cadastrou.
+      `SELECT data_feriado, recorrente
+         FROM feriados
+        WHERE ativo = 1
+          AND (tipo = 'nacional'
+               OR localidade_id = CAST(:localidadeId AS varchar))`,
+      { localidadeId: localidadeId ?? null },
     ),
   ]);
 
@@ -88,14 +152,43 @@ async function carregarCalendario(): Promise<Calendario> {
     else especificos.add(chaveData(d));
   }
 
-  const dados: Calendario = { faixasPorDia, recorrentes, especificos };
-  cache = { dados, expiraEm: agora + TTL_MS };
+  const dados: Calendario = {
+    faixasPorDia,
+    recorrentes,
+    especificos,
+    excecoes: new Set<string>(),
+  };
+  caches.set(chave, { dados, expiraEm: agora + TTL_MS });
   return dados;
 }
 
-/** Chamar após alterar expediente ou feriados pela tela de administração. */
-export function invalidarCacheCalendario(): void {
-  cache = undefined;
+/**
+ * Chamar após alterar expediente, feriados ou localidades pela tela de
+ * administração. Sem argumento, limpa todas: uma mudança no expediente
+ * padrão afeta toda localidade que não cadastrou o próprio.
+ */
+export function invalidarCacheCalendario(localidadeId?: string | null): void {
+  if (localidadeId === undefined) caches.clear();
+  else caches.delete(localidadeId ?? CHAVE_PADRAO);
+}
+
+/**
+ * Deriva um calendário pessoal a partir do da localidade.
+ *
+ * Não copia os feriados nem o expediente — compartilha as mesmas
+ * estruturas e só acrescenta o conjunto de datas em que aquela pessoa
+ * não trabalha. Com dez recursos na mesma cidade, o calendário da
+ * cidade é carregado uma vez.
+ *
+ * As datas entram como "YYYY-MM-DD" ou Date; períodos são expandidos
+ * por quem chama, que é quem sabe o intervalo de interesse.
+ */
+export function comAusencias(cal: Calendario, datas: Iterable<Date | string>): Calendario {
+  const excecoes = new Set<string>(cal.excecoes);
+  for (const d of datas) {
+    excecoes.add(typeof d === "string" ? d.slice(0, 10) : chaveData(d));
+  }
+  return { ...cal, excecoes };
 }
 
 function ehFeriado(d: Date, cal: Calendario): boolean {
@@ -110,6 +203,7 @@ function diaIso(d: Date): number {
 
 function faixasDoDia(d: Date, cal: Calendario): Faixa[] {
   if (ehFeriado(d, cal)) return [];
+  if (cal.excecoes.has(chaveData(d))) return [];
   return cal.faixasPorDia.get(diaIso(d)) ?? [];
 }
 
@@ -231,9 +325,10 @@ export async function minutosUteisEntre(
  * paralelo acabaria discordando do outro sobre o mesmo feriado, e
  * ninguém saberia qual está certo.
  *
- * Um dia é útil quando tem ao menos uma faixa de expediente e não é
- * feriado. Sábado sem faixa cadastrada não é dia útil; sábado com faixa
- * é — quem manda é o cadastro, não o nome do dia.
+ * Um dia é útil quando tem ao menos uma faixa de expediente, não é
+ * feriado da localidade e não cai numa ausência da pessoa. Sábado sem
+ * faixa cadastrada não é dia útil; sábado com faixa é — quem manda é o
+ * cadastro, não o nome do dia.
  */
 
 /** Versão pura, para poder ser testada sem banco. */
@@ -260,7 +355,8 @@ function proximoDiaUtilNoCalendario(d: Date, cal: Calendario): Date {
  * espera ao digitar "8h" numa tarefa.
  *
  * Se `inicio` cair em dia não útil, escorrega para o próximo — não faz
- * sentido uma tarefa começar num domingo que ninguém trabalha.
+ * sentido uma tarefa começar num domingo que ninguém trabalha, nem no
+ * meio das férias de quem vai executá-la.
  */
 function somarDiasUteisNoCalendario(inicio: Date, dias: number, cal: Calendario): Date {
   if (dias < 1) throw new Error("Duração em dias úteis deve ser pelo menos 1");
@@ -294,20 +390,28 @@ function diasUteisEntreNoCalendario(inicio: Date, fim: Date, cal: Calendario): n
   return total;
 }
 
-export async function ehDiaUtil(d: Date): Promise<boolean> {
-  return ehDiaUtilNoCalendario(d, await carregarCalendario());
+export async function ehDiaUtil(d: Date, localidadeId?: string | null): Promise<boolean> {
+  return ehDiaUtilNoCalendario(d, await carregarCalendario(localidadeId));
 }
 
-export async function proximoDiaUtil(d: Date): Promise<Date> {
-  return proximoDiaUtilNoCalendario(d, await carregarCalendario());
+export async function proximoDiaUtil(d: Date, localidadeId?: string | null): Promise<Date> {
+  return proximoDiaUtilNoCalendario(d, await carregarCalendario(localidadeId));
 }
 
-export async function somarDiasUteis(inicio: Date, dias: number): Promise<Date> {
-  return somarDiasUteisNoCalendario(inicio, dias, await carregarCalendario());
+export async function somarDiasUteis(
+  inicio: Date,
+  dias: number,
+  localidadeId?: string | null,
+): Promise<Date> {
+  return somarDiasUteisNoCalendario(inicio, dias, await carregarCalendario(localidadeId));
 }
 
-export async function diasUteisEntre(inicio: Date, fim: Date): Promise<number> {
-  return diasUteisEntreNoCalendario(inicio, fim, await carregarCalendario());
+export async function diasUteisEntre(
+  inicio: Date,
+  fim: Date,
+  localidadeId?: string | null,
+): Promise<number> {
+  return diasUteisEntreNoCalendario(inicio, fim, await carregarCalendario(localidadeId));
 }
 
 /** Exposto para teste: permite exercitar a aritmética sem banco. */
@@ -325,19 +429,58 @@ export const _internos = {
  * não pode esperar uma consulta a cada par de datas. Esta função carrega
  * o calendário uma vez e devolve uma função pura que o usa.
  */
-export async function contadorDeDiasUteis(): Promise<(inicio: Date, fim: Date) => number> {
-  const cal = await carregarCalendario();
+export async function contadorDeDiasUteis(
+  localidadeId?: string | null,
+): Promise<(inicio: Date, fim: Date) => number> {
+  const cal = await carregarCalendario(localidadeId);
   return (inicio, fim) => diasUteisEntreNoCalendario(inicio, fim, cal);
 }
 
 /** Somador de dias úteis com o calendário já carregado. */
-export async function somadorDeDiasUteis(): Promise<(inicio: Date, dias: number) => Date> {
-  const cal = await carregarCalendario();
+export async function somadorDeDiasUteis(
+  localidadeId?: string | null,
+): Promise<(inicio: Date, dias: number) => Date> {
+  const cal = await carregarCalendario(localidadeId);
   return (inicio, dias) => somarDiasUteisNoCalendario(inicio, dias, cal);
 }
 
 /** Empurra para o próximo dia útil, com o calendário já carregado. */
-export async function normalizadorDeDiaUtil(): Promise<(d: Date) => Date> {
-  const cal = await carregarCalendario();
+export async function normalizadorDeDiaUtil(
+  localidadeId?: string | null,
+): Promise<(d: Date) => Date> {
+  const cal = await carregarCalendario(localidadeId);
   return (d) => proximoDiaUtilNoCalendario(d, cal);
+}
+
+/**
+ * Trio de funções sobre um calendário já resolvido.
+ *
+ * O reagendamento precisa das três para o MESMO calendário, e uma
+ * pessoa pode ter o seu próprio por causa de férias. Devolver as três
+ * juntas evita três `await` por recurso dentro da passada topológica.
+ */
+export interface AritmeticaDeDias {
+  somar: (inicio: Date, dias: number) => Date;
+  contar: (inicio: Date, fim: Date) => number;
+  normalizar: (d: Date) => Date;
+}
+
+export function aritmeticaDe(cal: Calendario): AritmeticaDeDias {
+  return {
+    somar: (inicio, dias) => somarDiasUteisNoCalendario(inicio, dias, cal),
+    contar: (inicio, fim) => diasUteisEntreNoCalendario(inicio, fim, cal),
+    normalizar: (d) => proximoDiaUtilNoCalendario(d, cal),
+  };
+}
+
+/**
+ * Calendário de uma localidade, para quem vai derivar calendários
+ * pessoais a partir dele com `comAusencias`.
+ *
+ * Exportado porque o reagendamento carrega os calendários de todas as
+ * localidades envolvidas num projeto de uma vez, em vez de perguntar
+ * por tarefa.
+ */
+export async function calendarioDaLocalidade(localidadeId?: string | null): Promise<Calendario> {
+  return carregarCalendario(localidadeId);
 }

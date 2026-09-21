@@ -18,6 +18,14 @@ export interface Recurso {
   papel: string | null;
   equipeId: string | null;
   equipeNome: string | null;
+  /**
+   * De onde a pessoa trabalha. Nulo herda a localidade padrão.
+   *
+   * É o que decide quais feriados valem para ela: municipal de Caxias
+   * não tira o dia de quem está em São Paulo.
+   */
+  localidadeId: string | null;
+  localidadeNome: string | null;
   /** Jornada diária total. */
   horasDia: number;
   /** % da jornada dedicada a projetos (o resto vai para atendimento). */
@@ -36,10 +44,12 @@ interface Linha extends Omit<Recurso, "ativo"> {
 const SELECT_BASE = `
   SELECT r.id, r.usuario_id, u.nome AS usuario_nome, r.nome, r.papel,
          r.equipe_id, e.nome AS equipe_nome,
+         r.localidade_id, l.nome AS localidade_nome,
          r.horas_dia, r.disponibilidade_projetos, r.ativo
     FROM recursos r
     LEFT JOIN usuarios u ON u.id = r.usuario_id
-    LEFT JOIN equipes e ON e.id = r.equipe_id`;
+    LEFT JOIN equipes e ON e.id = r.equipe_id
+    LEFT JOIN localidades l ON l.id = r.localidade_id`;
 
 const mapear = (l: Linha): Recurso => ({ ...l, ativo: paraBool(l.ativo) });
 
@@ -141,6 +151,10 @@ export async function criarRecursosDeUsuarios(
 
   // INSERT SELECT com gen_random_uuid(): um comando só, e o
   // NOT EXISTS protege contra clique duplo criando duplicata.
+  //
+  // A localidade fica nula: herda a padrão. Perguntar de onde cada uma
+  // das cinquenta pessoas trabalha antes de cadastrar em lote é o
+  // caminho mais curto para ninguém cadastrar nada.
   return executar(
     `INSERT INTO recursos
        (id, usuario_id, nome, papel, equipe_id, horas_dia,
@@ -160,6 +174,8 @@ export interface DadosRecurso {
   usuarioId?: string | null | undefined;
   papel?: string | null | undefined;
   equipeId?: string | null | undefined;
+  /** Nulo herda a localidade padrão da instalação. */
+  localidadeId?: string | null | undefined;
   /** Opcional: sem valor, assume a jornada padrão de 8h. */
   horasDia?: number | undefined;
   disponibilidadeProjetos: number;
@@ -188,10 +204,10 @@ export async function criarRecurso(ctx: ContextoUsuario, d: DadosRecurso): Promi
   const id = crypto.randomUUID();
   await executar(
     `INSERT INTO recursos
-       (id, usuario_id, nome, papel, equipe_id, horas_dia,
+       (id, usuario_id, nome, papel, equipe_id, localidade_id, horas_dia,
         disponibilidade_projetos, ativo)
      VALUES
-       (:id, :usuarioId, :nome, :papel, :equipeId, :horasDia,
+       (:id, :usuarioId, :nome, :papel, :equipeId, :localidadeId, :horasDia,
         :disponibilidade, 1)`,
     {
       id,
@@ -199,6 +215,7 @@ export async function criarRecurso(ctx: ContextoUsuario, d: DadosRecurso): Promi
       nome: d.nome.trim(),
       papel: d.papel?.trim() ?? null,
       equipeId: d.equipeId ?? null,
+      localidadeId: d.localidadeId ?? null,
       horasDia: d.horasDia ?? HORAS_DIA_PADRAO,
       disponibilidade: d.disponibilidadeProjetos,
     },
@@ -220,6 +237,7 @@ export async function atualizarRecurso(
             nome = :nome,
             papel = :papel,
             equipe_id = :equipeId,
+            localidade_id = :localidadeId,
             horas_dia = :horasDia,
             disponibilidade_projetos = :disponibilidade
       WHERE id = :id`,
@@ -229,6 +247,7 @@ export async function atualizarRecurso(
       nome: d.nome.trim(),
       papel: d.papel?.trim() ?? null,
       equipeId: d.equipeId ?? null,
+      localidadeId: d.localidadeId ?? null,
       horasDia: d.horasDia ?? HORAS_DIA_PADRAO,
       disponibilidade: d.disponibilidadeProjetos,
     },
@@ -340,4 +359,229 @@ export async function capacidadeDiariaDaTarefa(tarefaId: string): Promise<number
   // Disponibilidade zerada não é capacidade: seria divisão por zero no
   // cálculo de duração, e a tarefa nunca terminaria.
   return horas !== null && horas > 0 ? Number(horas) : null;
+}
+
+// --------------------------------------------------------- ausências
+
+export type TipoAusencia =
+  "ferias" | "licenca_medica" | "licenca" | "treinamento" | "folga" | "outro";
+
+export const AUSENCIA_LABEL: Record<TipoAusencia, string> = {
+  ferias: "Férias",
+  licenca_medica: "Licença médica",
+  licenca: "Licença",
+  treinamento: "Treinamento",
+  folga: "Folga",
+  outro: "Outro",
+};
+
+export interface Ausencia {
+  id: string;
+  recursoId: string;
+  recursoNome: string;
+  tipo: TipoAusencia;
+  inicio: Date;
+  fim: Date;
+  observacao: string | null;
+  criadoPorNome: string | null;
+  criadoEm: Date;
+}
+
+const SELECT_AUSENCIA = `
+  SELECT a.id, a.recurso_id, r.nome AS recurso_nome, a.tipo,
+         a.inicio, a.fim, a.observacao,
+         u.nome AS criado_por_nome, a.criado_em
+    FROM recurso_ausencias a
+    JOIN recursos r ON r.id = a.recurso_id
+    LEFT JOIN usuarios u ON u.id = a.criado_por_id`;
+
+/**
+ * Ausências que tocam um período.
+ *
+ * O filtro é de sobreposição, não de contenção: férias que começaram
+ * mês passado e terminam semana que vem interessam a quem está olhando
+ * esta semana. `a.inicio <= :ate AND a.fim >= :de` é o teste clássico, e
+ * pega os quatro casos (começa antes, termina depois, contida, contém).
+ */
+export async function listarAusencias(filtro: {
+  recursoId?: string | null | undefined;
+  de?: Date | null | undefined;
+  ate?: Date | null | undefined;
+}): Promise<Ausencia[]> {
+  return consultar<Ausencia>(
+    `${SELECT_AUSENCIA}
+      WHERE (CAST(:recursoId AS varchar) IS NULL
+             OR a.recurso_id = CAST(:recursoId AS varchar))
+        AND (CAST(:de AS date) IS NULL OR a.fim >= CAST(:de AS date))
+        AND (CAST(:ate AS date) IS NULL OR a.inicio <= CAST(:ate AS date))
+      ORDER BY a.inicio DESC, r.nome`,
+    {
+      recursoId: filtro.recursoId ?? null,
+      de: filtro.de ?? null,
+      ate: filtro.ate ?? null,
+    },
+  );
+}
+
+export interface DadosAusencia {
+  recursoId: string;
+  tipo: TipoAusencia;
+  inicio: Date;
+  fim: Date;
+  observacao?: string | null | undefined;
+}
+
+/**
+ * Registra uma ausência.
+ *
+ * Sem aprovação e sem saldo de dias: quem decide férias é o RH, em
+ * outro sistema. O que importa aqui é o cronograma saber que a pessoa
+ * não vai trabalhar naquele período.
+ *
+ * Períodos sobrepostos do mesmo recurso são recusados. Não é
+ * preciosismo: duas linhas cobrindo o mesmo dia não mudam o cálculo,
+ * mas fazem o mapa de disponibilidade contar o dobro de dias de férias
+ * e ninguém entende de onde saiu o número.
+ */
+export async function criarAusencia(ctx: ContextoUsuario, d: DadosAusencia): Promise<string> {
+  exigirGestaoRecursos(ctx, "registrar ausências");
+
+  if (d.fim < d.inicio) throw new ErroDominio("Data final anterior à inicial");
+
+  const conflito = await consultarUm<{ id: string; inicio: Date; fim: Date }>(
+    `SELECT id, inicio, fim
+       FROM recurso_ausencias
+      WHERE recurso_id = :recursoId
+        AND inicio <= :fim
+        AND fim >= :inicio
+      LIMIT 1`,
+    { recursoId: d.recursoId, inicio: d.inicio, fim: d.fim },
+  );
+  if (conflito) {
+    throw new ErroDominio(
+      "Já existe uma ausência deste recurso no período. Edite a existente em vez de criar outra.",
+    );
+  }
+
+  const id = crypto.randomUUID();
+  await executar(
+    `INSERT INTO recurso_ausencias
+       (id, recurso_id, tipo, inicio, fim, observacao, criado_por_id,
+        criado_em, atualizado_em)
+     VALUES
+       (:id, :recursoId, :tipo, :inicio, :fim, :observacao, :criadoPor,
+        LOCALTIMESTAMP, LOCALTIMESTAMP)`,
+    {
+      id,
+      recursoId: d.recursoId,
+      tipo: d.tipo,
+      inicio: d.inicio,
+      fim: d.fim,
+      observacao: d.observacao?.trim() ?? null,
+      criadoPor: ctx.id,
+    },
+  );
+  return id;
+}
+
+export async function atualizarAusencia(
+  ctx: ContextoUsuario,
+  id: string,
+  d: Omit<DadosAusencia, "recursoId">,
+): Promise<void> {
+  exigirGestaoRecursos(ctx, "alterar ausências");
+  if (d.fim < d.inicio) throw new ErroDominio("Data final anterior à inicial");
+
+  const n = await executar(
+    `UPDATE recurso_ausencias
+        SET tipo = :tipo,
+            inicio = :inicio,
+            fim = :fim,
+            observacao = :observacao,
+            atualizado_em = LOCALTIMESTAMP
+      WHERE id = :id`,
+    {
+      id,
+      tipo: d.tipo,
+      inicio: d.inicio,
+      fim: d.fim,
+      observacao: d.observacao?.trim() ?? null,
+    },
+  );
+  if (n === 0) throw new ErroDominio(`Ausência ${id} não encontrada`);
+}
+
+/**
+ * Apaga de verdade, diferente do resto do sistema.
+ *
+ * Ausência não é histórico de trabalho: é uma previsão de quem não
+ * estará. Férias canceladas que continuassem no banco como "inativas"
+ * seguiriam empurrando o cronograma ou exigiriam um filtro em toda
+ * consulta — e o custo de errar é alguém aparecer como ausente no dia
+ * em que está trabalhando.
+ */
+export async function excluirAusencia(ctx: ContextoUsuario, id: string): Promise<void> {
+  exigirGestaoRecursos(ctx, "excluir ausências");
+  const n = await executar(`DELETE FROM recurso_ausencias WHERE id = :id`, { id });
+  if (n === 0) throw new ErroDominio(`Ausência ${id} não encontrada`);
+}
+
+// ------------------------------------------- calendário do cronograma
+
+/** Um responsável de tarefa, com a localidade que define o calendário dele. */
+export interface ResponsavelDeTarefa {
+  tarefaId: string;
+  recursoId: string;
+  localidadeId: string | null;
+}
+
+/**
+ * Responsáveis de todas as tarefas de um projeto, numa consulta.
+ *
+ * O reagendamento precisa saber, por tarefa, quais calendários se
+ * aplicam. Perguntar por tarefa transformaria a passada topológica numa
+ * enxurrada de consultas — o mesmo motivo que fez `capacidadesDoProjeto`
+ * nascer em lote.
+ */
+export async function responsaveisDoProjeto(projetoId: string): Promise<ResponsavelDeTarefa[]> {
+  return consultar<ResponsavelDeTarefa>(
+    `SELECT tr.tarefa_id, tr.recurso_id, r.localidade_id
+       FROM tarefa_responsaveis tr
+       JOIN projeto_tarefas t ON t.id = tr.tarefa_id
+       JOIN recursos r ON r.id = tr.recurso_id AND r.ativo = 1
+      WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
+    { projetoId },
+  );
+}
+
+export interface PeriodoAusencia {
+  recursoId: string;
+  inicio: Date;
+  fim: Date;
+}
+
+/**
+ * Ausências dos recursos de um projeto, numa consulta.
+ *
+ * Sem recorte de período: o cronograma pode ser reagendado para
+ * qualquer data futura, e filtrar por uma janela que o próprio cálculo
+ * ainda vai descobrir é a receita para uma férias escapar justamente no
+ * caso em que a tarefa escorregou para cima dela.
+ *
+ * O volume é pequeno — ausências de algumas dezenas de pessoas —, então
+ * trazer tudo e expandir em memória custa menos que acertar a janela.
+ */
+export async function ausenciasDoProjeto(projetoId: string): Promise<PeriodoAusencia[]> {
+  return consultar<PeriodoAusencia>(
+    `SELECT DISTINCT a.recurso_id, a.inicio, a.fim
+       FROM recurso_ausencias a
+      WHERE EXISTS (SELECT 1
+                      FROM tarefa_responsaveis tr
+                      JOIN projeto_tarefas t ON t.id = tr.tarefa_id
+                     WHERE tr.recurso_id = a.recurso_id
+                       AND t.projeto_id = :projetoId
+                       AND t.ativo = 1)
+      ORDER BY a.inicio`,
+    { projetoId },
+  );
 }

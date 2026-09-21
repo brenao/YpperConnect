@@ -541,3 +541,15 @@ export const reabrirAtencaoFn = createServerFn({ method: "POST" })
     await reabrirAtencao(await ctx(), data.id);
     return { ok: true };
   });
+
+/**
+ * Números do topo das telas de portfólio.
+ *
+ * Uma consulta para as três telas — backlog, projetos e diretoria —,
+ * respeitando a visibilidade de quem pergunta. Contagens separadas por
+ * tela divergem com o tempo, e aí nenhuma é mais confiável.
+ */
+export const resumoPortfolioFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { resumoPortfolio } = await import("@/repositories/projetos.repo");
+  return resumoPortfolio(await ctx());
+});

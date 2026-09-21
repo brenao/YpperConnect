@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import {
+  CalendarDays,
   ShieldCheck,
   Plus,
   Mail,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
+import { PainelCalendario } from "@/views/calendario-admin";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -1044,6 +1046,9 @@ function Administracao() {
             <TabsTrigger value="sistemas" className="gap-2">
               <Server className="size-4" /> Sistemas
             </TabsTrigger>
+            <TabsTrigger value="calendario" className="gap-2">
+              <CalendarDays className="size-4" /> Calendário
+            </TabsTrigger>
             <TabsTrigger value="emails" className="gap-2">
               <Mail className="size-4" /> Notificações
             </TabsTrigger>
@@ -1241,6 +1246,14 @@ function Administracao() {
                 </tbody>
               </table>
             </div>
+          </TabsContent>
+
+          {/* ------------------------------------------------ calendário */}
+          <TabsContent value="calendario" className="mt-4">
+            {/* Localidades e feriados mudam as datas de todo projeto da
+                empresa — é configuração de instalação, e por isso mora
+                aqui e não dentro de um projeto. */}
+            <PainelCalendario isAdmin={isAdmin} />
           </TabsContent>
 
           {/* ----------------------------------------------- notificações */}

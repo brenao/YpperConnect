@@ -39,7 +39,14 @@ import {
 } from "@/services/projetos.functions";
 import { SeletorUsuario } from "@/views/seletor-usuario";
 import { Switch } from "@/components/ui/switch";
-import { ESFORCOS, VALORES, calcularScore, type ModeloPriorizacao } from "@/services/priorizacao";
+import {
+  ESFORCOS,
+  PISO_PROJETO,
+  VALORES,
+  calcularScore,
+  pedeDivisao,
+  type ModeloPriorizacao,
+} from "@/services/priorizacao";
 import { cn } from "@/lib/utils";
 
 /** Radix não aceita SelectItem com value vazio. */
@@ -137,8 +144,19 @@ export function ProjectDialog({
   const setOpen = onOpenChange ?? setInterno;
   const [form, setForm] = useState<Form>(() => vazio(statusInicial));
 
+  /**
+   * "Menos de 2 semanas" marcado.
+   *
+   * Não vai para o banco: o que se grava é esforço nulo, porque aquilo
+   * não tem tamanho de projeto. O estado existe só para o aviso
+   * continuar na tela enquanto a pessoa decide o que fazer — sem ele, o
+   * clique não deixaria rastro nenhum e pareceria não ter funcionado.
+   */
+  const [abaixoDoPiso, setAbaixoDoPiso] = useState(false);
+
   useEffect(() => {
     if (!open) return;
+    setAbaixoDoPiso(false);
     setForm(
       project
         ? {
@@ -514,21 +532,25 @@ export function ProjectDialog({
               </>
             ) : (
               <div className="grid gap-2">
-                <Label>Esforço</Label>
-                <div className="flex gap-2">
+                <Label>Tamanho do projeto</Label>
+                {/* Duas colunas no estreito: quatro botões lado a lado
+                    espremem a descrição da faixa, que é o que faz a
+                    pessoa escolher certo. */}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {ESFORCOS.map((e) => (
                     <button
                       key={e.valor}
                       type="button"
-                      onClick={() =>
-                        setForm({
-                          ...form,
-                          esforco: form.esforco === e.valor ? null : e.valor,
-                        })
-                      }
+                      onClick={() => {
+                        setAbaixoDoPiso(false);
+                        setForm((f) => ({
+                          ...f,
+                          esforco: f.esforco === e.valor ? null : e.valor,
+                        }));
+                      }}
                       aria-pressed={form.esforco === e.valor}
                       className={cn(
-                        "flex-1 rounded-md border p-2 text-left transition-colors",
+                        "rounded-md border p-2 text-left transition-colors",
                         form.esforco === e.valor
                           ? "border-primary bg-primary/10"
                           : "border-border hover:border-primary/40",
@@ -539,12 +561,47 @@ export function ProjectDialog({
                     </button>
                   ))}
                 </div>
+
+                {/* O piso: a fronteira entre projeto e demanda
+                    operacional. Fica como opção de igual peso, e não
+                    escondido num link, porque é a escolha certa para
+                    boa parte do que chega ao backlog. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAbaixoDoPiso((v) => !v);
+                    setForm((f) => ({ ...f, esforco: null }));
+                  }}
+                  aria-pressed={abaixoDoPiso}
+                  className={cn(
+                    "rounded-md border p-2 text-left text-xs transition-colors",
+                    abaixoDoPiso
+                      ? "border-warning bg-warning/10"
+                      : "border-dashed border-border text-muted-foreground hover:border-warning/40",
+                  )}
+                >
+                  {PISO_PROJETO.rotulo}
+                </button>
               </div>
             )}
 
+            {abaixoDoPiso ? (
+              <p className="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning">
+                {PISO_PROJETO.aviso}
+              </p>
+            ) : null}
+
+            {pedeDivisao(form.esforco) ? (
+              <p className="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning">
+                Acima de nove meses, a estimativa deixa de ser estimativa. Vale quebrar em fases que
+                entreguem valor separadamente — cada uma vira um projeto com prazo que se consegue
+                defender.
+              </p>
+            ) : null}
+
             <p className="text-xs text-muted-foreground">
               {score === null
-                ? "Valor e esforço definem a posição na fila do backlog. Podem ficar em branco."
+                ? "Valor e tamanho definem a posição na fila do backlog. Podem ficar em branco."
                 : `Score ${score}. É a sugestão de ordem — a fila final é arrastada à mão.`}
             </p>
           </div>

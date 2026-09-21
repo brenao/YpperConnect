@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
+import { KpisPortfolio, type ChaveKpi } from "@/views/kpis-portfolio";
 import { ProjectDialog } from "@/views/project-dialogs";
 import { SeletorStatusProjeto } from "@/views/seletor-status-projeto";
 import { Badge } from "@/components/ui/badge";
@@ -125,10 +126,54 @@ function diasRestantes(fim: Date | string): number {
   return Math.ceil((new Date(fim).getTime() - Date.now()) / DIA_MS);
 }
 
+/** Vivo: ainda pede algo de alguém. Encerrado não entra em indicador de alerta. */
+function estaVivo(p: ProjetoComProgresso): boolean {
+  return p.status === "planejamento" || p.status === "execucao" || p.status === "paralisado";
+}
+
+/**
+ * Traduz o indicador clicado num teste sobre a lista.
+ *
+ * As condições espelham o SQL do `resumoPortfolio`. Se divergirem, o
+ * card dirá 5 e a lista mostrará 7 — e o número perde a credibilidade
+ * inteira, não só naquele card.
+ */
+function passaNoKpi(p: ProjetoComProgresso, kpi: ChaveKpi): boolean {
+  switch (kpi) {
+    case "execucao":
+      return p.status === "execucao";
+    case "planejamento":
+      return p.status === "planejamento";
+    case "paralisado":
+      return p.status === "paralisado";
+    case "concluido":
+      return p.status === "concluido";
+    case "prazoEstourado":
+      return estaVivo(p) && new Date(p.fim).getTime() < Date.now();
+    case "semAcompanhamento": {
+      if (!estaVivo(p)) return false;
+      const ref = p.ultimaAtualizacao ?? p.criadoEm;
+      return (Date.now() - new Date(ref).getTime()) / DIA_MS > 7;
+    }
+    case "semGerente":
+      return estaVivo(p) && p.gerenteId === null;
+    default:
+      return true;
+  }
+}
+
 function Projetos() {
   const [busca, setBusca] = useState("");
   const [gp, setGp] = useState("todos");
   const [status, setStatus] = useState<"todos" | ProjectStatus>("todos");
+
+  /**
+   * Indicador ativo. Convive com o seletor de status em vez de
+   * substituí-lo: escolher um manda no outro voltar para "todos",
+   * porque dois filtros de situação ao mesmo tempo produzem lista vazia
+   * sem explicar por quê.
+   */
+  const [kpi, setKpi] = useState<ChaveKpi | null>(null);
 
   /**
    * Encerrados ficam escondidos por padrão.
@@ -170,12 +215,12 @@ function Projetos() {
         !escondido &&
         (gp === "todos" || p.gerenteNome === gp) &&
         (status === "todos" || p.status === status) &&
+        (kpi === null || passaNoKpi(p, kpi)) &&
         (!t || `${p.nome} ${p.objetivo ?? ""}`.toLowerCase().includes(t))
       );
     });
-  }, [projetos, gp, status, busca, mostrarEncerrados]);
+  }, [projetos, gp, status, kpi, busca, mostrarEncerrados]);
 
-  const emExecucao = projetos.filter((p) => p.status === "execucao").length;
   const atrasados = projetos.filter((p) => calcularSaude(p) === "atrasado").length;
 
   return (
@@ -217,7 +262,13 @@ function Projetos() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+          <Select
+            value={status}
+            onValueChange={(v) => {
+              setStatus(v as typeof status);
+              setKpi(null);
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Status" />
             </SelectTrigger>
@@ -233,11 +284,21 @@ function Projetos() {
           {autenticado ? <ProjectDialog /> : null}
         </div>
 
+        {/* Os números do topo vêm do servidor e valem para a carteira
+            inteira que a pessoa enxerga — não para o resultado da busca.
+            Clicar filtra a lista abaixo; clicar de novo desliga. */}
+        <KpisPortfolio
+          cards={["execucao", "prazoEstourado", "semAcompanhamento", "paralisado"]}
+          ativo={kpi}
+          onAlternar={(c) => {
+            setKpi(c);
+            // Um filtro de situação de cada vez.
+            if (c !== null) setStatus("todos");
+          }}
+        />
+
         {projetos.length > 0 ? (
           <div className="panel flex flex-wrap items-center gap-4 p-4 text-sm">
-            <span className="text-muted-foreground">
-              {projetos.length} projeto(s) · {emExecucao} em execução
-            </span>
             {atrasados > 0 ? (
               <span className="inline-flex items-center gap-1.5 text-destructive">
                 <AlertTriangle className="size-4" />

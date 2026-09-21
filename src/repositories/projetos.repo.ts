@@ -2840,6 +2840,12 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
   // consultas a cada tecla salva.
   const capacidadePorTarefa = await capacidadesDoProjeto(projetoId);
 
+  // Calendário de cada tarefa: feriados da localidade de quem executa e
+  // as ausências dela. Carregado em lote, pelo mesmo motivo acima.
+  const { calendariosDasTarefas } =
+    await import("@/integrations/postgres/calendario-tarefas.server");
+  const calendarios = await calendariosDasTarefas(projetoId, projeto?.usaDiasUteis ?? true);
+
   const temFilhasPorId = new Map(tarefas.map((t) => [t.id, t.temFilhas > 0]));
   const paiDe = new Map(tarefas.map((t) => [t.id, t.paiId]));
   const emFolhas = expansorDeFolhas(
@@ -2884,18 +2890,23 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
     const t = porId.get(id);
     if (!t) continue;
 
-    let inicio = cal.normalizar(t.inicio);
+    // Sem responsável, cai no padrão: não há de quem herdar feriado
+    // de cidade nem férias.
+    const calTarefa = calendarios.porTarefa.get(id) ?? calendarios.padrao;
+
+    let inicio = calTarefa.normalizar(t.inicio);
     for (const p of pred.get(id) ?? []) {
       const anterior = agenda.get(p);
       if (!anterior) continue;
       // Sucessora começa no dia útil seguinte ao término: somar 2 dias
-      // conta o próprio dia do fim como o primeiro.
-      const seguinte = cal.somar(anterior.fim, 2);
+      // conta o próprio dia do fim como o primeiro. O calendário é o da
+      // sucessora — quem espera por ele é ela.
+      const seguinte = calTarefa.somar(anterior.fim, 2);
       if (seguinte > inicio) inicio = seguinte;
     }
 
-    const dias = duracaoDaTarefa(t, cal, capacidadePorTarefa.get(id) ?? null);
-    agenda.set(id, { inicio, fim: cal.somar(inicio, dias) });
+    const dias = duracaoDaTarefa(t, calTarefa, capacidadePorTarefa.get(id) ?? null);
+    agenda.set(id, { inicio, fim: calTarefa.somar(inicio, dias) });
   }
 
   // Só grava o que mudou: um UPDATE por tarefa em cronograma de 300
@@ -3044,4 +3055,115 @@ export async function conflitoDeData(
       bloqueia: a.minimo > proposto,
     })),
   };
+}
+
+// ------------------------------------------------- resumo do portfólio
+
+/**
+ * Números do topo das telas de portfólio.
+ *
+ * Uma consulta para as três telas — backlog, projetos e diretoria —
+ * porque três consultas com regras próprias é como se chega ao dia em
+ * que o backlog diz 12, a diretoria diz 14, e as duas estão "certas"
+ * por critérios que ninguém lembra de comparar. Cada tela escolhe quais
+ * campos exibe; nenhuma recalcula.
+ *
+ * Não há contagem de "total" aqui de propósito: é o número que menos
+ * informa e ocuparia o lugar mais nobre da leitura. Quem quiser o total
+ * soma o que interessa.
+ */
+export interface ResumoPortfolio {
+  /** Fila de decisão: registrado, ainda não priorizado. */
+  backlog: number;
+  /** Dias desde o cadastro da demanda mais antiga ainda na fila. */
+  diasNaFila: number;
+  /**
+   * Investimento previsto parado na fila, em reais.
+   *
+   * Só o que está em BRL. Somar moedas diferentes daria um número sem
+   * significado, e converter exigiria guardar a cotação do dia — que é
+   * a mesma razão pela qual a moeda é por projeto.
+   */
+  investimentoNaFila: number;
+
+  planejamento: number;
+  execucao: number;
+  paralisado: number;
+  concluido: number;
+
+  /**
+   * Prazo estourado: fim no passado e projeto não encerrado.
+   *
+   * É a leitura mais honesta de "atrasado" que dá para fazer em SQL.
+   * Comparar progresso real com o esperado seria melhor, mas o esperado
+   * depende do calendário de cada projeto e não cabe numa contagem.
+   */
+  prazoEstourado: number;
+  /** Vivos sem nenhum acompanhamento há mais de uma semana. */
+  semAcompanhamento: number;
+  /** Vivos sem gerente: ninguém responde por eles na visão de diretoria. */
+  semGerente: number;
+}
+
+/**
+ * Conta o portfólio que ESTE usuário enxerga.
+ *
+ * O mesmo filtro da listagem. Mostrar 40 no card e listar 5 projetos
+ * abaixo entregaria, pelo número, a existência do que o filtro esconde.
+ *
+ * Um SELECT com FILTER em vez de oito COUNT: são oito perguntas sobre a
+ * mesma tabela, e oito varreduras para respondê-las não se pagam.
+ */
+export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortfolio> {
+  const f = filtroVisibilidadeProjetos(ctx);
+
+  const r = await consultarUm<ResumoPortfolio>(
+    `SELECT
+       COUNT(*) FILTER (WHERE p.status = 'backlog')::int      AS backlog,
+       COALESCE(MAX(CURRENT_DATE - p.criado_em::date)
+                FILTER (WHERE p.status = 'backlog'), 0)::int  AS dias_na_fila,
+       COALESCE(SUM(p.capex) FILTER (
+                WHERE p.status = 'backlog' AND p.moeda = 'BRL'), 0) AS investimento_na_fila,
+
+       COUNT(*) FILTER (WHERE p.status = 'planejamento')::int AS planejamento,
+       COUNT(*) FILTER (WHERE p.status = 'execucao')::int     AS execucao,
+       COUNT(*) FILTER (WHERE p.status = 'paralisado')::int   AS paralisado,
+       COUNT(*) FILTER (WHERE p.status = 'concluido')::int    AS concluido,
+
+       COUNT(*) FILTER (
+         WHERE p.status IN ('planejamento','execucao','paralisado')
+           AND p.fim < CURRENT_DATE)::int                     AS prazo_estourado,
+
+       COUNT(*) FILTER (
+         WHERE p.status IN ('planejamento','execucao','paralisado')
+           AND COALESCE(
+                 (SELECT MAX(a.data_ref)::date
+                    FROM projeto_atualizacoes a
+                   WHERE a.projeto_id = p.id),
+                 p.criado_em::date) < CURRENT_DATE - 7)::int  AS sem_acompanhamento,
+
+       COUNT(*) FILTER (
+         WHERE p.status IN ('planejamento','execucao','paralisado')
+           AND p.gerente_id IS NULL)::int                     AS sem_gerente
+     FROM projetos p
+     WHERE ${f.clausula}`,
+    f.binds,
+  );
+
+  // Base vazia devolve zeros, não ausência: "0" é informação, e um
+  // espaço em branco parece falha de carregamento.
+  return (
+    r ?? {
+      backlog: 0,
+      diasNaFila: 0,
+      investimentoNaFila: 0,
+      planejamento: 0,
+      execucao: 0,
+      paralisado: 0,
+      concluido: 0,
+      prazoEstourado: 0,
+      semAcompanhamento: 0,
+      semGerente: 0,
+    }
+  );
 }

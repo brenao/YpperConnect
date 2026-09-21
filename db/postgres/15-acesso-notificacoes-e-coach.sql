@@ -4,6 +4,8 @@
 -- ou nenhuma. Juntas porque entraram na mesma leva de trabalho, e um
 -- banco com metade aplicada seria pior de diagnosticar depois.
 
+SET ROLE ypper;
+
 BEGIN;
 
 -- ---------------------------------------------------------------------
@@ -57,4 +59,27 @@ SELECT p.id, 'projetos.coach'
          WHERE f.perfil_id = p.id
            AND f.feature_key = 'projetos.coach');
 
+-- ---------------------------------------------------------------------
+-- 3. Remove a chave 'projetos.aprovar_acesso'
+--
+-- A migration 14 a criou nos perfis de sistema, mas ela nunca chegou a
+-- significar nada: quem aprova um pedido de acesso e o gerente ou o
+-- patrocinador do projeto, regra que vem das colunas de `projetos`.
+-- Chave de perfil que nao e lida por ninguem so confunde quem abre a
+-- tela de Perfis de acesso e tenta entender o que ela faz.
+--
+-- Ambientes novos nao passam por isto: o INSERT saiu do arquivo 14.
+-- ---------------------------------------------------------------------
+
+DELETE FROM perfil_features WHERE feature_key = 'projetos.aprovar_acesso';
+
+-- ---------------------------------------------------------------------
+-- Registro
+-- ---------------------------------------------------------------------
+
+INSERT INTO db_migrations (arquivo) VALUES ('15-acesso-notificacoes-e-coach.sql')
+ON CONFLICT (arquivo) DO NOTHING;
+
 COMMIT;
+
+RESET ROLE;

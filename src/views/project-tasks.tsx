@@ -455,6 +455,19 @@ function LinhaTarefa({
   // Pai não é editável: seus valores vêm do rollup das filhas.
   const podeEditar = editavel && !t.ehPai;
   const critica = cpm?.critica ?? false;
+
+  /**
+   * Folha sem responsável é um buraco silencioso no cronograma.
+   *
+   * Ela não conta na capacidade da equipe, não aparece na alocação de
+   * ninguém e — desde o calendário por recurso — ignora férias e
+   * feriado de localidade, porque não há de quem herdar. A data dela é
+   * a única do projeto calculada no vácuo, e nada na tela dizia isso.
+   *
+   * Mãe fica de fora: quem executa são as filhas, e atribuir gente a um
+   * agrupador é justamente o que a grade recusa.
+   */
+  const semResponsavel = !t.ehPai && responsaveis.length === 0;
   const diasCalendario = cpm?.duracaoDias ?? diasEntre(t.inicioEfetivo, t.fimEfetivo);
 
   // Mãe mostra a soma do esforço das filhas; folha mostra o que foi
@@ -645,7 +658,7 @@ function LinhaTarefa({
           ) : null}
         </span>
 
-        {t.atividade || critica || (cpm && cpm.folgaDias > 0 && !t.ehPai) ? (
+        {t.atividade || critica || semResponsavel || (cpm && cpm.folgaDias > 0 && !t.ehPai) ? (
           <span
             className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground"
             style={{ paddingLeft: `${nivel * 14 + 14}px` }}
@@ -656,6 +669,17 @@ function LinhaTarefa({
             ) : cpm && !t.ehPai && cpm.folgaDias > 0 ? (
               <span>
                 {t.atividade ? " · " : ""}folga de {cpm.folgaDias} d
+              </span>
+            ) : null}
+            {/* Fica por último e em amarelo: não é erro, é cadastro
+                incompleto — e é o que explica por que férias e feriado
+                municipal não mexem nesta linha. */}
+            {semResponsavel ? (
+              <span
+                className="text-warning"
+                title="Sem responsável: esta tarefa não entra na capacidade da equipe e ignora férias e feriados de localidade"
+              >
+                {t.atividade || critica || (cpm && cpm.folgaDias > 0) ? " · " : ""}sem responsável
               </span>
             ) : null}
           </span>

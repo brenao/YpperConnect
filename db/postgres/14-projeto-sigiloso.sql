@@ -2,6 +2,8 @@
 -- Projeto sigiloso + solicitacao de acesso
 -- Ids em VARCHAR(36) para acompanhar o restante do schema (crypto.randomUUID).
 
+SET ROLE ypper;
+
 BEGIN;
 
 -- 1. Sigilo no projeto -------------------------------------------------------
@@ -80,4 +82,13 @@ CREATE INDEX IF NOT EXISTS ix_pa_usuario ON projeto_acessos (usuario_id);
 -- das proprias colunas de projetos, nao de uma chave que alguem possa
 -- marcar para um perfil qualquer.
 
+-- ---------------------------------------------------------------------
+-- Registro
+-- ---------------------------------------------------------------------
+
+INSERT INTO db_migrations (arquivo) VALUES ('14-projeto-sigiloso.sql')
+ON CONFLICT (arquivo) DO NOTHING;
+
 COMMIT;
+
+RESET ROLE;

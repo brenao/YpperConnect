@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
+import { KpisPortfolio, type ChaveKpi } from "@/views/kpis-portfolio";
 import { ProjectDialog } from "@/views/project-dialogs";
 import { DialogoSolicitarAcesso } from "@/views/dialogo-solicitar-acesso";
 import { Paginacao, usePaginacao } from "@/views/paginacao";
@@ -122,6 +123,15 @@ function Backlog() {
   const [filtroSponsor, setFiltroSponsor] = useState(TODOS);
   const [visao, setVisao] = useState<"lista" | "matriz">("lista");
   const [aba, setAba] = useState<"fila" | "priorizados">("fila");
+
+  /**
+   * Indicador ativo na faixa de cima.
+   *
+   * Aqui ele também troca de aba: clicar em "em execução" e continuar na
+   * aba da fila mostraria uma lista vazia sem dizer por quê — e a pessoa
+   * concluiria que o número do card está errado.
+   */
+  const [kpi, setKpi] = useState<ChaveKpi | null>(null);
   // Uma instância só do formulário, aberta pela linha clicada. Um
   // diálogo por linha seria centenas de componentes montados só para
   // esperar um clique — o mesmo motivo que tirou o Dialog de dentro da
@@ -251,15 +261,8 @@ function Backlog() {
   const paginaFila = usePaginacao(naFila, `fila|${busca}|${filtroGerente}|${filtroSponsor}`);
   const paginaPriorizados = usePaginacao(
     priorizados,
-    `prio|${busca}|${filtroGerente}|${filtroSponsor}`,
+    `prio|${busca}|${filtroGerente}|${filtroSponsor}|${kpi ?? ""}`,
   );
-
-  const totalFila = itens.filter((d) => d.status === "backlog").length;
-  const totalPriorizados = itens.length - totalFila;
-  const semPontuacao = itens.filter(
-    (d) => d.status === "backlog" && calcularScore(modelo, d) === null,
-  ).length;
-  const emExecucao = itens.filter((d) => d.status === "execucao").length;
 
   return (
     <AppShell
@@ -273,38 +276,23 @@ function Backlog() {
           </div>
         ) : null}
 
-        {/* Três indicadores, todos números. O modelo de priorização saiu
-            daqui: era um rótulo de configuração no meio de uma faixa de
-            magnitudes, e quebrava a varredura. Ele agora aparece na
-            matriz, que é onde a pontuação de fato é usada. */}
-        <section className="grid gap-4 sm:grid-cols-3">
-          <div className="panel p-5">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Na fila</p>
-            <p className="mt-2 font-mono text-3xl font-semibold">{totalFila}</p>
-            <p className="mt-1 text-xs text-muted-foreground">projeto(s) aguardando decisão</p>
-          </div>
-          <div className="panel p-5">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Já priorizados</p>
-            <p className="mt-2 font-mono text-3xl font-semibold">{totalPriorizados}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {emExecucao} em execução no momento
-            </p>
-          </div>
-          <div className="panel p-5">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Sem pontuação</p>
-            <p
-              className={cn(
-                "mt-2 font-mono text-3xl font-semibold",
-                semPontuacao ? "text-warning" : "",
-              )}
-            >
-              {semPontuacao}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Sem valor e esforço, ficam fora da matriz
-            </p>
-          </div>
-        </section>
+        {/* Os números vêm do servidor e valem para a carteira inteira
+            que a pessoa enxerga — não para o resultado da busca. Clicar
+            leva à aba certa e filtra; clicar de novo desliga.
+
+            O modelo de priorização não está aqui: era um rótulo de
+            configuração no meio de uma faixa de magnitudes, e quebrava a
+            varredura. Ele aparece na matriz, que é onde a pontuação de
+            fato é usada. */}
+        <KpisPortfolio
+          cards={["backlog", "execucao", "planejamento"]}
+          ativo={kpi}
+          onAlternar={(c) => {
+            setKpi(c);
+            if (c === "backlog") setAba("fila");
+            else if (c !== null) setAba("priorizados");
+          }}
+        />
 
         {/* Uma linha só: a busca ocupa o que sobra, os seletores têm
             largura fixa. Crescer a barra em duas linhas faria o filtro
@@ -449,9 +437,11 @@ function Backlog() {
             <TabsContent value="priorizados" className="mt-4">
               {priorizados.length === 0 ? (
                 <div className="panel px-5 py-10 text-center text-sm text-muted-foreground">
-                  {temFiltro
-                    ? "Nenhum projeto priorizado corresponde aos filtros."
-                    : "Nenhum projeto priorizado ainda."}
+                  {kpi !== null
+                    ? "Nenhum projeto nessa situação."
+                    : temFiltro
+                      ? "Nenhum projeto priorizado corresponde aos filtros."
+                      : "Nenhum projeto priorizado ainda."}
                 </div>
               ) : (
                 <div className="panel overflow-hidden">

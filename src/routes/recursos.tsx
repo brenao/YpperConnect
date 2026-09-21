@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, Loader2, Pencil, Search, UserPlus } from "lucide-react";
+import { CalendarOff, Eye, EyeOff, Loader2, Pencil, Search, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
-import { ResourceDialog } from "@/views/resource-forms";
+import { MapaDisponibilidade } from "@/views/mapa-disponibilidade";
+import { DialogoAusencias, ResourceDialog } from "@/views/resource-forms";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -161,6 +162,11 @@ function Recursos() {
           </div>
         </section>
 
+        {/* Logo abaixo da capacidade: os dois respondem à mesma pergunta
+            — quem tem tempo —, e a resposta muda se a pessoa estiver de
+            férias na semana em questão. */}
+        {recursos.length > 0 ? <MapaDisponibilidade recursos={recursos} /> : null}
+
         {/* Recurso é o que liga a pessoa à tarefa. Sem nenhum cadastrado,
             ninguém consegue ser responsável — e o cronograma inteiro
             fica sem dono. Vale dizer isso de frente. */}
@@ -241,6 +247,22 @@ function Recursos() {
                     </div>
                     {podeEditar ? (
                       <div className="flex shrink-0 gap-1">
+                        {/* Ausências ficam no card da pessoa, e não numa
+                            tela separada: quem vai marcar férias já está
+                            olhando a capacidade dela. */}
+                        <DialogoAusencias
+                          recurso={r}
+                          trigger={
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7"
+                              title="Férias e ausências"
+                            >
+                              <CalendarOff className="size-3.5" />
+                            </Button>
+                          }
+                        />
                         <ResourceDialog
                           resource={r}
                           trigger={
