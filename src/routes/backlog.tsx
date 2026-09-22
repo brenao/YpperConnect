@@ -1,16 +1,7 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowRight,
-  ArrowUpRight,
-  LayoutGrid,
-  List,
-  Loader2,
-  Lock,
-  Search,
-  Trash2,
-} from "lucide-react";
+import { ArrowRight, ArrowUpRight, Loader2, Lock, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { KpisPortfolio, type ChaveKpi } from "@/views/kpis-portfolio";
@@ -116,13 +107,22 @@ function pessoasDe(
  */
 type EstadoAcesso = "liberado" | "pendente" | "bloqueado";
 
+/**
+ * A matriz virou aba, e não um modo de exibição da fila.
+ *
+ * Enquanto mostrava só o que aguarda decisão, ela cabia dentro da aba
+ * da fila. Agora que posiciona também o que já foi priorizado, ela
+ * responde outra pergunta — "o que aprovamos tinha mesmo o melhor
+ * retorno?" —, e essa pergunta não pertence a nenhuma das duas listas.
+ */
+type Aba = "fila" | "priorizados" | "matriz";
+
 function Backlog() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const [filtroGerente, setFiltroGerente] = useState(TODOS);
   const [filtroSponsor, setFiltroSponsor] = useState(TODOS);
-  const [visao, setVisao] = useState<"lista" | "matriz">("lista");
-  const [aba, setAba] = useState<"fila" | "priorizados">("fila");
+  const [aba, setAba] = useState<Aba>("fila");
 
   /**
    * Indicador ativo na faixa de cima.
@@ -256,6 +256,19 @@ function Backlog() {
 
   const priorizados = useMemo(() => filtrados.filter((d) => d.status !== "backlog"), [filtrados]);
 
+  /**
+   * O que a matriz posiciona: a fila e o que já foi priorizado.
+   *
+   * Concluído e cancelado ficam de fora. Eles ainda têm valor e esforço
+   * gravados e cairiam num quadrante, ocupando espaço com decisão que
+   * já aconteceu e não volta atrás — a matriz existe para o que ainda
+   * dá para mudar.
+   */
+  const paraMatriz = useMemo(
+    () => filtrados.filter((d) => d.status !== "concluido" && d.status !== "cancelado"),
+    [filtrados],
+  );
+
   // A chave inclui a aba: com a mesma chave nas duas listas, trocar de
   // aba deixaria a segunda aberta numa página que só a primeira tinha.
   const paginaFila = usePaginacao(naFila, `fila|${busca}|${filtroGerente}|${filtroSponsor}`);
@@ -336,34 +349,6 @@ function Backlog() {
             </SelectContent>
           </Select>
 
-          {/* A matriz é ferramenta de decisão sobre a fila; nos já
-              priorizados não haveria o que decidir. */}
-          {aba === "fila" ? (
-            <div className="flex items-center rounded-md border border-border p-0.5">
-              {(["lista", "matriz"] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setVisao(v)}
-                  aria-pressed={visao === v}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
-                    visao === v
-                      ? "bg-secondary font-medium text-secondary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {v === "lista" ? (
-                    <List className="size-3.5" />
-                  ) : (
-                    <LayoutGrid className="size-3.5" />
-                  )}
-                  {v === "lista" ? "Lista" : "Matriz"}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
           <ProjectDialog statusInicial="backlog" modelo={modelo} />
         </div>
 
@@ -397,6 +382,7 @@ function Backlog() {
             <TabsList>
               <TabsTrigger value="fila">Na fila ({naFila.length})</TabsTrigger>
               <TabsTrigger value="priorizados">Já priorizados ({priorizados.length})</TabsTrigger>
+              <TabsTrigger value="matriz">Matriz ({paraMatriz.length})</TabsTrigger>
             </TabsList>
 
             {/* ------------------------------------------------- na fila */}
@@ -407,8 +393,6 @@ function Backlog() {
                     ? "Nenhum projeto da fila corresponde aos filtros."
                     : "Nada aguardando decisão no momento."}
                 </div>
-              ) : visao === "matriz" ? (
-                <Matriz itens={naFila} modelo={modelo} />
               ) : (
                 <div className="panel overflow-hidden">
                   <Paginacao {...paginaFila.controles} rotulo="na fila" posicao="topo" />
@@ -459,6 +443,11 @@ function Backlog() {
                   <Paginacao {...paginaPriorizados.controles} rotulo="priorizados" />
                 </div>
               )}
+            </TabsContent>
+
+            {/* ------------------------------------------------- matriz */}
+            <TabsContent value="matriz" className="mt-4">
+              <Matriz itens={paraMatriz} modelo={modelo} />
             </TabsContent>
           </Tabs>
         )}
@@ -728,6 +717,13 @@ function LinhaPriorizada({
  * pontuação — posicionar o não avaliado em algum canto sugeriria uma
  * avaliação que ninguém fez.
  *
+ * Posiciona a fila E o que já foi priorizado. Enquanto mostrava só o
+ * que aguarda decisão, ela respondia "o que fazer agora?" e deixava sem
+ * resposta a pergunta seguinte, que é a que ensina: "o que já foi
+ * aprovado estava mesmo nos melhores quadrantes?". Um projeto em
+ * execução no canto de questionar é a conversa mais útil que esta tela
+ * pode provocar.
+ *
  * O modelo em uso aparece aqui, e só aqui: é nesta visão que a fórmula
  * muda o que se vê, e saber que "esforço 3" vem do RICE ou do modelo
  * simples é o que permite discordar da posição de um quadrante.
@@ -763,7 +759,8 @@ function Matriz({ itens, modelo }: { itens: ProjetoBacklog[]; modelo: ModeloPrio
         </strong>
         {modelo === "rice"
           ? " — alcance × impacto × confiança ÷ esforço."
-          : " — modelo simples, definido em Administração."}
+          : " — modelo simples, definido em Administração."}{" "}
+        Concluídos e cancelados ficam de fora: a matriz é sobre o que ainda dá para mudar.
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -773,7 +770,14 @@ function Matriz({ itens, modelo }: { itens: ProjetoBacklog[]; modelo: ModeloPrio
             <section key={q} className={cn("panel p-4", classe)}>
               <div className="flex items-baseline justify-between">
                 <h2 className="text-sm font-semibold">{QUADRANTE_LABEL[q]}</h2>
-                <span className="font-mono text-xs text-muted-foreground">{lista.length}</span>
+                {/* Quantos do quadrante já saíram da fila: é o número
+                    que diz se a decisão seguiu a matriz ou não. */}
+                <span className="font-mono text-xs text-muted-foreground">
+                  {lista.length}
+                  {lista.some((d) => d.status !== "backlog")
+                    ? ` · ${lista.filter((d) => d.status !== "backlog").length} priorizado(s)`
+                    : ""}
+                </span>
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {q === "ganho_rapido"
@@ -786,14 +790,41 @@ function Matriz({ itens, modelo }: { itens: ProjetoBacklog[]; modelo: ModeloPrio
               </p>
 
               <ul className="mt-3 space-y-1.5">
-                {lista.map((d) => (
-                  <li key={d.id} className="rounded-md border border-border p-2">
-                    <p className="truncate text-xs font-medium">{d.nome}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                      {d.areaDemandante ?? "Sem área"} · score {calcularScore(modelo, d) ?? "—"}
-                    </p>
-                  </li>
-                ))}
+                {lista.map((d) => {
+                  const naFila = d.status === "backlog";
+                  return (
+                    /* Priorizado ganha fundo e tarja com a situação; a
+                       fila continua com o cartão vazado. A situação vai
+                       por escrito, e não só por cor: quem imprime a
+                       matriz para a reunião perde a cor, e "priorizado"
+                       responde menos do que "em execução". */
+                    <li
+                      key={d.id}
+                      className={cn(
+                        "rounded-md border p-2",
+                        naFila ? "border-border" : "border-primary/30 bg-primary/5",
+                      )}
+                    >
+                      <p className="flex items-center gap-1.5 text-xs font-medium">
+                        <span className="truncate">{d.nome}</span>
+                        {d.sigiloso ? <Lock className="size-3 shrink-0 text-warning" /> : null}
+                      </p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        {!naFila ? (
+                          <Badge
+                            variant="outline"
+                            className={cn("text-[10px]", classeStatus(d.status))}
+                          >
+                            {PROJECT_STATUS_LABEL[d.status as ProjectStatus] ?? d.status}
+                          </Badge>
+                        ) : null}
+                        <span className="truncate">
+                          {d.areaDemandante ?? "Sem área"} · score {calcularScore(modelo, d) ?? "—"}
+                        </span>
+                      </p>
+                    </li>
+                  );
+                })}
                 {lista.length === 0 ? (
                   <li className="py-3 text-center text-xs text-muted-foreground">Vazio</li>
                 ) : null}
@@ -803,11 +834,22 @@ function Matriz({ itens, modelo }: { itens: ProjetoBacklog[]; modelo: ModeloPrio
         })}
       </div>
 
-      {semPontuacao.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {semPontuacao.length} projeto(s) da fila fora da matriz por falta de valor ou esforço.
-        </p>
-      ) : null}
+      {/* Legenda: a cor sozinha não carrega a informação — quem imprime
+          a matriz para a reunião a perde inteira. */}
+      <p className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className="size-3 rounded-[3px] border border-border" /> aguardando decisão
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="size-3 rounded-[3px] border border-primary/30 bg-primary/5" /> já
+          priorizado
+        </span>
+        {semPontuacao.length > 0 ? (
+          <span>
+            {semPontuacao.length} projeto(s) fora da matriz por falta de valor ou esforço.
+          </span>
+        ) : null}
+      </p>
     </div>
   );
 }
