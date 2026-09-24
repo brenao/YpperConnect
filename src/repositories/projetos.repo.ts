@@ -7,6 +7,7 @@ import {
 import { ErroDominio, deBool, paraBool } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 import type { ProjectStatus } from "@/models/itsm-types";
+import { ANCORA, type Dependencia, type TipoDependencia } from "@/services/dependencias";
 
 /**
  * Portfólio de projetos: cronograma, WBS, riscos e acompanhamento.
@@ -100,6 +101,15 @@ export interface Tarefa {
   duracaoUnidade: string | null;
   alocacaoPct: number | null;
   ordem: number;
+  /**
+   * Data fixada por decisão humana: a tarefa não começa antes dela.
+   *
+   * Nula significa ASAP — a tarefa vai para a primeira data que as
+   * dependências permitem, para frente ou para trás. É o equivalente ao
+   * "não iniciar antes de" do MS Project, e existe para segurar uma
+   * tarefa numa data combinada sem que o cronograma a puxe de volta.
+   */
+  restricaoInicio: Date | null;
   concluidoEm: Date | null;
 }
 
@@ -455,7 +465,8 @@ interface LinhaTarefaBruta extends Omit<Tarefa, "marco"> {
 export async function listarTarefas(projetoId: string): Promise<Tarefa[]> {
   const linhas = await consultar<LinhaTarefaBruta>(
     `SELECT id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
-            quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem, concluido_em
+            quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem,
+            restricao_inicio, concluido_em
        FROM projeto_tarefas
       WHERE projeto_id = :projetoId AND ativo = 1
       ORDER BY ordem, inicio`,
@@ -464,14 +475,26 @@ export async function listarTarefas(projetoId: string): Promise<Tarefa[]> {
   return linhas.map((l) => ({ ...l, marco: paraBool(l.marco) }));
 }
 
-/** Predecessoras e responsáveis, indexados por tarefa. */
+/**
+ * Predecessoras e responsáveis, indexados por tarefa.
+ *
+ * A predecessora deixou de ser um id solto e passou a ser a aresta
+ * inteira — tipo e defasagem junto. Quem consome precisa dos três para
+ * saber o que a dependência significa: "3" e "3II-2" apontam para a
+ * mesma tarefa e produzem cronogramas diferentes.
+ */
 export async function listarVinculosTarefas(projetoId: string): Promise<{
-  predecessoras: Record<string, string[]>;
+  predecessoras: Record<string, Dependencia[]>;
   responsaveis: Record<string, string[]>;
 }> {
   const [pred, resp] = await Promise.all([
-    consultar<{ tarefaId: string; predecessoraId: string }>(
-      `SELECT tp.tarefa_id, tp.predecessora_id
+    consultar<{
+      tarefaId: string;
+      predecessoraId: string;
+      tipo: TipoDependencia;
+      defasagem: number;
+    }>(
+      `SELECT tp.tarefa_id, tp.predecessora_id, tp.tipo, tp.defasagem
          FROM tarefa_predecessoras tp
          JOIN projeto_tarefas t ON t.id = tp.tarefa_id
         WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
@@ -486,9 +509,13 @@ export async function listarVinculosTarefas(projetoId: string): Promise<{
     ),
   ]);
 
-  const predecessoras: Record<string, string[]> = {};
+  const predecessoras: Record<string, Dependencia[]> = {};
   for (const p of pred) {
-    (predecessoras[p.tarefaId] ??= []).push(p.predecessoraId);
+    (predecessoras[p.tarefaId] ??= []).push({
+      predecessoraId: p.predecessoraId,
+      tipo: p.tipo,
+      defasagem: p.defasagem,
+    });
   }
   const responsaveis: Record<string, string[]> = {};
   for (const r of resp) {
@@ -1012,6 +1039,14 @@ export interface DadosTarefa {
   alocacaoPct?: number | null | undefined;
   ordem?: number | undefined;
   responsaveis?: string[] | undefined;
+  /**
+   * Predecessoras como ids simples, gravadas como TI sem defasagem.
+   *
+   * O formulário de tarefa cria vínculo simples, que é o caso comum; o
+   * tipo e a defasagem são editados na grade, por
+   * `atualizarVinculosTarefa`. Ampliar os dois caminhos ao mesmo tempo
+   * dobraria a superfície de erro sem atender a nenhum caso real.
+   */
   predecessoras?: string[] | undefined;
 }
 
@@ -1031,12 +1066,23 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
 
   await emTransacao(async (tx) => {
     await tx.executar(
+      // A ordem é calculada no próprio INSERT quando não vem informada:
+      // ler o máximo antes abriria uma janela em que duas criações
+      // simultâneas pegariam o mesmo número. É a mesma técnica da
+      // `ordem_backlog` em `criarProjeto`.
+      //
+      // Antes gravava zero, e com a coluna toda zerada o `inserirAbaixo`
+      // não conseguia abrir espaço para a linha nova — era isso que
+      // fazia o Enter criar a tarefa no fim do cronograma.
       `INSERT INTO projeto_tarefas
          (id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
           quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem)
        VALUES
          (:id, :projetoId, :paiId, :nome, :atividade, :inicio, :fim, :progresso,
-          :quadro, :marco, :duracao, :unidade, :alocacaoPct, :ordem)`,
+          :quadro, :marco, :duracao, :unidade, :alocacaoPct,
+          COALESCE(:ordem, (SELECT COALESCE(MAX(ordem), 0) + 1
+                              FROM projeto_tarefas
+                             WHERE projeto_id = :projetoId)))`,
       {
         id,
         projetoId: d.projetoId,
@@ -1054,7 +1100,10 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
         quadro: d.quadro ?? "backlog",
         marco: deBool(d.marco),
         alocacaoPct: d.alocacaoPct ?? null,
-        ordem: d.ordem ?? 0,
+        // Nulo deixa o SQL calcular: a tarefa nasce no fim do
+        // cronograma, que é onde quem usa o formulário espera que ela
+        // apareça.
+        ordem: d.ordem ?? null,
       },
     );
 
@@ -1066,6 +1115,7 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
     }
     for (const p of new Set(d.predecessoras ?? [])) {
       if (p === id) continue;
+      // Tipo e defasagem ficam no padrão do banco: TI, sem defasagem.
       await tx.executar(
         `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id) VALUES (:t, :p)`,
         { t: id, p },
@@ -1726,6 +1776,14 @@ export interface CampoTarefa {
    * a impediam. É a segunda saída do diálogo de conflito.
    */
   forcarData?: boolean | undefined;
+  /**
+   * Solta a data fixada e devolve a tarefa ao cálculo.
+   *
+   * É o clique no cadeado da grade. Sem este caminho, quem fixou uma
+   * data por engano não teria como desfazer — a restrição nasce de um
+   * arrasto e some sem deixar rastro no formulário.
+   */
+  limparRestricao?: boolean | undefined;
 }
 
 /** Predecessora que impede a data proposta, com o que a tela precisa mostrar. */
@@ -1973,6 +2031,23 @@ export async function atualizarCampoTarefa(
 
   const avisos = await avisosDeAlocacao(id, inicio, fim, alocacao);
 
+  /**
+   * Data digitada em tarefa com predecessora vira restrição.
+   *
+   * Sem isto, a passada topológica devolveria a tarefa para a primeira
+   * data possível e o arrasto pareceria não ter funcionado. Com isto, a
+   * decisão de quem move a tarefa sobrevive ao recálculo — que é o que
+   * o MS Project faz ao criar um "não iniciar antes de".
+   *
+   * Tarefa sem predecessora não precisa de restrição: a data dela já é
+   * a âncora, porque não há dependência para recalculá-la.
+   */
+  const temPredecessora = await consultarUm<{ total: number }>(
+    `SELECT COUNT(*)::int AS total FROM tarefa_predecessoras WHERE tarefa_id = :id`,
+    { id },
+  );
+  const fixarData = d.inicio !== undefined && (temPredecessora?.total ?? 0) > 0;
+
   // O quadro só se mexe quando o progresso veio no payload. Sem esta
   // guarda, renomear uma tarefa concluída a devolvia para "doing".
   const mexeuProgresso = d.progresso !== undefined;
@@ -1986,6 +2061,9 @@ export async function atualizarCampoTarefa(
             fim = :fim,
             duracao = :duracao,
             duracao_unidade = :unidade,
+            restricao_inicio = CASE WHEN :limparRestricao = 1 THEN NULL
+                                    WHEN :fixarData = 1 THEN CAST(:inicio AS date)
+                                    ELSE restricao_inicio END,
             quadro = CASE WHEN :mexeuProgresso = 0 THEN quadro
                           WHEN :concluida = 1 THEN 'done'
                           WHEN quadro = 'done' THEN 'doing'
@@ -2005,6 +2083,8 @@ export async function atualizarCampoTarefa(
       unidade,
       mexeuProgresso: deBool(mexeuProgresso),
       concluida: deBool(concluida),
+      fixarData: deBool(fixarData),
+      limparRestricao: deBool(d.limparRestricao ?? false),
     },
   );
 
@@ -2284,6 +2364,7 @@ export async function salvarBaseline(
 
   return id;
 }
+
 // ------------------------------------------------------------------- CPM
 
 export interface DadosCpm {
@@ -2314,11 +2395,24 @@ function duracaoEmDias(inicio: Date, fim: Date): number {
  * A duração vem das datas, não o contrário. Num CPM clássico a duração
  * dirige o cronograma; aqui as datas são definidas pelo usuário e o CPM
  * responde outra pergunta — quanto cada tarefa pode escorregar antes de
- * empurrar a entrega. É a informação que interessa a quem acompanha.
+ * empurrar a entrega.
+ *
+ * OS QUATRO TIPOS EM ESPAÇO NUMÉRICO
+ *   O cálculo trabalha com índices de dia, em que `ef = es + duração`.
+ *   Nesse espaço as quatro restrições viram uma só desigualdade sobre o
+ *   início da sucessora:
+ *
+ *     es_s >= base_p + defasagem - recuo
+ *
+ *   `base_p` é o fim da predecessora (TI, TT) ou o início dela (II, IT);
+ *   `recuo` é a duração da própria sucessora quando a restrição é sobre
+ *   o TÉRMINO dela (TT, IT), porque "termina depois de X" é o mesmo que
+ *   "começa duração antes disso". Uma desigualdade só evita quatro
+ *   braços de `switch` na ida e outros quatro na volta.
  */
 export function calcularCpm(
   tarefas: TarefaCalculada[],
-  predecessoras: Record<string, string[]>,
+  predecessoras: Record<string, Dependencia[]>,
   /**
    * Como contar dias entre duas datas. O padrão é dias corridos; o
    * chamador passa a contagem em dias úteis quando o projeto trabalha
@@ -2342,19 +2436,34 @@ export function calcularCpm(
     (id) => ehPaiPorId.get(id) ?? false,
   );
 
-  // Predecessora que aponta para tarefa inexistente é descartada;
-  // a que aponta para uma mãe vira o conjunto de folhas dela.
-  const pred = new Map<string, string[]>();
-  for (const t of folhas) {
-    const expandidas = (predecessoras[t.id] ?? [])
-      .flatMap((p) => emFolhas(p))
-      .filter((p) => porId.has(p) && p !== t.id);
-    pred.set(t.id, [...new Set(expandidas)]);
+  /** Aresta já expandida para folhas, com o tipo preservado. */
+  interface Aresta {
+    origem: string;
+    tipo: TipoDependencia;
+    defasagem: number;
   }
 
-  const suc = new Map<string, string[]>();
-  for (const [id, ps] of pred) {
-    for (const p of ps) suc.set(p, [...(suc.get(p) ?? []), id]);
+  const pred = new Map<string, Aresta[]>();
+  for (const t of folhas) {
+    const lista: Aresta[] = [];
+    for (const d of predecessoras[t.id] ?? []) {
+      for (const origem of emFolhas(d.predecessoraId)) {
+        if (!porId.has(origem) || origem === t.id) continue;
+        if (lista.some((a) => a.origem === origem && a.tipo === d.tipo)) continue;
+        lista.push({ origem, tipo: d.tipo, defasagem: d.defasagem });
+      }
+    }
+    pred.set(t.id, lista);
+  }
+
+  const suc = new Map<string, { destino: string; tipo: TipoDependencia; defasagem: number }[]>();
+  for (const [id, arestas] of pred) {
+    for (const a of arestas) {
+      suc.set(a.origem, [
+        ...(suc.get(a.origem) ?? []),
+        { destino: id, tipo: a.tipo, defasagem: a.defasagem },
+      ]);
+    }
   }
 
   const dur = new Map<string, number>();
@@ -2371,32 +2480,60 @@ export function calcularCpm(
     if (e === 2) return;
     if (e === 1) return; // ciclo: interrompe
     estado.set(id, 1);
-    for (const p of pred.get(id) ?? []) visitar(p);
+    for (const a of pred.get(id) ?? []) visitar(a.origem);
     estado.set(id, 2);
     ordem.push(id);
   }
   for (const t of folhas) visitar(t.id);
 
-  // Passada para frente: início e fim mais cedo possíveis.
   const es = new Map<string, number>();
   const ef = new Map<string, number>();
+
+  // Passada para frente: início e fim mais cedo possíveis.
   for (const id of ordem) {
-    const ps = pred.get(id) ?? [];
-    const inicio = ps.length ? Math.max(...ps.map((p) => ef.get(p) ?? 0)) : 0;
+    const duracao = dur.get(id) ?? 1;
+    let inicio = 0;
+
+    for (const a of pred.get(id) ?? []) {
+      const ancora = ANCORA[a.tipo];
+      const base = ancora.de === "fim" ? (ef.get(a.origem) ?? 0) : (es.get(a.origem) ?? 0);
+      const recuo = ancora.restringe === "fim" ? duracao : 0;
+      const minimo = base + a.defasagem - recuo;
+      if (minimo > inicio) inicio = minimo;
+    }
+
     es.set(id, inicio);
-    ef.set(id, inicio + (dur.get(id) ?? 1));
+    ef.set(id, inicio + duracao);
   }
 
   const fimProjeto = Math.max(...[...ef.values()], 0);
 
-  // Passada para trás: início e fim mais tarde sem atrasar o projeto.
+  // Passada para trás: a mesma desigualdade, resolvida para a
+  // predecessora. Quem restringe o TÉRMINO da sucessora limita menos a
+  // anterior, e é o `recuo` que carrega essa diferença.
   const lf = new Map<string, number>();
   const ls = new Map<string, number>();
+
   for (const id of [...ordem].reverse()) {
-    const ss = suc.get(id) ?? [];
-    const fim = ss.length ? Math.min(...ss.map((s) => ls.get(s) ?? fimProjeto)) : fimProjeto;
+    const duracao = dur.get(id) ?? 1;
+    let fim = fimProjeto;
+
+    for (const s of suc.get(id) ?? []) {
+      const ancora = ANCORA[s.tipo];
+      const duracaoSucessora = dur.get(s.destino) ?? 1;
+      const inicioTardioSucessora = (lf.get(s.destino) ?? fimProjeto) - duracaoSucessora;
+      const recuo = ancora.restringe === "fim" ? duracaoSucessora : 0;
+
+      // Limite sobre o FIM desta tarefa. Quando a âncora é o início
+      // dela, o limite vale sobre o início e volta somando a duração.
+      const limite =
+        inicioTardioSucessora + recuo - s.defasagem + (ancora.de === "inicio" ? duracao : 0);
+
+      if (limite < fim) fim = limite;
+    }
+
     lf.set(id, fim);
-    ls.set(id, fim - (dur.get(id) ?? 1));
+    ls.set(id, fim - duracao);
   }
 
   for (const t of folhas) {
@@ -2427,7 +2564,14 @@ export function calcularCpm(
 
 export interface VinculosTarefa {
   responsaveis?: string[] | undefined;
-  predecessoras?: string[] | undefined;
+  /**
+   * Arestas completas, não ids.
+   *
+   * A grade manda o que a pessoa digitou — "3", "7II", "12TI+2" já
+   * traduzido —, e a tabela guarda os três campos. Aceitar só o id
+   * obrigaria a gravar TI aqui e abrir outro caminho para o tipo.
+   */
+  predecessoras?: Dependencia[] | undefined;
 }
 
 /**
@@ -2465,7 +2609,11 @@ export async function atualizarVinculosTarefa(
   }
 
   if (d.predecessoras && d.predecessoras.length > 0) {
-    await validarPredecessoras(id, tarefa.projetoId, d.predecessoras);
+    await validarPredecessoras(
+      id,
+      tarefa.projetoId,
+      d.predecessoras.map((p) => p.predecessoraId),
+    );
   }
 
   await emTransacao(async (tx) => {
@@ -2480,11 +2628,22 @@ export async function atualizarVinculosTarefa(
     }
     if (d.predecessoras) {
       await tx.executar(`DELETE FROM tarefa_predecessoras WHERE tarefa_id = :id`, { id });
-      for (const p of new Set(d.predecessoras)) {
-        if (p === id) continue;
+
+      // A chave primária é (tarefa, predecessora): dois tipos para o
+      // mesmo par não cabem, e o último declarado vence. É a mesma
+      // regra do Project, e a alternativa — somar restrições — produz
+      // cronograma que ninguém consegue explicar numa reunião.
+      const porPredecessora = new Map<string, Dependencia>();
+      for (const p of d.predecessoras) {
+        if (p.predecessoraId === id) continue;
+        porPredecessora.set(p.predecessoraId, p);
+      }
+
+      for (const p of porPredecessora.values()) {
         await tx.executar(
-          `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id) VALUES (:t, :p)`,
-          { t: id, p },
+          `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id, tipo, defasagem)
+           VALUES (:t, :p, :tipo, :defasagem)`,
+          { t: id, p: p.predecessoraId, tipo: p.tipo, defasagem: p.defasagem },
         );
       }
     }
@@ -2522,6 +2681,9 @@ async function validarRecursos(ids: string[]): Promise<void> {
  * grafo expande para as folhas dela na hora de calcular. O que se
  * recusa é a própria ancestralidade — depender da mãe de quem se é
  * filha significa esperar a si mesmo.
+ *
+ * O tipo da aresta não entra aqui: II, TT e IT criam ciclo exatamente
+ * como TI. O que importa é para onde a seta aponta.
  */
 async function validarPredecessoras(id: string, projetoId: string, novas: string[]): Promise<void> {
   if (novas.includes(id)) throw new ErroDominio("Uma tarefa não pode depender de si mesma.");
@@ -2784,6 +2946,7 @@ interface LinhaReagendamento {
   duracao: number | null;
   duracaoUnidade: string | null;
   alocacaoPct: number | null;
+  restricaoInicio: Date | null;
   temFilhas: number;
 }
 
@@ -2805,11 +2968,22 @@ interface LinhaReagendamento {
  * gravá-las aqui criaria um número que o rollup contradiz. Dependência
  * declarada sobre uma mãe é expandida para as folhas dela — descartá-la
  * deixava a sucessora parada na data antiga.
+ *
+ * Os quatro tipos entram em duas rodadas dentro de cada tarefa. As que
+ * restringem o INÍCIO (TI, II) são resolvidas antes de calcular a
+ * duração; as que restringem o TÉRMINO (TT, IT) só podem ser aplicadas
+ * depois, porque o quanto a tarefa precisa recuar depende de quantos
+ * dias ela ocupa.
+ *
+ * A defasagem é contada na régua do projeto: em dias úteis pula fim de
+ * semana e feriado, em dias corridos conta dia a dia. Uma unidade
+ * própria criaria dois calendários no mesmo cronograma.
  */
 export async function reagendarProjeto(projetoId: string): Promise<void> {
   const [tarefas, arestas, projeto] = await Promise.all([
     consultar<LinhaReagendamento>(
       `SELECT t.id, t.pai_id, t.inicio, t.fim, t.duracao, t.duracao_unidade, t.alocacao_pct,
+              t.restricao_inicio,
               (SELECT COUNT(*) FROM projeto_tarefas f
                 WHERE f.pai_id = t.id AND f.ativo = 1)::int AS tem_filhas
          FROM projeto_tarefas t
@@ -2817,8 +2991,13 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
         ORDER BY t.ordem`,
       { projetoId },
     ),
-    consultar<{ tarefaId: string; predecessoraId: string }>(
-      `SELECT tp.tarefa_id, tp.predecessora_id
+    consultar<{
+      tarefaId: string;
+      predecessoraId: string;
+      tipo: TipoDependencia;
+      defasagem: number;
+    }>(
+      `SELECT tp.tarefa_id, tp.predecessora_id, tp.tipo, tp.defasagem
          FROM tarefa_predecessoras tp
          JOIN projeto_tarefas t ON t.id = tp.tarefa_id
         WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
@@ -2854,7 +3033,13 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
     (id) => temFilhasPorId.get(id) ?? false,
   );
 
-  const pred = new Map<string, string[]>();
+  interface ArestaFolha {
+    origem: string;
+    tipo: TipoDependencia;
+    defasagem: number;
+  }
+
+  const pred = new Map<string, ArestaFolha[]>();
   const porId = new Map<string, LinhaReagendamento>(folhas.map((t) => [t.id, t]));
   for (const t of folhas) pred.set(t.id, []);
 
@@ -2866,7 +3051,9 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
       for (const origem of emFolhas(a.predecessoraId)) {
         if (!porId.has(origem) || origem === alvo) continue;
         const lista = pred.get(alvo);
-        if (lista && !lista.includes(origem)) lista.push(origem);
+        if (!lista) continue;
+        if (lista.some((x) => x.origem === origem && x.tipo === a.tipo)) continue;
+        lista.push({ origem, tipo: a.tipo, defasagem: a.defasagem });
       }
     }
   }
@@ -2879,13 +3066,14 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
   function visitar(id: string) {
     if ((estado.get(id) ?? 0) !== 0) return;
     estado.set(id, 1);
-    for (const p of pred.get(id) ?? []) visitar(p);
+    for (const a of pred.get(id) ?? []) visitar(a.origem);
     estado.set(id, 2);
     ordem.push(id);
   }
   for (const t of folhas) visitar(t.id);
 
   const agenda = new Map<string, { inicio: Date; fim: Date }>();
+
   for (const id of ordem) {
     const t = porId.get(id);
     if (!t) continue;
@@ -2894,19 +3082,75 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
     // de cidade nem férias.
     const calTarefa = calendarios.porTarefa.get(id) ?? calendarios.padrao;
 
-    let inicio = calTarefa.normalizar(t.inicio);
-    for (const p of pred.get(id) ?? []) {
-      const anterior = agenda.get(p);
+    /**
+     * Data da restrição, na régua da sucessora.
+     *
+     * `somar(d, n)` conta o próprio dia como o primeiro, então avançar
+     * N dias pede `n + 1`. TI e IT acrescentam mais um: "depois que
+     * terminar" é o dia seguinte ao término, não o mesmo dia.
+     */
+    const restricaoDe = (base: Date, tipo: TipoDependencia, defasagem: number): Date => {
+      const emenda = tipo === "TI" || tipo === "IT" ? 1 : 0;
+      return calTarefa.somar(base, emenda + defasagem + 1);
+    };
+
+    const arestas = pred.get(id) ?? [];
+    const restricoesDeFim: Date[] = [];
+
+    /**
+     * Primeira data que as dependências de INÍCIO permitem.
+     *
+     * Fica separada da data atual de propósito: a tarefa com
+     * predecessora é ASAP e assume esta data, para frente ou para trás.
+     *
+     * Antes, a data gravada entrava na mesma comparação como piso, e
+     * era isso que fazia trocar TI por II não mover nada — a data
+     * antiga, posta ali pela própria TI, continuava segurando a tarefa.
+     * Quem quer segurar uma data agora usa `restricao_inicio`, que é
+     * decisão humana e sobrevive ao recálculo.
+     */
+    let porDependencia: Date | null = null;
+
+    for (const a of arestas) {
+      const anterior = agenda.get(a.origem);
       if (!anterior) continue;
-      // Sucessora começa no dia útil seguinte ao término: somar 2 dias
-      // conta o próprio dia do fim como o primeiro. O calendário é o da
-      // sucessora — quem espera por ele é ela.
-      const seguinte = calTarefa.somar(anterior.fim, 2);
-      if (seguinte > inicio) inicio = seguinte;
+
+      const ancora = ANCORA[a.tipo];
+      const base = ancora.de === "fim" ? anterior.fim : anterior.inicio;
+      const data = restricaoDe(base, a.tipo, a.defasagem);
+
+      if (ancora.restringe === "inicio") {
+        if (porDependencia === null || data > porDependencia) porDependencia = data;
+      } else {
+        restricoesDeFim.push(data);
+      }
+    }
+
+    // Sem dependência de início, a tarefa fica onde está: não há de
+    // onde derivar data nova, e movê-la seria inventar.
+    let inicio = porDependencia ?? calTarefa.normalizar(t.inicio);
+
+    // A restrição é piso, e só ela: é a data que alguém fixou à mão.
+    if (t.restricaoInicio) {
+      const fixada = calTarefa.normalizar(new Date(t.restricaoInicio));
+      if (fixada > inicio) inicio = fixada;
     }
 
     const dias = duracaoDaTarefa(t, calTarefa, capacidadePorTarefa.get(id) ?? null);
-    agenda.set(id, { inicio, fim: calTarefa.somar(inicio, dias) });
+    let fim = calTarefa.somar(inicio, dias);
+
+    // TT e IT restringem o término. Empurrar o início pela diferença
+    // preserva a duração — encurtar a tarefa para encaixar o fim seria
+    // apagar trabalho que alguém estimou.
+    for (const exigido of restricoesDeFim) {
+      if (fim >= exigido) continue;
+      const diferenca = calTarefa.contar(fim, exigido) - 1;
+      if (diferenca <= 0) continue;
+      inicio = calTarefa.somar(inicio, diferenca + 1);
+      fim = calTarefa.somar(inicio, dias);
+    }
+
+    agenda.set(id, { inicio, fim });
   }
 
   // Só grava o que mudou: um UPDATE por tarefa em cronograma de 300
@@ -2967,13 +3211,6 @@ function duracaoDaTarefa(
   return Math.max(1, cal.contar(cal.normalizar(t.inicio), meiaNoite(t.fim)));
 }
 
-/** Linha de predecessora usada na checagem de conflito. */
-interface LinhaPredecessora {
-  id: string;
-  nome: string;
-  fim: Date;
-}
-
 /**
  * Verifica se uma data proposta cabe nas dependências da tarefa.
  *
@@ -2981,36 +3218,52 @@ interface LinhaPredecessora {
  * permitido e as predecessoras que mandam — com id, não só nome, porque
  * a tela precisa poder cortar exatamente o vínculo que atrapalha.
  *
- * Para predecessora que é tarefa mãe, o término considerado é o da
- * última folha dela, não a coluna `fim` da própria linha: as datas do
- * pai são derivadas do rollup na leitura e o valor gravado pode estar
- * defasado. É o mesmo motivo que faz o reagendamento expandir a aresta.
+ * Para predecessora que é tarefa mãe, considera-se a descendência
+ * inteira: as datas do pai são derivadas do rollup na leitura e o valor
+ * gravado pode estar defasado. É o mesmo motivo que faz o reagendamento
+ * expandir a aresta.
  *
  * Cada predecessora é avaliada individualmente e marcada em `bloqueia`.
  * Devolver só a mais tardia faria a saída "manter a data" cortar um
  * vínculo e esbarrar no seguinte, abrindo o mesmo diálogo em sequência.
+ *
+ * SÓ TI E II SÃO AVALIADOS AQUI. Os dois restringem o INÍCIO, que é o
+ * campo que está sendo digitado. TT e IT restringem o término, e o
+ * término não é entrada neste caminho — o reagendamento os aplica
+ * depois, empurrando a tarefa se precisar. Barrar a digitação por causa
+ * deles pediria que a pessoa resolvesse de cabeça uma conta que o
+ * sistema faz sozinho.
  */
 export async function conflitoDeData(
   tarefaId: string,
   inicioProposto: Date,
 ): Promise<ConflitoData | null> {
   // A recursão desce a árvore de cada predecessora e agrega pelo id da
-  // raiz: uma linha por vínculo declarado, com o fim real do bloco.
-  const linhas = await consultar<LinhaPredecessora>(
+  // raiz: uma linha por vínculo declarado, com as datas reais do bloco.
+  const linhas = await consultar<{
+    id: string;
+    nome: string;
+    fim: Date;
+    inicio: Date;
+    tipo: TipoDependencia;
+    defasagem: number;
+  }>(
     `WITH RECURSIVE descendencia AS (
-       SELECT pr.id AS raiz_id, pr.nome AS raiz_nome, pr.id AS no_id
+       SELECT pr.id AS raiz_id, pr.nome AS raiz_nome,
+              tp.tipo, tp.defasagem, pr.id AS no_id
          FROM tarefa_predecessoras tp
          JOIN projeto_tarefas pr ON pr.id = tp.predecessora_id AND pr.ativo = 1
-        WHERE tp.tarefa_id = :id
+        WHERE tp.tarefa_id = :id AND tp.tipo IN ('TI', 'II')
        UNION ALL
-       SELECT d.raiz_id, d.raiz_nome, f.id
+       SELECT d.raiz_id, d.raiz_nome, d.tipo, d.defasagem, f.id
          FROM descendencia d
          JOIN projeto_tarefas f ON f.pai_id = d.no_id AND f.ativo = 1
      )
-     SELECT d.raiz_id AS id, d.raiz_nome AS nome, MAX(t.fim) AS fim
+     SELECT d.raiz_id AS id, d.raiz_nome AS nome, d.tipo, d.defasagem,
+            MAX(t.fim) AS fim, MIN(t.inicio) AS inicio
        FROM descendencia d
        JOIN projeto_tarefas t ON t.id = d.no_id
-      GROUP BY d.raiz_id, d.raiz_nome`,
+      GROUP BY d.raiz_id, d.raiz_nome, d.tipo, d.defasagem`,
     { id: tarefaId },
   );
   if (linhas.length === 0) return null;
@@ -3026,14 +3279,18 @@ export async function conflitoDeData(
   const cal = await calendarioDoProjeto(projeto?.usaDiasUteis ?? true);
   const proposto = meiaNoite(inicioProposto);
 
-  // Mínimo de cada predecessora: o dia seguinte ao término dela, na
-  // contagem que o projeto usa.
-  const avaliadas = linhas.map((l) => ({
-    id: l.id,
-    nome: l.nome,
-    fim: new Date(l.fim),
-    minimo: cal.somar(new Date(l.fim), 2),
-  }));
+  // TI parte do término da anterior e pede o dia seguinte; II parte do
+  // início dela e permite a mesma data. A defasagem entra nos dois.
+  const avaliadas = linhas.map((l) => {
+    const base = l.tipo === "TI" ? new Date(l.fim) : new Date(l.inicio);
+    const emenda = l.tipo === "TI" ? 1 : 0;
+    return {
+      id: l.id,
+      nome: l.nome,
+      fim: new Date(l.fim),
+      minimo: cal.somar(base, emenda + l.defasagem + 1),
+    };
+  });
 
   const primeira = avaliadas[0];
   if (!primeira) return null;
@@ -3166,4 +3423,139 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
       semGerente: 0,
     }
   );
+}
+
+// ------------------------------------------------- ordem das tarefas
+
+/**
+ * Renumera as tarefas do projeto de 1 em diante, pela árvore da WBS.
+ *
+ * É a mesma aritmética da migration 19, e de propósito: a ordem gravada
+ * precisa significar a mesma coisa venha ela da carga inicial ou de um
+ * arrastar-e-soltar. Duas implementações divergiriam no primeiro ajuste,
+ * e o sintoma seria uma linha que muda de lugar sozinha ao recarregar.
+ *
+ * Roda depois de qualquer mudança de posição ou de nível. É barato —
+ * uma consulta sobre as tarefas de um projeto — e deixa a coluna sempre
+ * densa: 1, 2, 3, sem buracos e sem repetição, que é o que o
+ * `inserirAbaixo` precisa para abrir espaço com `ordem + 1`.
+ */
+async function renumerarTarefas(projetoId: string): Promise<void> {
+  await executar(
+    `WITH RECURSIVE irmaos AS (
+       SELECT t.id, t.pai_id,
+              ROW_NUMBER() OVER (
+                PARTITION BY t.pai_id ORDER BY t.ordem, t.inicio, t.id
+              ) AS posicao
+         FROM projeto_tarefas t
+        WHERE t.projeto_id = :projetoId
+     ),
+     arvore AS (
+       SELECT i.id, LPAD(i.posicao::text, 4, '0') AS caminho, 1 AS nivel
+         FROM irmaos i
+        WHERE i.pai_id IS NULL
+       UNION ALL
+       SELECT f.id, a.caminho || '.' || LPAD(f.posicao::text, 4, '0'), a.nivel + 1
+         FROM irmaos f
+         JOIN arvore a ON f.pai_id = a.id
+        WHERE a.nivel < 10
+     ),
+     numerada AS (
+       SELECT a.id, ROW_NUMBER() OVER (ORDER BY a.caminho) AS nova
+         FROM arvore a
+     )
+     UPDATE projeto_tarefas t
+        SET ordem = n.nova
+       FROM numerada n
+      WHERE t.id = n.id
+        AND t.ordem IS DISTINCT FROM n.nova`,
+    { projetoId },
+  );
+}
+
+/** Onde a tarefa arrastada é solta em relação à de destino. */
+export type PosicaoSolta = "antes" | "depois";
+
+/**
+ * Move uma tarefa para antes ou depois de outra, no mesmo nível.
+ *
+ * Arrastar entre níveis diferentes não passa por aqui: mudar de mãe é
+ * endentar, e isso é `aninharTarefa`, que tem regras próprias — corta
+ * dependências circulares e recalcula o cronograma. Misturar as duas
+ * operações num gesto só produziria uma tarefa que mudou de dono sem
+ * ninguém ter pedido.
+ *
+ * Tarefa mãe leva as filhas junto sem esforço nenhum: a renumeração é
+ * pela árvore, então mover a mãe move o bloco inteiro.
+ *
+ * Não mexe em datas. A posição na lista é organização visual da WBS; o
+ * que manda no cronograma são as dependências e as durações. Reordenar
+ * e ver as datas mudarem seria surpresa ruim.
+ */
+export async function moverOrdemTarefa(
+  ctx: ContextoUsuario,
+  id: string,
+  alvoId: string,
+  posicao: PosicaoSolta,
+): Promise<void> {
+  await exigirAcessoTarefa(ctx, id, "reordenar tarefas deste projeto");
+
+  if (id === alvoId) return;
+
+  const linhas = await consultar<{
+    id: string;
+    projetoId: string;
+    paiId: string | null;
+  }>(`SELECT id, projeto_id, pai_id FROM projeto_tarefas WHERE id IN (:id, :alvoId)`, {
+    id,
+    alvoId,
+  });
+
+  const tarefa = linhas.find((l) => l.id === id);
+  const alvo = linhas.find((l) => l.id === alvoId);
+  if (!tarefa || !alvo) throw new ErroDominio("Tarefa não encontrada");
+
+  if (tarefa.projetoId !== alvo.projetoId) {
+    throw new ErroDominio("Não é possível mover uma tarefa para outro projeto.");
+  }
+  if (tarefa.paiId !== alvo.paiId) {
+    throw new ErroDominio(
+      "Só dá para reordenar entre tarefas do mesmo nível. Para mudar o nível, use os botões de endentar.",
+    );
+  }
+
+  /**
+   * Abre um buraco na posição de destino e coloca a tarefa nele.
+   *
+   * A coluna é SMALLINT, então uma posição fracionária — o truque usual
+   * de "meio ponto antes do alvo" — não cabe. Quem está no caminho cede
+   * um lugar, e a renumeração logo abaixo devolve inteiros densos.
+   */
+  await emTransacao(async (tx) => {
+    const alvoOrdem = await tx.consultar<{ ordem: number }>(
+      `SELECT ordem FROM projeto_tarefas WHERE id = :alvoId`,
+      { alvoId },
+    );
+    const destino = alvoOrdem[0]?.ordem ?? 1;
+
+    await tx.executar(
+      `UPDATE projeto_tarefas
+          SET ordem = ordem + 1
+        WHERE projeto_id = :projetoId
+          AND id <> :id
+          AND ordem >= :destino`,
+      {
+        projetoId: tarefa.projetoId,
+        id,
+        destino: posicao === "antes" ? destino : destino + 1,
+      },
+    );
+
+    await tx.executar(`UPDATE projeto_tarefas SET ordem = :nova WHERE id = :id`, {
+      id,
+      nova: posicao === "antes" ? destino : destino + 1,
+    });
+  });
+
+  await renumerarTarefas(tarefa.projetoId);
 }

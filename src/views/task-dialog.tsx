@@ -57,6 +57,15 @@ interface Form {
   atividade: string;
   paiId: string;
   inicio: string;
+  /**
+   * Término, opcional.
+   *
+   * Vazio significa "calcule": o servidor deriva a data do esforço e da
+   * capacidade de quem executa. Preenchido, a data manda e o esforço
+   * passa a ser o derivado — é o mesmo par de caminhos que a grade do
+   * cronograma já oferece, agora disponível também no formulário.
+   */
+  fim: string;
   duracao: string;
   duracaoUnidade: Unidade;
   progresso: number;
@@ -97,6 +106,8 @@ export function TaskDialog({
     atividade: "",
     paiId: SEM,
     inicio: paraInput(new Date()),
+    // Nasce vazio: quem cria informa o esforço, e o término sai dele.
+    fim: "",
     duracao: String(ESFORCO_PADRAO),
     duracaoUnidade: "horas",
     progresso: 0,
@@ -117,6 +128,10 @@ export function TaskDialog({
             atividade: tarefa.atividade ?? "",
             paiId: tarefa.paiId ?? SEM,
             inicio: paraInput(tarefa.inicio),
+            // Na edição o término vem preenchido: é o que está gravado,
+            // e deixá-lo em branco faria o salvar recalcular a data sem
+            // ninguém ter pedido.
+            fim: paraInput(tarefa.fim),
             // Tarefa antiga, criada antes de o esforço existir, cai na
             // jornada padrão: melhor um valor editável do que um campo
             // vazio que o servidor recusaria ao salvar.
@@ -178,19 +193,29 @@ export function TaskDialog({
       return;
     }
 
+    if (form.fim && form.fim < form.inicio) {
+      toast.error("O término não pode ser anterior ao início.");
+      return;
+    }
+
     /**
-     * Sem `fim`: o término é calculado no servidor.
+     * `fim` só vai quando a pessoa digitou.
      *
-     * É lá que se conhece o regime de dias do projeto, os feriados e a
-     * capacidade diária de cada responsável — três coisas que a tela
-     * não tem. Mandar uma data daqui seria mandar um palpite que o
-     * reagendamento sobrescreveria em seguida.
+     * Em branco, o término é calculado no servidor: é lá que se conhece
+     * o regime de dias do projeto, os feriados da localidade de quem
+     * executa e a capacidade diária dele — três coisas que a tela não
+     * tem. Mandar uma data daqui sem necessidade seria mandar um
+     * palpite que o reagendamento sobrescreveria em seguida.
+     *
+     * Digitado, ele manda. Existe tarefa com data contratada, e essa
+     * não se discute com aritmética.
      */
     const base = {
       nome: form.nome.trim(),
       atividade: form.atividade.trim() || null,
       paiId: form.paiId === SEM ? null : form.paiId,
       inicio: doInput(form.inicio),
+      ...(form.fim ? { fim: doInput(form.fim) } : {}),
       duracao,
       duracaoUnidade: form.duracaoUnidade,
       progresso: form.progresso,
@@ -215,9 +240,9 @@ export function TaskDialog({
         <DialogHeader>
           <DialogTitle>{tarefa ? "Editar tarefa" : "Nova tarefa"}</DialogTitle>
           <DialogDescription>
-            O término é calculado a partir do esforço e da capacidade diária de quem executa —
-            aquele percentual definido em Recursos. Para ajustar a data final à mão, use a grade do
-            cronograma.
+            Deixe o término em branco para que ele seja calculado a partir do esforço e da
+            capacidade diária de quem executa — aquele percentual definido em Recursos. Preencha
+            quando a data já estiver fechada.
           </DialogDescription>
         </DialogHeader>
 
@@ -257,6 +282,7 @@ export function TaskDialog({
                 </SelectContent>
               </Select>
             </div>
+
             <div className="grid gap-2">
               <Label htmlFor="tsk-inicio">Início</Label>
               <Input
@@ -267,8 +293,25 @@ export function TaskDialog({
               />
             </div>
 
-            {/* Esforço no lugar do término: é o trabalho previsto que se
-                estima, e a data final é consequência dele. */}
+            {/* Opcional de propósito, e com o efeito dito embaixo: os
+                dois caminhos são legítimos, e o que não pode é a pessoa
+                preencher sem saber que acabou de desligar o cálculo. */}
+            <div className="grid gap-2">
+              <Label htmlFor="tsk-fim">
+                Término{" "}
+                <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+              </Label>
+              <Input
+                id="tsk-fim"
+                type="date"
+                min={form.inicio || undefined}
+                value={form.fim}
+                onChange={(e) => setForm({ ...form, fim: e.target.value })}
+              />
+            </div>
+
+            {/* Esforço: é o trabalho previsto, e por padrão é ele que
+                define o término. */}
             <div className="grid gap-2">
               <Label htmlFor="tsk-esforco">Esforço</Label>
               <div className="flex gap-2">
@@ -325,6 +368,12 @@ export function TaskDialog({
               </Label>
             </div>
           </div>
+
+          <p className="rounded-lg border border-border bg-surface p-3 text-xs text-muted-foreground">
+            {form.fim
+              ? "Término fixado: o esforço acima vira referência de trabalho, e a data digitada é o que vale no cronograma."
+              : "Término em branco: sai do esforço e da capacidade de quem executa, pulando fins de semana, feriados da localidade e as ausências dele."}
+          </p>
 
           {/* Barra e campo apontam para o mesmo valor: a barra serve para
               o ajuste grosseiro, o campo para quem já sabe o número e

@@ -88,6 +88,24 @@ function achatarWbs(tarefas: TarefaCalculada[]): { tarefa: TarefaCalculada; nive
   return saida;
 }
 
+/**
+ * Só os ids das predecessoras, por tarefa.
+ *
+ * A grade precisa do vínculo inteiro — tipo e defasagem — porque é ela
+ * que os edita. Gantt, instrutor e o formulário de tarefa só perguntam
+ * "de quem esta tarefa depende", e dar a aresta completa a eles
+ * obrigaria os três a conhecer uma estrutura que não usam.
+ */
+function somenteIds(
+  predecessoras: Record<string, { predecessoraId: string }[]>,
+): Record<string, string[]> {
+  const saida: Record<string, string[]> = {};
+  for (const [tarefaId, lista] of Object.entries(predecessoras)) {
+    saida[tarefaId] = lista.map((d) => d.predecessoraId);
+  }
+  return saida;
+}
+
 function DetalheProjeto() {
   const { projectId } = Route.useParams();
   const qc = useQueryClient();
@@ -281,6 +299,7 @@ function DetalheProjeto() {
   } = q.data;
 
   const wbs = achatarWbs(tarefas);
+  const predecessorasIds = somenteIds(vinculos.predecessoras);
   const folhas = tarefas.filter((t) => !t.ehPai);
   const concluidas = folhas.filter((t) => t.quadro === "done").length;
 
@@ -578,7 +597,7 @@ function DetalheProjeto() {
                   status: projeto.status,
                   tarefas,
                   cpm,
-                  predecessoras: vinculos.predecessoras,
+                  predecessoras: predecessorasIds,
                   responsaveis: vinculos.responsaveis,
                   riscosAbertos: riscosAbertos.length,
                   atencoesAbertas: atencoesAbertas.length,
@@ -597,7 +616,7 @@ function DetalheProjeto() {
               projeto={projeto}
               wbs={wbs}
               cpm={cpm}
-              predecessoras={vinculos.predecessoras}
+              predecessoras={predecessorasIds}
               responsaveis={vinculos.responsaveis}
               planejado={planejado}
               progressoProjeto={progresso}
@@ -651,7 +670,7 @@ function DetalheProjeto() {
         tarefas={tarefas}
         recursos={recursos}
         responsaveisAtuais={editando ? (vinculos.responsaveis[editando.id] ?? []) : []}
-        predecessorasAtuais={editando ? (vinculos.predecessoras[editando.id] ?? []) : []}
+        predecessorasAtuais={editando ? (predecessorasIds[editando.id] ?? []) : []}
         open={tarefaAberta}
         onOpenChange={setTarefaAberta}
       />
