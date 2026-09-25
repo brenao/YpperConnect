@@ -1,4 +1,4 @@
-import { deleteCookie, getCookie, setCookie } from "@tanstack/react-start/server";
+import { deleteCookie, getCookie, getRequest, setCookie } from "@tanstack/react-start/server";
 import { getSupabaseServerClient } from "@/integrations/supabase/server";
 
 /**
@@ -83,11 +83,32 @@ export class NaoAutenticadoError extends Error {
 }
 
 /**
+ * Uma leitura de sessão por requisição.
+ *
+ * Várias funções do servidor perguntam "quem é e em qual empresa?" na
+ * mesma requisição — o motor de calendário, por exemplo, a cada cálculo.
+ * Sem isto, cada pergunta custaria quatro idas ao Supabase. A chave é o
+ * próprio objeto Request, que o WeakMap solta quando a requisição acaba.
+ */
+const sessaoPorRequisicao = new WeakMap<Request, Promise<Sessao>>();
+
+/**
  * Lê a sessão sem lançar erro. Usada pelo guarda de rotas e pela tela
  * de login, que precisam distinguir "não logou" de "logou mas não tem
  * empresa".
  */
-export async function getSessao(): Promise<Sessao> {
+export function getSessao(): Promise<Sessao> {
+  const requisicao = getRequest();
+  const pronta = sessaoPorRequisicao.get(requisicao);
+  if (pronta) return pronta;
+  const nova = lerSessao();
+  sessaoPorRequisicao.set(requisicao, nova);
+  // Falha não fica guardada: a próxima pergunta tenta de novo.
+  nova.catch(() => sessaoPorRequisicao.delete(requisicao));
+  return nova;
+}
+
+async function lerSessao(): Promise<Sessao> {
   const supabase = getSupabaseServerClient();
 
   // getUser() confere o token no servidor do Auth. getSession() apenas

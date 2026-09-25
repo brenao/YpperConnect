@@ -1,4 +1,4 @@
-import { consultar } from "./client.server";
+import { getSupabaseServerClient } from "@/integrations/supabase/server";
 
 /**
  * Cálculo de prazo de SLA e aritmética de dias úteis do cronograma.
@@ -67,12 +67,11 @@ export interface Calendario {
 }
 
 /**
- * Um cache por localidade.
+ * Um cache por tenant + localidade.
  *
- * A chave `__padrao__` é o calendário da instalação — o que o SLA usa e
- * o que vale para quem não tem localidade. Antes havia um cache só, e
- * com localidades ele passaria a devolver o calendário de quem chegou
- * primeiro para todo mundo.
+ * A chave leva o tenant porque "padrão" não é mais uma só: cada empresa
+ * tem a sua. Sem o tenant na chave, o calendário da primeira empresa a
+ * calcular um prazo valeria para todas.
  */
 const CHAVE_PADRAO = "__padrao__";
 const caches = new Map<string, { dados: Calendario; expiraEm: number }>();
@@ -91,65 +90,58 @@ function chaveMesDia(d: Date): string {
 }
 
 /**
- * Carrega o calendário de uma localidade.
+ * Carrega o calendário de uma localidade do tenant ativo.
  *
  * Expediente: o da localidade quando ela cadastrou faixas próprias;
- * senão, o da instalação. A herança é tudo-ou-nada — jornada meio
- * herdada e meio própria produz horário que ninguém consegue conferir.
+ * senão, o da localidade padrão do tenant. A herança é tudo-ou-nada —
+ * jornada meio herdada e meio própria produz horário que ninguém
+ * consegue conferir.
  *
- * Feriados: os nacionais sempre, mais os regionais e locais daquela
- * localidade. Feriado municipal de Caxias não pode tirar o dia de quem
- * trabalha em São Paulo, que é exatamente o problema que a migration 16
- * veio resolver.
+ * Feriados: os nacionais da plataforma, mais os do tenant que valem para
+ * todas as localidades, mais os daquela localidade. Feriado municipal de
+ * Caxias não pode tirar o dia de quem trabalha em São Paulo.
+ *
+ * As regras moram na função `calendario_localidade` do banco, que também
+ * confere se a pessoa é membro do tenant. Ela é SECURITY DEFINER porque
+ * o solicitante que abre um chamado precisa do cálculo de SLA, mas não
+ * tem permissão de ler o cadastro de localidades.
  */
 async function carregarCalendario(localidadeId?: string | null): Promise<Calendario> {
-  const chave = localidadeId ?? CHAVE_PADRAO;
-  const agora = Date.now();
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  const { tenantId } = await getUsuarioAtual();
 
+  const chave = `${tenantId}:${localidadeId ?? CHAVE_PADRAO}`;
+  const agora = Date.now();
   const cache = caches.get(chave);
   if (cache && cache.expiraEm > agora) return cache.dados;
 
-  const [expediente, feriados] = await Promise.all([
-    consultar<{ diaSemana: number; minutoIni: number; minutoFim: number }>(
-      // CAST porque o bind repete e, dentro de IS NULL, o Postgres não
-      // tem coluna ao lado de onde inferir o tipo.
-      `SELECT dia_semana, minuto_ini, minuto_fim
-         FROM expediente
-        WHERE ativo = 1
-          AND localidade_id IS NOT DISTINCT FROM (
-                CASE WHEN EXISTS (SELECT 1 FROM expediente e2
-                                   WHERE e2.ativo = 1
-                                     AND e2.localidade_id = CAST(:localidadeId AS varchar))
-                     THEN CAST(:localidadeId AS varchar)
-                     ELSE NULL END)
-        ORDER BY dia_semana, minuto_ini`,
-      { localidadeId: localidadeId ?? null },
-    ),
-    consultar<{ dataFeriado: Date; recorrente: number }>(
-      // `tipo` é a abrangência: nacional vale para todos, estadual e
-      // municipal só para a localidade que os cadastrou.
-      `SELECT data_feriado, recorrente
-         FROM feriados
-        WHERE ativo = 1
-          AND (tipo = 'nacional'
-               OR localidade_id = CAST(:localidadeId AS varchar))`,
-      { localidadeId: localidadeId ?? null },
-    ),
-  ]);
+  const { data, error } = await getSupabaseServerClient().rpc("calendario_localidade", {
+    p_tenant: tenantId,
+    p_localidade: localidadeId ?? null,
+  });
+  if (error) throw new Error(`Falha ao carregar o calendário: ${error.message}`);
+
+  const bruto = data as {
+    expediente: { dia: number; ini: number; fim: number }[];
+    feriados: { data: string; recorrente: boolean }[];
+  };
 
   const faixasPorDia = new Map<number, Faixa[]>();
-  for (const e of expediente) {
-    const lista = faixasPorDia.get(e.diaSemana) ?? [];
-    lista.push({ ini: e.minutoIni, fim: e.minutoFim });
-    faixasPorDia.set(e.diaSemana, lista);
+  for (const e of bruto.expediente) {
+    const lista = faixasPorDia.get(e.dia) ?? [];
+    lista.push({ ini: e.ini, fim: e.fim });
+    faixasPorDia.set(e.dia, lista);
   }
 
+  // A data chega como "YYYY-MM-DD". As chaves são montadas do texto, sem
+  // passar por Date, para o fuso do servidor não empurrar o feriado para
+  // o dia anterior.
   const recorrentes = new Set<string>();
   const especificos = new Set<string>();
-  for (const f of feriados) {
-    const d = new Date(f.dataFeriado);
-    if (f.recorrente === 1) recorrentes.add(chaveMesDia(d));
-    else especificos.add(chaveData(d));
+  for (const f of bruto.feriados) {
+    const texto = f.data.slice(0, 10);
+    if (f.recorrente) recorrentes.add(texto.slice(5));
+    else especificos.add(texto);
   }
 
   const dados: Calendario = {
@@ -164,12 +156,11 @@ async function carregarCalendario(localidadeId?: string | null): Promise<Calenda
 
 /**
  * Chamar após alterar expediente, feriados ou localidades pela tela de
- * administração. Sem argumento, limpa todas: uma mudança no expediente
- * padrão afeta toda localidade que não cadastrou o próprio.
+ * administração. Limpa tudo: uma mudança na padrão afeta toda localidade
+ * que herda dela, e o cache é barato de refazer.
  */
-export function invalidarCacheCalendario(localidadeId?: string | null): void {
-  if (localidadeId === undefined) caches.clear();
-  else caches.delete(localidadeId ?? CHAVE_PADRAO);
+export function invalidarCacheCalendario(_localidadeId?: string | null): void {
+  caches.clear();
 }
 
 /**

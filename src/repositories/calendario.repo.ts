@@ -1,23 +1,22 @@
-import {
-  consultar,
-  consultarUm,
-  executar,
-  emTransacao,
-} from "@/integrations/postgres/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { getSupabaseServerClient } from "@/integrations/supabase/server";
+import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
 /**
- * Calendário da instalação: localidades e feriados.
+ * Calendário do tenant: localidades e feriados. SOMENTE SERVIDOR.
+ *
+ * Mesma interface do repositório legado (a tela e as server functions
+ * não mudaram); por dentro, lê e grava no Supabase com a sessão de quem
+ * chamou, então o RLS confere cada operação de novo.
+ *
+ * Regras iguais às do legado, agora por empresa. Os feriados nacionais
+ * também são da empresa: ela nasce com uma cópia do modelo da plataforma
+ * (`feriados_plataforma`) e depois edita, desativa ou exclui como quiser.
  *
  * Uma localidade é "de onde a pessoa trabalha": define quais feriados
- * valem para ela e, quando cadastrado, o expediente próprio. Empresa de
- * uma cidade só cadastra nada além da padrão, que a migration 16 já
- * criou.
- *
- * `pais` em ISO-3166 e `regiao` como texto livre, não uma coluna `uf`:
- * estado, província, condado e cantão são a mesma camada com nomes
- * diferentes, e um produto que assume "UF" não atravessa a fronteira.
+ * valem para ela e, quando cadastrado, o expediente próprio. `pais` em
+ * ISO-3166 e `regiao` como texto livre, não uma coluna `uf`: estado,
+ * província, condado e cantão são a mesma camada com nomes diferentes.
  */
 
 export interface Localidade {
@@ -26,62 +25,117 @@ export interface Localidade {
   pais: string;
   regiao: string | null;
   cidade: string | null;
-  /** A que vale para quem não tem localidade própria. Existe uma só. */
+  /** A que vale para quem não tem localidade própria. Existe uma por tenant. */
   padrao: boolean;
   ativo: boolean;
-  /** Quantos recursos apontam para ela — a tela avisa antes de desativar. */
+  /** Quantos recursos apontam para ela. Zero até o módulo de recursos migrar. */
   recursos: number;
   /** Feriados regionais e municipais cadastrados nela. */
   feriados: number;
 }
 
-interface LinhaLocalidade extends Omit<Localidade, "padrao" | "ativo"> {
-  padrao: number;
-  ativo: number;
+export type TipoFeriado = "nacional" | "estadual" | "municipal";
+
+export const FERIADO_LABEL: Record<TipoFeriado, string> = {
+  nacional: "Nacional",
+  estadual: "Estadual / regional",
+  municipal: "Municipal",
+};
+
+export interface Feriado {
+  id: string;
+  data: Date;
+  descricao: string;
+  tipo: TipoFeriado;
+  /**
+   * Repete todo ano na mesma data. Natal e Tiradentes são recorrentes;
+   * Páscoa, Carnaval e Corpus Christi precisam de uma linha por ano.
+   */
+  recorrente: boolean;
+  localidadeId: string | null;
+  localidadeNome: string | null;
+  ativo: boolean;
 }
 
-const mapearLocalidade = (l: LinhaLocalidade): Localidade => ({
-  ...l,
-  padrao: paraBool(l.padrao),
-  ativo: paraBool(l.ativo),
-});
+// ------------------------------------------------------------------ apoio
 
-/**
- * Quem administra o calendário.
- *
- * Feriado e localidade mudam as datas de todo cronograma da empresa —
- * é configuração de instalação, não de projeto. Fica com o
- * administrador, junto do resto da Administração.
- */
-function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
-  if (!ctx.admin) throw new ErroDominio(`Somente administradores podem ${acao}`);
+function exigirGestor(ctx: ContextoUsuario, acao: string): void {
+  if (!ctx.permissoes.includes("cadastro.gerenciar")) {
+    throw new ErroDominio(`Você não tem permissão para ${acao}`);
+  }
 }
 
-/**
- * Limpa o cache do calendário depois de escrever.
- *
- * O `sla.server` guarda cada localidade por dez minutos. Sem esta
- * chamada, cadastrar um feriado e ver o cronograma continuar igual é o
- * comportamento esperado do cache — e uma confusão garantida para quem
- * acabou de cadastrar.
- */
+async function ctxAtual(): Promise<ContextoUsuario> {
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  return getUsuarioAtual();
+}
+
 async function invalidarCalendario(): Promise<void> {
   const { invalidarCacheCalendario } = await import("@/integrations/postgres/sla.server");
   invalidarCacheCalendario();
 }
 
+/** "YYYY-MM-DD" a partir dos componentes locais, sem passar pelo fuso. */
+function paraTextoData(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${dia}`;
+}
+
+/** Meia-noite local do dia, como o driver pg entregava no legado. */
+function deTextoData(s: string): Date {
+  return new Date(`${s.slice(0, 10)}T00:00:00`);
+}
+
+function falha(erro: { code?: string; message: string }): never {
+  if (erro.code === "23505") {
+    throw new ErroDominio("Já existe um feriado nessa data para essa abrangência.");
+  }
+  if (erro.code === "42501") throw new ErroDominio("Você não tem permissão para esta ação.");
+  throw new Error(erro.message);
+}
+
+// ------------------------------------------------------------------ localidades
+
 export async function listarLocalidades(apenasAtivas = false): Promise<Localidade[]> {
-  const linhas = await consultar<LinhaLocalidade>(
-    `SELECT l.id, l.nome, l.pais, l.regiao, l.cidade, l.padrao, l.ativo,
-            (SELECT COUNT(*) FROM recursos r
-              WHERE r.localidade_id = l.id AND r.ativo = 1)::int AS recursos,
-            (SELECT COUNT(*) FROM feriados f
-              WHERE f.localidade_id = l.id AND f.ativo = 1)::int AS feriados
-       FROM localidades l
-      ${apenasAtivas ? "WHERE l.ativo = 1" : ""}
-      ORDER BY l.padrao DESC, l.nome`,
-  );
-  return linhas.map(mapearLocalidade);
+  const ctx = await ctxAtual();
+  const sb = getSupabaseServerClient();
+
+  let consulta = sb
+    .from("localidades")
+    .select("id, nome, pais, regiao, cidade, padrao, ativo")
+    .eq("tenant_id", ctx.tenantId);
+  if (apenasAtivas) consulta = consulta.eq("ativo", true);
+
+  const [locais, feriados] = await Promise.all([
+    consulta.order("padrao", { ascending: false }).order("nome"),
+    sb
+      .from("feriados")
+      .select("localidade_id")
+      .eq("tenant_id", ctx.tenantId)
+      .eq("ativo", true)
+      .not("localidade_id", "is", null),
+  ]);
+  if (locais.error) falha(locais.error);
+  if (feriados.error) falha(feriados.error);
+
+  const contagem = new Map<string, number>();
+  for (const f of feriados.data ?? []) {
+    const id = f.localidade_id as string;
+    contagem.set(id, (contagem.get(id) ?? 0) + 1);
+  }
+
+  return (locais.data ?? []).map((l) => ({
+    id: l.id as string,
+    nome: l.nome as string,
+    pais: (l.pais as string).trim(),
+    regiao: (l.regiao as string | null) ?? null,
+    cidade: (l.cidade as string | null) ?? null,
+    padrao: l.padrao as boolean,
+    ativo: l.ativo as boolean,
+    recursos: 0,
+    feriados: contagem.get(l.id as string) ?? 0,
+  }));
 }
 
 export interface DadosLocalidade {
@@ -97,24 +151,30 @@ function validarLocalidade(d: DadosLocalidade): void {
   if (pais.length !== 2) throw new ErroDominio("O país deve ter duas letras (BR, PT, US)");
 }
 
+function linhaLocalidade(d: DadosLocalidade) {
+  return {
+    nome: d.nome.trim(),
+    pais: (d.pais ?? "BR").trim().toUpperCase(),
+    regiao: d.regiao?.trim() || null,
+    cidade: d.cidade?.trim() || null,
+  };
+}
+
 export async function criarLocalidade(ctx: ContextoUsuario, d: DadosLocalidade): Promise<string> {
-  exigirAdmin(ctx, "cadastrar localidades");
+  exigirGestor(ctx, "cadastrar localidades");
   validarLocalidade(d);
 
-  const id = crypto.randomUUID();
-  await executar(
-    `INSERT INTO localidades (id, nome, pais, regiao, cidade, padrao, ativo, criado_em)
-     VALUES (:id, :nome, :pais, :regiao, :cidade, 0, 1, LOCALTIMESTAMP)`,
-    {
-      id,
-      nome: d.nome.trim(),
-      pais: (d.pais ?? "BR").trim().toUpperCase(),
-      regiao: d.regiao?.trim() ?? null,
-      cidade: d.cidade?.trim() ?? null,
-    },
-  );
+  const { data, error } = await getSupabaseServerClient()
+    .from("localidades")
+    .insert({ tenant_id: ctx.tenantId, ...linhaLocalidade(d) })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23505") throw new ErroDominio("Já existe uma localidade com esse nome.");
+    falha(error);
+  }
   await invalidarCalendario();
-  return id;
+  return data.id as string;
 }
 
 export async function atualizarLocalidade(
@@ -122,125 +182,103 @@ export async function atualizarLocalidade(
   id: string,
   d: DadosLocalidade,
 ): Promise<void> {
-  exigirAdmin(ctx, "alterar localidades");
+  exigirGestor(ctx, "alterar localidades");
   validarLocalidade(d);
 
-  const n = await executar(
-    `UPDATE localidades
-        SET nome = :nome, pais = :pais, regiao = :regiao, cidade = :cidade
-      WHERE id = :id`,
-    {
-      id,
-      nome: d.nome.trim(),
-      pais: (d.pais ?? "BR").trim().toUpperCase(),
-      regiao: d.regiao?.trim() ?? null,
-      cidade: d.cidade?.trim() ?? null,
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Localidade ${id} não encontrada`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("localidades")
+    .update(linhaLocalidade(d))
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) {
+    if (error.code === "23505") throw new ErroDominio("Já existe uma localidade com esse nome.");
+    falha(error);
+  }
+  if (!data?.length) throw new ErroDominio(`Localidade ${id} não encontrada`);
   await invalidarCalendario();
 }
 
 /**
- * Troca qual localidade é a padrão.
+ * Troca qual localidade é a padrão do tenant.
  *
- * Em transação e zerando todas antes: o índice único parcial recusa
- * duas padrões, e fazer o UPDATE na ordem inversa quebraria no meio do
- * caminho.
+ * Duas escritas em sequência, zerando a atual antes: o índice único
+ * parcial recusa duas padrões ao mesmo tempo. Se a segunda falhar, a
+ * primeira é desfeita, para o tenant nunca ficar sem padrão.
  */
 export async function definirLocalidadePadrao(ctx: ContextoUsuario, id: string): Promise<void> {
-  exigirAdmin(ctx, "alterar localidades");
+  exigirGestor(ctx, "alterar localidades");
+  const sb = getSupabaseServerClient();
 
-  await emTransacao(async (tx) => {
-    await tx.executar(`UPDATE localidades SET padrao = 0 WHERE padrao = 1`, {});
-    const n = await tx.executar(`UPDATE localidades SET padrao = 1, ativo = 1 WHERE id = :id`, {
-      id,
-    });
-    if (n === 0) throw new ErroDominio(`Localidade ${id} não encontrada`);
-  });
+  const atual = await sb
+    .from("localidades")
+    .select("id")
+    .eq("tenant_id", ctx.tenantId)
+    .eq("padrao", true)
+    .maybeSingle();
+  if (atual.error) falha(atual.error);
+  if (atual.data?.id === id) return;
+
+  if (atual.data) {
+    const zerar = await sb.from("localidades").update({ padrao: false }).eq("id", atual.data.id);
+    if (zerar.error) falha(zerar.error);
+  }
+
+  const eleger = await sb
+    .from("localidades")
+    .update({ padrao: true, ativo: true })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+
+  if (eleger.error || !eleger.data?.length) {
+    if (atual.data) {
+      await sb.from("localidades").update({ padrao: true }).eq("id", atual.data.id);
+    }
+    if (eleger.error) falha(eleger.error);
+    throw new ErroDominio(`Localidade ${id} não encontrada`);
+  }
   await invalidarCalendario();
 }
 
 /**
- * Desativa em vez de excluir: recursos e feriados apontam para ela por
- * FK, e apagar deixaria gente sem calendário.
- *
- * A padrão não pode ser desativada — é para ela que todo mundo cai
- * quando não tem localidade própria.
+ * Desativa em vez de excluir: recursos e feriados apontam para ela.
+ * A padrão não pode ser desativada — é para ela que todo mundo cai.
  */
 export async function definirLocalidadeAtiva(
   ctx: ContextoUsuario,
   id: string,
   ativo: boolean,
 ): Promise<void> {
-  exigirAdmin(ctx, "alterar localidades");
+  exigirGestor(ctx, "alterar localidades");
+  const sb = getSupabaseServerClient();
 
   if (!ativo) {
-    const l = await consultarUm<{ padrao: number }>(
-      `SELECT padrao FROM localidades WHERE id = :id`,
-      { id },
-    );
-    if (!l) throw new ErroDominio(`Localidade ${id} não encontrada`);
-    if (paraBool(l.padrao)) {
+    const l = await sb
+      .from("localidades")
+      .select("padrao")
+      .eq("tenant_id", ctx.tenantId)
+      .eq("id", id)
+      .maybeSingle();
+    if (l.error) falha(l.error);
+    if (!l.data) throw new ErroDominio(`Localidade ${id} não encontrada`);
+    if (l.data.padrao) {
       throw new ErroDominio(
         "A localidade padrão não pode ser desativada. Eleja outra como padrão antes.",
       );
     }
   }
 
-  await executar(`UPDATE localidades SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
+  const { error } = await sb
+    .from("localidades")
+    .update({ ativo })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id);
+  if (error) falha(error);
   await invalidarCalendario();
 }
 
-// ----------------------------------------------------------- feriados
-
-/**
- * Abrangência do feriado.
- *
- * A coluna é `tipo`, que existe desde o 01-schema. A migration 18
- * removeu a `abrangencia` que eu havia criado em paralelo: duas colunas
- * para a mesma verdade divergem na primeira vez que alguém edita só uma.
- */
-export type TipoFeriado = "nacional" | "estadual" | "municipal";
-
-export const FERIADO_LABEL: Record<TipoFeriado, string> = {
-  nacional: "Nacional",
-  estadual: "Estadual / regional",
-  municipal: "Municipal",
-};
-
-export interface Feriado {
-  id: string;
-  data: Date;
-  descricao: string;
-  tipo: TipoFeriado;
-  /**
-   * Repete todo ano na mesma data.
-   *
-   * Natal e Tiradentes são recorrentes; Páscoa, Carnaval e Corpus
-   * Christi dependem do calendário litúrgico e precisam de uma linha por
-   * ano. O ano gravado num recorrente é só marcador — a busca casa por
-   * mês e dia.
-   */
-  recorrente: boolean;
-  localidadeId: string | null;
-  localidadeNome: string | null;
-  ativo: boolean;
-}
-
-interface LinhaFeriado extends Omit<Feriado, "recorrente" | "ativo"> {
-  recorrente: number;
-  ativo: number;
-}
-
-const mapearFeriado = (l: LinhaFeriado): Feriado => ({
-  ...l,
-  recorrente: paraBool(l.recorrente),
-  ativo: paraBool(l.ativo),
-});
+// ------------------------------------------------------------------ feriados
 
 /**
  * Feriados de um ano, mais todos os recorrentes.
@@ -256,21 +294,48 @@ export async function listarFeriados(filtro: {
   ano?: number | null | undefined;
   localidadeId?: string | null | undefined;
 }): Promise<Feriado[]> {
-  const linhas = await consultar<LinhaFeriado>(
-    `SELECT f.id, f.data_feriado AS data, f.descricao, f.tipo, f.recorrente,
-            f.localidade_id, l.nome AS localidade_nome, f.ativo
-       FROM feriados f
-       LEFT JOIN localidades l ON l.id = f.localidade_id
-      WHERE (f.recorrente = 1
-             OR CAST(:ano AS integer) IS NULL
-             OR EXTRACT(YEAR FROM f.data_feriado) = CAST(:ano AS integer))
-        AND (CAST(:localidadeId AS varchar) IS NULL
-             OR f.tipo = 'nacional'
-             OR f.localidade_id = CAST(:localidadeId AS varchar))
-      ORDER BY f.recorrente DESC, f.mes, f.dia`,
-    { ano: filtro.ano ?? null, localidadeId: filtro.localidadeId ?? null },
-  );
-  return linhas.map(mapearFeriado);
+  const ctx = await ctxAtual();
+  const sb = getSupabaseServerClient();
+
+  const [feriados, locais] = await Promise.all([
+    sb
+      .from("feriados")
+      .select("id, data, descricao, tipo, recorrente, localidade_id, ativo")
+      .eq("tenant_id", ctx.tenantId),
+    sb.from("localidades").select("id, nome").eq("tenant_id", ctx.tenantId),
+  ]);
+  if (feriados.error) falha(feriados.error);
+  if (locais.error) falha(locais.error);
+
+  const nomeLocal = new Map((locais.data ?? []).map((l) => [l.id as string, l.nome as string]));
+
+  return (feriados.data ?? [])
+    .map((f): Feriado => {
+      const localidadeId = (f.localidade_id as string | null) ?? null;
+      const tipo: TipoFeriado =
+        f.tipo === "estadual" || f.tipo === "municipal" ? f.tipo : "nacional";
+      return {
+        id: f.id as string,
+        data: deTextoData(f.data as string),
+        descricao: f.descricao as string,
+        tipo,
+        recorrente: f.recorrente as boolean,
+        localidadeId,
+        localidadeNome: localidadeId ? (nomeLocal.get(localidadeId) ?? null) : null,
+        ativo: f.ativo as boolean,
+      };
+    })
+    .filter((f) => f.recorrente || !filtro.ano || f.data.getFullYear() === filtro.ano)
+    .filter(
+      (f) =>
+        !filtro.localidadeId || f.tipo === "nacional" || f.localidadeId === filtro.localidadeId,
+    )
+    .sort(
+      (a, b) =>
+        Number(b.recorrente) - Number(a.recorrente) ||
+        a.data.getMonth() - b.data.getMonth() ||
+        a.data.getDate() - b.data.getDate(),
+    );
 }
 
 export interface DadosFeriado {
@@ -283,11 +348,8 @@ export interface DadosFeriado {
 }
 
 /**
- * Valida antes do banco para dar a mensagem certa.
- *
- * O `CHECK` da tabela recusaria de qualquer jeito, mas o erro do
- * Postgres diria "viola ck_feriados_localidade" — que não ajuda em nada
- * quem está cadastrando.
+ * Valida antes do banco para dar a mensagem certa: o CHECK da tabela
+ * recusaria de qualquer jeito, mas com um texto que não ajuda ninguém.
  */
 function validarFeriado(d: DadosFeriado): void {
   if (d.descricao.trim().length < 3) throw new ErroDominio("Informe o nome do feriado");
@@ -302,40 +364,28 @@ function validarFeriado(d: DadosFeriado): void {
   }
 }
 
-/** Traduz a violação do índice único, que é o erro mais provável aqui. */
-function traduzirDuplicidade(e: unknown): never {
-  const msg = e instanceof Error ? e.message : String(e);
-  if (msg.includes("ux_feriados")) {
-    throw new ErroDominio("Já existe um feriado nessa data para essa abrangência.");
-  }
-  throw e;
+function linhaFeriado(d: DadosFeriado) {
+  return {
+    data: paraTextoData(d.data),
+    descricao: d.descricao.trim(),
+    tipo: d.tipo,
+    recorrente: d.recorrente ?? false,
+    localidade_id: d.tipo === "nacional" ? null : (d.localidadeId ?? null),
+  };
 }
 
 export async function criarFeriado(ctx: ContextoUsuario, d: DadosFeriado): Promise<string> {
-  exigirAdmin(ctx, "cadastrar feriados");
+  exigirGestor(ctx, "cadastrar feriados");
   validarFeriado(d);
 
-  const id = crypto.randomUUID();
-  try {
-    await executar(
-      `INSERT INTO feriados
-         (id, data_feriado, descricao, tipo, recorrente, localidade_id, ativo)
-       VALUES (:id, :data, :descricao, :tipo, :recorrente, :localidadeId, 1)`,
-      {
-        id,
-        data: d.data,
-        descricao: d.descricao.trim(),
-        tipo: d.tipo,
-        recorrente: deBool(d.recorrente ?? false),
-        localidadeId: d.localidadeId ?? null,
-      },
-    );
-  } catch (e) {
-    traduzirDuplicidade(e);
-  }
-
+  const { data, error } = await getSupabaseServerClient()
+    .from("feriados")
+    .insert({ tenant_id: ctx.tenantId, ...linhaFeriado(d) })
+    .select("id")
+    .single();
+  if (error) falha(error);
   await invalidarCalendario();
-  return id;
+  return data.id as string;
 }
 
 export async function atualizarFeriado(
@@ -343,68 +393,51 @@ export async function atualizarFeriado(
   id: string,
   d: DadosFeriado,
 ): Promise<void> {
-  exigirAdmin(ctx, "alterar feriados");
+  exigirGestor(ctx, "alterar feriados");
   validarFeriado(d);
 
-  let n = 0;
-  try {
-    n = await executar(
-      `UPDATE feriados
-          SET data_feriado = :data,
-              descricao = :descricao,
-              tipo = :tipo,
-              recorrente = :recorrente,
-              localidade_id = :localidadeId
-        WHERE id = :id`,
-      {
-        id,
-        data: d.data,
-        descricao: d.descricao.trim(),
-        tipo: d.tipo,
-        recorrente: deBool(d.recorrente ?? false),
-        localidadeId: d.localidadeId ?? null,
-      },
-    );
-  } catch (e) {
-    traduzirDuplicidade(e);
-  }
-
-  if (n === 0) throw new ErroDominio(`Feriado ${id} não encontrado`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("feriados")
+    .update(linhaFeriado(d))
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Feriado ${id} não encontrado`);
   await invalidarCalendario();
 }
 
 /**
- * Liga e desliga o feriado.
- *
- * Preferível a excluir no caso do ponto facultativo que a empresa
- * decidiu não parar neste ano: a linha continua lá e volta com um
- * clique, em vez de ser recadastrada do zero.
+ * Liga e desliga o feriado. Preferível a excluir no caso do ponto
+ * facultativo que a empresa decidiu não parar neste ano.
  */
 export async function definirFeriadoAtivo(
   ctx: ContextoUsuario,
   id: string,
   ativo: boolean,
 ): Promise<void> {
-  exigirAdmin(ctx, "alterar feriados");
-  const n = await executar(`UPDATE feriados SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
-  if (n === 0) throw new ErroDominio(`Feriado ${id} não encontrado`);
+  exigirGestor(ctx, "alterar feriados");
+  const { data, error } = await getSupabaseServerClient()
+    .from("feriados")
+    .update({ ativo })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Feriado ${id} não encontrado`);
   await invalidarCalendario();
 }
 
-/**
- * Apaga de verdade, para o cadastro errado.
- *
- * Feriado não é histórico de trabalho: é regra de calendário. O prazo de
- * SLA já gravado não muda — ele é um retrato do momento da abertura —, e
- * o cronograma recalcula na próxima passada, que é exatamente o que se
- * quer quando alguém cadastrou um feriado que não existe.
- */
+/** Apaga de verdade, para o cadastro errado. Prazos já gravados não mudam. */
 export async function excluirFeriado(ctx: ContextoUsuario, id: string): Promise<void> {
-  exigirAdmin(ctx, "excluir feriados");
-  const n = await executar(`DELETE FROM feriados WHERE id = :id`, { id });
-  if (n === 0) throw new ErroDominio(`Feriado ${id} não encontrado`);
+  exigirGestor(ctx, "excluir feriados");
+  const { data, error } = await getSupabaseServerClient()
+    .from("feriados")
+    .delete()
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Feriado ${id} não encontrado`);
   await invalidarCalendario();
 }

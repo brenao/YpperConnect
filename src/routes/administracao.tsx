@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CalendarDays,
   Check,
   Copy,
   Eye,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
+import { PainelCalendario } from "@/views/calendario-admin";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -1019,6 +1021,9 @@ function Administracao() {
             <TabsTrigger value="categorias" className="gap-2">
               <Tags className="size-4" /> Categorias
             </TabsTrigger>
+            <TabsTrigger value="calendario" className="gap-2">
+              <CalendarDays className="size-4" /> Calendário
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="membros" className="mt-4">
@@ -1049,11 +1054,15 @@ function Administracao() {
               mostrarInativos={mostrarInativos}
             />
           </TabsContent>
+
+          <TabsContent value="calendario" className="mt-4">
+            <PainelCalendario isAdmin={pode("cadastro.gerenciar")} />
+          </TabsContent>
         </Tabs>
       )}
 
       <p className="mt-6 text-xs text-muted-foreground">
-        Sistemas, calendário e notificações voltam para esta tela nos próximos passos da migração.
+        Sistemas e notificações voltam para esta tela nos próximos passos da migração.
       </p>
     </AppShell>
   );
