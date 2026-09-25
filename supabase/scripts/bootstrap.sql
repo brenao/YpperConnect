@@ -1,14 +1,14 @@
 -- Rodar UMA vez no SQL Editor (local ou nuvem), depois de criar
--- seu usuario em Authentication > Users. Troque o e-mail abaixo.
+-- seu usuario em Authentication > Users. Troque os valores entre < >.
 
 insert into public.plataforma_admins (usuario_id)
-select id from auth.users where email = 'SEU_EMAIL@dominio.com.br';
+select id from auth.users where email = '<seu-email>';
 
 select app.provisionar_tenant(
-  'Grupo Rosset', 'rosset',
-  (select id from auth.users where email = 'SEU_EMAIL@dominio.com.br')
+  '<Nome da empresa>', '<slug-da-empresa>',
+  (select id from auth.users where email = '<seu-email>')
 );
 
--- Opcional: quem entrar com este dominio cai no tenant como solicitante.
+-- Opcional: quem entrar com este dominio cai na empresa como usuario final.
 -- insert into public.tenant_dominios (dominio, tenant_id, verificado)
--- select 'rosset.com.br', id, true from public.tenants where slug = 'rosset';
+-- select '<dominio.com.br>', id, true from public.tenants where slug = '<slug-da-empresa>';

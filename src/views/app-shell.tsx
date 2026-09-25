@@ -87,7 +87,7 @@ function BotaoSair() {
 /**
  * Empresa em que a pessoa está trabalhando.
  *
- * Com uma empresa só (como na Rosset), é apenas o nome. Com várias, vira
+ * Com uma empresa só (instalação de um cliente), é apenas o nome. Com várias, vira
  * seletor; trocar descarta todo o cache, para nenhum dado de uma empresa
  * aparecer na tela da outra.
  */

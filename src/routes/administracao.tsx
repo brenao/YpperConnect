@@ -50,6 +50,7 @@ import type { Usuario } from "@/repositories/usuarios.repo";
 import { Paginacao, usePaginacao } from "@/views/paginacao";
 import { listarRecursosFn } from "@/services/recursos.functions";
 import { cn } from "@/lib/utils";
+import { sessaoFn } from "@/services/sessao.functions";
 import {
   usuarioAtualFn,
   listarUsuariosFn,
@@ -248,6 +249,8 @@ function UserDialog({
     enabled: open,
   });
   const perfis = useQuery({ queryKey: ["perfis"], queryFn: () => listarPerfisFn(), enabled: open });
+  // O exemplo do login usa a empresa atual (ROSSET\usuario na Rosset).
+  const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn(), enabled: open });
 
   useEffect(() => {
     if (!open) return;
@@ -390,7 +393,7 @@ function UserDialog({
               className={tentou && erroLogin ? classeErro : undefined}
               value={form.login}
               onChange={(e) => setForm({ ...form, login: e.target.value })}
-              placeholder="ROSSET\usuario"
+              placeholder={`${(sessao.data?.tenant?.slug ?? "empresa").toUpperCase()}\\usuario`}
             />
             {tentou && erroLogin ? <p className="text-xs text-destructive">{erroLogin}</p> : null}
           </div>
