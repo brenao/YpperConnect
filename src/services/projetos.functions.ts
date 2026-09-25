@@ -25,6 +25,29 @@ const IMPACTOS = ["alto", "medio", "baixo"] as const;
 const UNIDADES = ["horas", "dias"] as const;
 const STATUS_RISCO = ["aberto", "monitorado", "mitigado"] as const;
 
+/**
+ * Dependência completa: para onde aponta, de que tipo e com quanta
+ * defasagem.
+ *
+ * Os quatro tipos são a nomenclatura do MS Project traduzida, e a
+ * defasagem é contada na régua do projeto — dias úteis ou corridos,
+ * conforme o cadastro dele.
+ *
+ * Fica no topo porque serve a dois schemas: o da tarefa, usado pelo
+ * diálogo, e o dos vínculos, usado pela grade. Os dois gravam a mesma
+ * coisa, e é isso que permite criar o vínculo num lugar e corrigi-lo no
+ * outro.
+ *
+ * O teto de 365 dias para cada lado é o mesmo do CHECK da tabela:
+ * defasagem maior que isso é quase sempre erro de digitação, e o
+ * cronograma que ela produz ninguém consegue conferir.
+ */
+const DependenciaSchema = z.object({
+  predecessoraId: z.string(),
+  tipo: z.enum(["TI", "II", "TT", "IT"]),
+  defasagem: z.number().int().min(-365).max(365),
+});
+
 /** Quantos acompanhamentos vão no carregamento inicial da tela. */
 const ATUALIZACOES_NA_ABERTURA = 12;
 
@@ -205,7 +228,8 @@ const TarefaBase = z.object({
   alocacaoPct: z.number().int().min(0).max(100).nullable().optional(),
   ordem: z.number().int().optional(),
   responsaveis: z.array(z.string()).max(20).optional(),
-  predecessoras: z.array(z.string()).max(20).optional(),
+  /** Mesmo formato da grade: o diálogo também define tipo e defasagem. */
+  predecessoras: z.array(DependenciaSchema).max(20).optional(),
 });
 
 const TarefaSchema = TarefaBase.extend({ projetoId: z.string() });
@@ -328,24 +352,6 @@ export const atualizarCampoTarefaFn = createServerFn({ method: "POST" })
     const { id, ...campos } = data;
     return atualizarCampoTarefa(await ctx(), id, campos);
   });
-
-/**
- * Dependência completa: para onde aponta, de que tipo e com quanta
- * defasagem.
- *
- * Os quatro tipos são a nomenclatura do MS Project traduzida, e a
- * defasagem é contada na régua do projeto — dias úteis ou corridos,
- * conforme o cadastro dele.
- *
- * O teto de 365 dias para cada lado é o mesmo do CHECK da tabela:
- * defasagem maior que isso é quase sempre erro de digitação, e o
- * cronograma que ela produz ninguém consegue conferir.
- */
-const DependenciaSchema = z.object({
-  predecessoraId: z.string(),
-  tipo: z.enum(["TI", "II", "TT", "IT"]),
-  defasagem: z.number().int().min(-365).max(365),
-});
 
 const VinculosSchema = z.object({
   id: z.string(),

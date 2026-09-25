@@ -20,25 +20,37 @@ export type TipoDependencia = "TI" | "II" | "TT" | "IT";
 
 export const TIPO_PADRAO: TipoDependencia = "TI";
 
-export const TIPOS_DEPENDENCIA: { valor: TipoDependencia; rotulo: string; ajuda: string }[] = [
+/**
+ * O rótulo traz a sigla entre parênteses.
+ *
+ * A grade aceita a notação curta — "7II" —, e sem a sigla aqui as duas
+ * telas pareceriam falar de coisas diferentes. Com ela, o formulário
+ * ensina a notação: quem escolhe "Início → Início (II)" três vezes
+ * aprende a digitar "II" na grade sem precisar de manual.
+ */
+export const TIPOS_DEPENDENCIA: {
+  valor: TipoDependencia;
+  rotulo: string;
+  ajuda: string;
+}[] = [
   {
     valor: "TI",
-    rotulo: "Término → Início",
+    rotulo: "Término → Início (TI)",
     ajuda: "Esta começa depois que a anterior terminar. É o caso comum.",
   },
   {
     valor: "II",
-    rotulo: "Início → Início",
+    rotulo: "Início → Início (II)",
     ajuda: "As duas começam juntas.",
   },
   {
     valor: "TT",
-    rotulo: "Término → Término",
+    rotulo: "Término → Término (TT)",
     ajuda: "As duas terminam juntas.",
   },
   {
     valor: "IT",
-    rotulo: "Início → Término",
+    rotulo: "Início → Término (IT)",
     ajuda: "Esta termina depois que a anterior começar. Raro.",
   },
 ];

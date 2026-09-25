@@ -670,7 +670,7 @@ function DetalheProjeto() {
         tarefas={tarefas}
         recursos={recursos}
         responsaveisAtuais={editando ? (vinculos.responsaveis[editando.id] ?? []) : []}
-        predecessorasAtuais={editando ? (predecessorasIds[editando.id] ?? []) : []}
+        predecessorasAtuais={editando ? (vinculos.predecessoras[editando.id] ?? []) : []}
         open={tarefaAberta}
         onOpenChange={setTarefaAberta}
       />

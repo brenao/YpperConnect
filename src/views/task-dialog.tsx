@@ -32,6 +32,13 @@ import {
   type TarefaInput,
   type TarefaUpdateInput,
 } from "@/services/projetos.functions";
+import {
+  TIPOS_DEPENDENCIA,
+  TIPO_PADRAO,
+  descreverDependencia,
+  type Dependencia,
+  type TipoDependencia,
+} from "@/services/dependencias";
 import { QUADROS } from "./project-kanban";
 
 const SEM = "__nenhum__";
@@ -72,7 +79,14 @@ interface Form {
   quadro: QuadroTarefa;
   marco: boolean;
   responsaveis: string[];
-  predecessoras: string[];
+  /**
+   * Predecessoras com tipo e defasagem, como na grade.
+   *
+   * Guardar só o id aqui obrigaria a pessoa a criar o vínculo no
+   * diálogo e corrigir o tipo na grade — duas edições para uma decisão
+   * só.
+   */
+  predecessoras: Dependencia[];
 }
 
 export function TaskDialog({
@@ -91,7 +105,7 @@ export function TaskDialog({
   tarefas: Tarefa[];
   recursos: Recurso[];
   responsaveisAtuais?: string[] | undefined;
-  predecessorasAtuais?: string[] | undefined;
+  predecessorasAtuais?: Dependencia[] | undefined;
   trigger?: ReactNode | undefined;
   open?: boolean | undefined;
   onOpenChange?: ((v: boolean) => void) | undefined;
@@ -179,6 +193,36 @@ export function TaskDialog({
 
   function alternar(lista: string[], id: string) {
     return lista.includes(id) ? lista.filter((x) => x !== id) : [...lista, id];
+  }
+
+  /**
+   * Liga e desliga a predecessora.
+   *
+   * Ao ligar, nasce TI sem defasagem — o caso comum, e o que o vínculo
+   * significava antes de os tipos existirem. Os controles de tipo e
+   * dias só aparecem depois de marcada, para a lista não virar um
+   * formulário de vinte linhas antes de alguém escolher qualquer coisa.
+   */
+  function alternarPredecessora(id: string) {
+    setForm((f) => {
+      const jaTem = f.predecessoras.some((p) => p.predecessoraId === id);
+      return {
+        ...f,
+        predecessoras: jaTem
+          ? f.predecessoras.filter((p) => p.predecessoraId !== id)
+          : [...f.predecessoras, { predecessoraId: id, tipo: TIPO_PADRAO, defasagem: 0 }],
+      };
+    });
+  }
+
+  /** Edita uma aresta já marcada, sem mexer nas outras. */
+  function mudarPredecessora(id: string, mudanca: Partial<Omit<Dependencia, "predecessoraId">>) {
+    setForm((f) => ({
+      ...f,
+      predecessoras: f.predecessoras.map((p) =>
+        p.predecessoraId === id ? { ...p, ...mudanca } : p,
+      ),
+    }));
   }
 
   function salvar() {
@@ -321,7 +365,10 @@ export function TaskDialog({
                   className="flex-1"
                   value={form.duracao}
                   onChange={(e) =>
-                    setForm({ ...form, duracao: e.target.value.replace(/[^\d.,]/g, "") })
+                    setForm({
+                      ...form,
+                      duracao: e.target.value.replace(/[^\d.,]/g, ""),
+                    })
                   }
                 />
                 <Select
@@ -389,7 +436,10 @@ export function TaskDialog({
                   value={String(form.progresso)}
                   onChange={(e) => {
                     const n = Number(e.target.value.replace(/\D/g, ""));
-                    setForm({ ...form, progresso: Math.min(100, Number.isFinite(n) ? n : 0) });
+                    setForm({
+                      ...form,
+                      progresso: Math.min(100, Number.isFinite(n) ? n : 0),
+                    });
                   }}
                 />
                 <span className="text-sm text-muted-foreground">%</span>
@@ -420,7 +470,10 @@ export function TaskDialog({
                     <Checkbox
                       checked={form.responsaveis.includes(r.id)}
                       onCheckedChange={() =>
-                        setForm((f) => ({ ...f, responsaveis: alternar(f.responsaveis, r.id) }))
+                        setForm((f) => ({
+                          ...f,
+                          responsaveis: alternar(f.responsaveis, r.id),
+                        }))
                       }
                     />
                     <span className="truncate">{r.nome}</span>
@@ -433,22 +486,92 @@ export function TaskDialog({
           {outras.length > 0 ? (
             <div className="grid gap-2">
               <Label>Predecessoras</Label>
-              <div className="grid max-h-40 gap-1.5 overflow-y-auto rounded-lg border border-border p-2">
-                {outras.map((t) => (
-                  <label
-                    key={t.id}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-secondary/50"
-                  >
-                    <Checkbox
-                      checked={form.predecessoras.includes(t.id)}
-                      onCheckedChange={() =>
-                        setForm((f) => ({ ...f, predecessoras: alternar(f.predecessoras, t.id) }))
-                      }
-                    />
-                    <span className="truncate">{t.nome}</span>
-                  </label>
-                ))}
+              {/* Tipo e defasagem aparecem só na linha marcada. É a
+                  mesma tabela do MS Project — tarefa, tipo, dias —, mas
+                  sem obrigar quem só quer o vínculo simples a encarar
+                  três controles por linha. */}
+              <div className="grid max-h-56 gap-1 overflow-y-auto rounded-lg border border-border p-2">
+                {outras.map((t) => {
+                  const dep = form.predecessoras.find((p) => p.predecessoraId === t.id);
+
+                  return (
+                    <div key={t.id} className="rounded px-2 py-1 hover:bg-secondary/50">
+                      <label className="flex cursor-pointer items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={dep !== undefined}
+                          onCheckedChange={() => alternarPredecessora(t.id)}
+                        />
+                        <span className="truncate">{t.nome}</span>
+                      </label>
+
+                      {dep ? (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-6">
+                          <Select
+                            value={dep.tipo}
+                            onValueChange={(v) =>
+                              mudarPredecessora(t.id, {
+                                tipo: v as TipoDependencia,
+                              })
+                            }
+                          >
+                            <SelectTrigger className="h-8 w-52 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {TIPOS_DEPENDENCIA.map((op) => (
+                                <SelectItem key={op.valor} value={op.valor}>
+                                  {op.rotulo}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          {/* O sinal aparece sempre: "+2" e "2" são a
+                              mesma coisa, mas só o primeiro revela que
+                              existe o outro lado — defasagem negativa,
+                              que antecipa e cria sobreposição. */}
+                          <span className="flex items-center gap-1.5">
+                            <Input
+                              inputMode="numeric"
+                              className="h-8 w-20 text-right font-mono text-xs"
+                              value={
+                                dep.defasagem > 0 ? `+${dep.defasagem}` : String(dep.defasagem)
+                              }
+                              onChange={(e) => {
+                                // O sinal fica; o resto vira dígito. Um
+                                // "+" digitado é aceito e descartado,
+                                // porque positivo já é o padrão.
+                                const limpo = e.target.value.replace(/[^\d-]/g, "");
+                                const negativo = limpo.startsWith("-");
+                                const n =
+                                  Number(limpo.replace(/-/g, "") || "0") * (negativo ? -1 : 1);
+                                mudarPredecessora(t.id, {
+                                  defasagem: Number.isFinite(n)
+                                    ? Math.max(-365, Math.min(365, n))
+                                    : 0,
+                                });
+                              }}
+                            />
+                            <span className="text-xs text-muted-foreground">dias</span>
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {/* A frase por extenso é o que evita o erro mais
+                          comum: escolher IT achando que é TI. */}
+                      {dep ? (
+                        <p className="mt-1 pl-6 text-[11px] text-muted-foreground">
+                          Esta tarefa {descreverDependencia(t.nome, dep.tipo, dep.defasagem)}.
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
+              <p className="text-xs text-muted-foreground">
+                A defasagem é contada no regime do projeto — em dias úteis, pula fins de semana e
+                feriados. Negativa antecipa e cria sobreposição.
+              </p>
             </div>
           ) : null}
         </div>
