@@ -111,7 +111,7 @@ export const sessaoFn = createServerFn({ method: "GET" }).handler(
 );
 
 export const entrarFn = createServerFn({ method: "POST" })
-  .inputValidator(
+  .validator(
     z.object({
       email: z.string().trim().toLowerCase().email("Informe um e-mail válido."),
       senha: z.string().min(1, "Informe a senha."),
@@ -129,7 +129,7 @@ export const sairFn = createServerFn({ method: "POST" }).handler(async () => {
 });
 
 export const trocarTenantFn = createServerFn({ method: "POST" })
-  .inputValidator(z.object({ slug: z.string().min(1) }))
+  .validator(z.object({ slug: z.string().min(1) }))
   .handler(async ({ data }) => {
     const { trocarTenant } = await servidor();
     await trocarTenant(data.slug);
