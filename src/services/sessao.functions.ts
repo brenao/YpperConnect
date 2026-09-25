@@ -13,39 +13,8 @@ async function servidor() {
   return import("@/services/current-user.server");
 }
 
-/**
- * Qual permissão libera cada item do menu. Rota sem entrada aqui fica
- * visível para qualquer pessoa logada.
- */
-const PERMISSAO_POR_MODULO: Record<string, string[]> = {
-  "/diretoria": ["projeto.diretoria"],
-  "/backlog": ["projeto.criar", "projeto.ver_portfolio", "projeto.diretoria"],
-  "/projetos": ["projeto.criar", "projeto.ver_portfolio", "projeto.diretoria"],
-  "/recursos": ["projeto.criar", "projeto.ver_portfolio", "projeto.diretoria"],
-  "/governanca": ["chamado.ver_todos"],
-  "/administracao": [
-    "usuario.gerenciar",
-    "cadastro.gerenciar",
-    "organizacao.gerenciar",
-    "tenant.configurar",
-  ],
-  "/permissoes": ["papel.gerenciar"],
-};
-
-const MODULOS = [
-  "/",
-  "/diretoria",
-  "/chamados",
-  "/backlog",
-  "/projetos",
-  "/recursos",
-  "/catalogo",
-  "/conhecimento",
-  "/governanca",
-  "/assistente",
-  "/administracao",
-  "/permissoes",
-];
+/** Como no legado (minhasPermissoesFn): o admin sempre vê estas telas. */
+const MODULOS_SEMPRE_DO_ADMIN = ["/administracao", "/permissoes"];
 
 /**
  * Resumo da sessão para a interface. Formato único (campos nulos em vez
@@ -62,7 +31,6 @@ export interface SessaoResumo {
   usuario: { id: string; nome: string; email: string } | null;
   tenant: { id: string; slug: string; nome: string; tipo: "interno" | "cliente" } | null;
   tenants: { id: string; slug: string; nome: string; tipo: "interno" | "cliente" }[];
-  permissoes: string[];
   admin: boolean;
   adminPlataforma: boolean;
   modulos: string[];
@@ -71,7 +39,6 @@ export interface SessaoResumo {
 const VAZIA: Omit<SessaoResumo, "estado" | "usuario"> = {
   tenant: null,
   tenants: [],
-  permissoes: [],
   admin: false,
   adminPlataforma: false,
   modulos: [],
@@ -92,10 +59,10 @@ export const sessaoFn = createServerFn({ method: "GET" }).handler(
     }
 
     const { ctx } = sessao;
-    const modulos = MODULOS.filter((m) => {
-      const exigidas = PERMISSAO_POR_MODULO[m];
-      return !exigidas || exigidas.some((p) => ctx.permissoes.includes(p));
-    });
+    // A raiz entra sempre: sem painel inicial não há para onde ir.
+    const modulos = [
+      ...new Set(["/", ...ctx.modulos, ...(ctx.admin ? MODULOS_SEMPRE_DO_ADMIN : [])]),
+    ];
 
     return {
       estado: "ok",
@@ -107,7 +74,6 @@ export const sessaoFn = createServerFn({ method: "GET" }).handler(
         tipo: ctx.tipoMembro,
       },
       tenants: ctx.tenants,
-      permissoes: ctx.permissoes,
       admin: ctx.admin,
       adminPlataforma: ctx.adminPlataforma,
       modulos,

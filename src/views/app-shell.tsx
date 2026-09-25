@@ -21,6 +21,7 @@ import logo from "@/assets/beagleone-logo.png";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
+import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functions";
 import { sairFn, sessaoFn, trocarTenantFn } from "@/services/sessao.functions";
 
 /**
@@ -56,7 +57,7 @@ const nav = [
 ] as const;
 
 /**
- * Encerra a sessão no Supabase e volta para o login.
+ * Encerra a sessão e volta para o login.
  *
  * O cache do React Query é descartado junto: sem isso, a próxima pessoa
  * a usar o mesmo navegador veria por um instante os dados da anterior.
@@ -86,20 +87,18 @@ function BotaoSair() {
 /**
  * Empresa em que a pessoa está trabalhando.
  *
- * Com uma empresa só, vira apenas um rótulo. Com várias (a equipe da
- * plataforma, um consultor que atende clientes), vira seletor. Trocar
- * de empresa descarta todo o cache: nenhum dado de uma empresa pode
- * aparecer, nem por um instante, na tela da outra.
+ * Com uma empresa só (como na Rosset), é apenas o nome. Com várias, vira
+ * seletor; trocar descarta todo o cache, para nenhum dado de uma empresa
+ * aparecer na tela da outra.
  */
-function SeletorEmpresa({
-  atual,
-  empresas,
-}: {
-  atual: { slug: string; nome: string };
-  empresas: { slug: string; nome: string }[];
-}) {
+function SeletorEmpresa() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn() });
+  const atual = sessao.data?.tenant;
+  const empresas = sessao.data?.tenants ?? [];
+
+  if (!atual) return null;
 
   if (empresas.length <= 1) {
     return (
@@ -146,12 +145,15 @@ export function AppShell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn() });
-  const dados = sessao.data?.estado === "ok" ? sessao.data : null;
+  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
+  const permissoes = useQuery({
+    queryKey: ["minhas-permissoes"],
+    queryFn: () => minhasPermissoesFn(),
+  });
 
   // Enquanto carrega, mostra o menu inteiro: esconder e depois revelar
   // produz um piscar desagradável a cada navegação.
-  const modulos: readonly string[] | undefined = dados?.modulos;
+  const modulos = permissoes.data?.modulos;
   const permitidos = modulos ? nav.filter((item) => modulos.includes(item.to)) : nav;
 
   // Com portal externo, a Visão geral sai: ela é o painel de chamados, e
@@ -221,18 +223,14 @@ export function AppShell({
                 ações da tela: são do usuário, não do que ele está vendo.
                 A divisória marca essa troca de assunto. */}
             <span className="mx-1 h-6 w-px bg-border" aria-hidden="true" />
-            {dados?.usuario && dados.tenant ? (
-              <>
-                <SeletorEmpresa atual={dados.tenant} empresas={dados.tenants} />
-                <span className="hidden text-right sm:block">
-                  <span className="block text-xs font-medium leading-tight">
-                    {dados.usuario.nome}
-                  </span>
-                  <span className="block text-[11px] leading-tight text-muted-foreground">
-                    {dados.admin ? "Administrador" : "Usuário"}
-                  </span>
+            <SeletorEmpresa />
+            {usuario.data ? (
+              <span className="hidden text-right sm:block">
+                <span className="block text-xs font-medium leading-tight">{usuario.data.nome}</span>
+                <span className="block text-[11px] leading-tight text-muted-foreground">
+                  {usuario.data.admin ? "Administrador" : "Usuário"}
                 </span>
-              </>
+              </span>
             ) : null}
             <BotaoSair />
           </div>

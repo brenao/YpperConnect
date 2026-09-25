@@ -203,9 +203,8 @@ export const criarUsuarioFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => UsuarioSchema.parse(d))
   .handler(async ({ data }) => {
     const { criarUsuario } = await import("@/repositories/usuarios.repo");
-    const id = crypto.randomUUID();
-    await criarUsuario(await ctx(), { id, ...data });
-    return { id };
+    // Devolve o link de convite: sem AD, é assim que a pessoa cria a senha.
+    return criarUsuario(await ctx(), { id: crypto.randomUUID(), ...data });
   });
 
 const UsuarioUpdateSchema = UsuarioSchema.partial().extend({ id: z.string() });
@@ -226,6 +225,14 @@ export const definirUsuarioAtivoFn = createServerFn({ method: "POST" })
     const { definirUsuarioAtivo } = await import("@/repositories/usuarios.repo");
     await definirUsuarioAtivo(await ctx(), data.id, data.ativo);
     return { ok: true };
+  });
+
+/** Link de acesso avulso: primeiro acesso ou senha esquecida. */
+export const gerarLinkAcessoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { gerarLinkDeAcesso } = await import("@/repositories/usuarios.repo");
+    return { link: await gerarLinkDeAcesso(await ctx(), data.id) };
   });
 
 // ------------------------------------------------------------------- perfis

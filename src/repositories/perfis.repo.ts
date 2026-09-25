@@ -1,11 +1,11 @@
-import {
-  consultar,
-  consultarUm,
-  executar,
-  emTransacao,
-} from "@/integrations/postgres/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { getSupabaseServerClient } from "@/integrations/supabase/server";
+import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
+
+/**
+ * Perfis de acesso da empresa. Mesma interface e regras do repositório
+ * legado; por dentro, Supabase com a sessão de quem chamou.
+ */
 
 export interface PerfilAcesso {
   id: string;
@@ -22,49 +22,57 @@ function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
   if (!ctx.admin) throw new ErroDominio(`Somente administradores podem ${acao}`);
 }
 
-/**
- * Carrega perfis com módulos e funcionalidades em 3 queries, não N+1.
- * A tela de permissões lista todos de uma vez.
- */
+async function tenantAtual(): Promise<string> {
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  return (await getUsuarioAtual()).tenantId;
+}
+
+function falha(erro: { code?: string; message: string }): never {
+  if (erro.code === "23505") throw new ErroDominio("Já existe um perfil com esse nome.");
+  if (erro.code === "P0002") throw new ErroDominio(erro.message);
+  throw new Error(erro.message);
+}
+
+/** Perfis com módulos e funcionalidades em 3 consultas, não N+1. */
 export async function listarPerfis(): Promise<PerfilAcesso[]> {
+  const tenantId = await tenantAtual();
+  const sb = getSupabaseServerClient();
+
   const [perfis, modulos, features] = await Promise.all([
-    consultar<{
-      id: string;
-      nome: string;
-      descricao: string | null;
-      sistema: number;
-      ativo: number;
-    }>(`SELECT id, nome, descricao, sistema, ativo FROM perfis_acesso ORDER BY nome`),
-    consultar<{ perfilId: string; moduloKey: string }>(
-      `SELECT perfil_id, modulo_key FROM perfil_modulos`,
-    ),
-    consultar<{ perfilId: string; featureKey: string }>(
-      `SELECT perfil_id, feature_key FROM perfil_features`,
-    ),
+    sb
+      .from("perfis_acesso")
+      .select("id, nome, descricao, sistema, ativo")
+      .eq("tenant_id", tenantId)
+      .order("nome"),
+    sb.from("perfil_modulos").select("perfil_id, modulo_key").eq("tenant_id", tenantId),
+    sb.from("perfil_features").select("perfil_id, feature_key").eq("tenant_id", tenantId),
   ]);
+  if (perfis.error) falha(perfis.error);
+  if (modulos.error) falha(modulos.error);
+  if (features.error) falha(features.error);
 
   const porPerfilModulo = new Map<string, string[]>();
-  for (const m of modulos) {
-    const l = porPerfilModulo.get(m.perfilId) ?? [];
-    l.push(m.moduloKey);
-    porPerfilModulo.set(m.perfilId, l);
+  for (const m of modulos.data ?? []) {
+    const l = porPerfilModulo.get(m.perfil_id as string) ?? [];
+    l.push(m.modulo_key as string);
+    porPerfilModulo.set(m.perfil_id as string, l);
   }
 
   const porPerfilFeature = new Map<string, string[]>();
-  for (const f of features) {
-    const l = porPerfilFeature.get(f.perfilId) ?? [];
-    l.push(f.featureKey);
-    porPerfilFeature.set(f.perfilId, l);
+  for (const f of features.data ?? []) {
+    const l = porPerfilFeature.get(f.perfil_id as string) ?? [];
+    l.push(f.feature_key as string);
+    porPerfilFeature.set(f.perfil_id as string, l);
   }
 
-  return perfis.map((p) => ({
-    id: p.id,
-    nome: p.nome,
-    descricao: p.descricao,
-    sistema: paraBool(p.sistema),
-    ativo: paraBool(p.ativo),
-    modulos: porPerfilModulo.get(p.id) ?? [],
-    funcionalidades: porPerfilFeature.get(p.id) ?? [],
+  return (perfis.data ?? []).map((p) => ({
+    id: p.id as string,
+    nome: p.nome as string,
+    descricao: (p.descricao as string | null) ?? null,
+    sistema: p.sistema as boolean,
+    ativo: p.ativo as boolean,
+    modulos: porPerfilModulo.get(p.id as string) ?? [],
+    funcionalidades: porPerfilFeature.get(p.id as string) ?? [],
   }));
 }
 
@@ -76,17 +84,23 @@ export async function criarPerfil(
   exigirAdmin(ctx, "criar perfis");
   if (dados.nome.trim().length < 3) throw new ErroDominio("Informe o nome do perfil");
 
-  const id = crypto.randomUUID();
-  await emTransacao(async (tx) => {
-    await tx.executar(
-      `INSERT INTO perfis_acesso (id, nome, descricao, sistema, ativo)
-       VALUES (:id, :nome, :descricao, 0, 1)`,
-      { id, nome: dados.nome.trim(), descricao: dados.descricao?.trim() ?? null },
-    );
-    await tx.executar(`INSERT INTO perfil_modulos (perfil_id, modulo_key) VALUES (:id, '/')`, {
-      id,
-    });
-  });
+  const sb = getSupabaseServerClient();
+  const { data, error } = await sb
+    .from("perfis_acesso")
+    .insert({
+      tenant_id: ctx.tenantId,
+      nome: dados.nome.trim(),
+      descricao: dados.descricao?.trim() ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) falha(error);
+
+  const id = data.id as string;
+  const inicial = await sb
+    .from("perfil_modulos")
+    .insert({ tenant_id: ctx.tenantId, perfil_id: id, modulo_key: "/" });
+  if (inicial.error) falha(inicial.error);
   return id;
 }
 
@@ -103,20 +117,18 @@ export async function atualizarPerfil(
 ): Promise<void> {
   exigirAdmin(ctx, "alterar perfis");
 
-  const n = await executar(
-    `UPDATE perfis_acesso
-        SET nome = COALESCE(:nome, nome),
-            descricao = :descricao,
-            ativo = COALESCE(:ativo, ativo)
-      WHERE id = :id`,
-    {
-      id,
-      nome: d.nome?.trim() ?? null,
-      descricao: d.descricao?.trim() ?? null,
-      ativo: d.ativo === undefined ? null : deBool(d.ativo),
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Perfil ${id} não encontrado`);
+  const mudancas: Record<string, unknown> = { descricao: d.descricao?.trim() ?? null };
+  if (d.nome !== undefined) mudancas["nome"] = d.nome.trim();
+  if (d.ativo !== undefined) mudancas["ativo"] = d.ativo;
+
+  const { data, error } = await getSupabaseServerClient()
+    .from("perfis_acesso")
+    .update(mudancas)
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Perfil ${id} não encontrado`);
 }
 
 /**
@@ -126,32 +138,45 @@ export async function atualizarPerfil(
  */
 export async function desativarPerfil(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirAdmin(ctx, "desativar perfis");
+  const sb = getSupabaseServerClient();
 
-  const p = await consultarUm<{ sistema: number }>(
-    `SELECT sistema FROM perfis_acesso WHERE id = :id`,
-    { id },
-  );
-  if (!p) throw new ErroDominio(`Perfil ${id} não encontrado`);
-  if (paraBool(p.sistema)) {
+  const p = await sb
+    .from("perfis_acesso")
+    .select("sistema")
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .maybeSingle();
+  if (p.error) falha(p.error);
+  if (!p.data) throw new ErroDominio(`Perfil ${id} não encontrado`);
+  if (p.data.sistema) {
     throw new ErroDominio("Perfis padrão do sistema não podem ser desativados");
   }
 
-  const emUso = await consultarUm<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM usuarios WHERE perfil_id = :id AND ativo = 1`,
-    { id },
-  );
-  if ((emUso?.total ?? 0) > 0) {
+  const emUso = await sb
+    .from("tenant_membros")
+    .select("usuario_id", { count: "exact", head: true })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("perfil_id", id)
+    .eq("ativo", true);
+  if (emUso.error) falha(emUso.error);
+  if ((emUso.count ?? 0) > 0) {
     throw new ErroDominio(
-      `Há ${emUso?.total} usuário(s) ativo(s) com este perfil. Reatribua antes de desativar.`,
+      `Há ${emUso.count} usuário(s) ativo(s) com este perfil. Reatribua antes de desativar.`,
     );
   }
 
-  await executar(`UPDATE perfis_acesso SET ativo = 0 WHERE id = :id`, { id });
+  const { error } = await sb
+    .from("perfis_acesso")
+    .update({ ativo: false })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id);
+  if (error) falha(error);
 }
 
 /**
- * Substitui módulos e funcionalidades do perfil. Em transação: um perfil
- * sem módulos por falha parcial trancaria o usuário para fora do sistema.
+ * Substitui módulos e funcionalidades do perfil. Numa transação (função
+ * do banco): um perfil sem módulos por falha parcial trancaria o usuário
+ * para fora do sistema.
  */
 export async function salvarPermissoes(
   ctx: ContextoUsuario,
@@ -160,29 +185,10 @@ export async function salvarPermissoes(
   funcionalidades: string[],
 ): Promise<void> {
   exigirAdmin(ctx, "alterar permissões");
-
-  await emTransacao(async (tx) => {
-    const existe = await tx.consultar(`SELECT id FROM perfis_acesso WHERE id = :id`, {
-      id: perfilId,
-    });
-    if (existe.length === 0) throw new ErroDominio(`Perfil ${perfilId} não encontrado`);
-
-    await tx.executar(`DELETE FROM perfil_modulos WHERE perfil_id = :id`, { id: perfilId });
-    await tx.executar(`DELETE FROM perfil_features WHERE perfil_id = :id`, { id: perfilId });
-
-    // "/" é sempre incluído: sem painel inicial o usuário não tem para
-    // onde ir depois de entrar.
-    for (const m of new Set(["/", ...modulos])) {
-      await tx.executar(`INSERT INTO perfil_modulos (perfil_id, modulo_key) VALUES (:id, :chave)`, {
-        id: perfilId,
-        chave: m,
-      });
-    }
-    for (const f of new Set(funcionalidades)) {
-      await tx.executar(
-        `INSERT INTO perfil_features (perfil_id, feature_key) VALUES (:id, :chave)`,
-        { id: perfilId, chave: f },
-      );
-    }
+  const { error } = await getSupabaseServerClient().rpc("salvar_permissoes_perfil", {
+    p_perfil: perfilId,
+    p_modulos: [...new Set(modulos)],
+    p_features: [...new Set(funcionalidades)],
   });
+  if (error) falha(error);
 }

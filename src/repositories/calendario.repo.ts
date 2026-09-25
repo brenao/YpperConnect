@@ -59,10 +59,13 @@ export interface Feriado {
 
 // ------------------------------------------------------------------ apoio
 
+/**
+ * Quem administra o calendário, como no legado: feriado e localidade
+ * mudam as datas de todo cronograma da empresa — é configuração de
+ * instalação, fica com o administrador.
+ */
 function exigirGestor(ctx: ContextoUsuario, acao: string): void {
-  if (!ctx.permissoes.includes("cadastro.gerenciar")) {
-    throw new ErroDominio(`Você não tem permissão para ${acao}`);
-  }
+  if (!ctx.admin) throw new ErroDominio(`Somente administradores podem ${acao}`);
 }
 
 async function ctxAtual(): Promise<ContextoUsuario> {

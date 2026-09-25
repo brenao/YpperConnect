@@ -14,9 +14,15 @@ import { getSupabaseServerClient } from "@/integrations/supabase/server";
  * empresa nenhuma — o RLS barraria de qualquer jeito.
  */
 
-/** Chaves do catálogo `public.permissoes` usadas pelo módulo de projetos. */
-export const FEATURE_PROJETOS_DIRETORIA = "projeto.diretoria";
-export const FEATURE_PROJETOS_PORTFOLIO = "projeto.ver_portfolio";
+/**
+ * Enxerga o portfólio inteiro, em leitura (visão de diretoria).
+ * Chaves de `perfil_features`, iguais às do legado.
+ */
+export const FEATURE_PROJETOS_DIRETORIA = "projetos.visao_diretoria";
+/** Enxerga os projetos da própria equipe, em leitura. */
+export const FEATURE_PROJETOS_PORTFOLIO = "projetos.portfolio";
+/** Vê o instrutor de cronograma no detalhe do projeto. */
+export const FEATURE_PROJETOS_COACH = "projetos.coach";
 
 export const COOKIE_TENANT = "bo_tenant";
 
@@ -39,8 +45,24 @@ export interface TenantResumo {
 export interface ContextoUsuario {
   id: string;
   nome: string;
+  /** Vazio só em conta sem e-mail; mantido `string` como no legado. */
   email: string;
+  admin: boolean;
+  perfilId: string | null;
+  equipeId: string | null;
+  /** Chaves de `perfil_features` do perfil do usuário. */
+  funcionalidades: string[];
+  /** Chaves de `perfil_modulos` do perfil do usuário. */
+  modulos: string[];
+  /** Atalhos dos papéis de projeto, para não espalhar string mágica. */
+  visaoDiretoriaProjetos: boolean;
+  gestorPortfolio: boolean;
+  /** Instrutor de cronograma. O administrador vê sempre. */
+  coachProjetos: boolean;
 
+  // ------------------------------------------------------------------
+  // Multi-empresa
+  // ------------------------------------------------------------------
   /** Empresa em que a pessoa está trabalhando agora. */
   tenantId: string;
   tenantSlug: string;
@@ -48,26 +70,8 @@ export interface ContextoUsuario {
   tipoMembro: "interno" | "cliente";
   /** Todas as empresas a que a pessoa tem acesso (para o seletor). */
   tenants: TenantResumo[];
-  /** Permissões de escopo tenant, do catálogo `public.permissoes`. */
-  permissoes: string[];
   /** Operador da plataforma (equipe Ypper Tech). */
   adminPlataforma: boolean;
-
-  // ------------------------------------------------------------------
-  // Campos do modelo antigo, mantidos para as telas legadas compilarem
-  // enquanto são migradas. Não use em código novo.
-  // ------------------------------------------------------------------
-  /** Tem `tenant.configurar` no tenant ativo. */
-  admin: boolean;
-  /** Sem equivalente no modelo novo (papéis substituem perfis). */
-  perfilId: string | null;
-  /** Equipes voltam no passo de cadastros. */
-  equipeId: string | null;
-  /** Igual a `permissoes`. */
-  funcionalidades: string[];
-  visaoDiretoriaProjetos: boolean;
-  gestorPortfolio: boolean;
-  coachProjetos: boolean;
 }
 
 export type Sessao =
@@ -138,11 +142,20 @@ async function lerSessao(): Promise<Sessao> {
   const tenant = tenants.find((t) => t.slug === preferido) ?? tenants[0]!;
   if (tenant.slug !== preferido) setCookie(COOKIE_TENANT, tenant.slug, OPCOES_COOKIE_TENANT);
 
-  const permRes = await supabase.rpc("minhas_permissoes", { p_tenant: tenant.id });
-  if (permRes.error) {
-    throw new Error(`Falha ao carregar as permissões: ${permRes.error.message}`);
+  const acessoRes = await supabase.rpc("meu_acesso", { p_tenant: tenant.id });
+  if (acessoRes.error) {
+    throw new Error(`Falha ao carregar o perfil de acesso: ${acessoRes.error.message}`);
   }
-  const permissoes = (permRes.data ?? []) as string[];
+  const acesso = (acessoRes.data ?? {}) as {
+    admin?: boolean;
+    perfil_id?: string | null;
+    equipe_id?: string | null;
+    modulos?: string[];
+    funcionalidades?: string[];
+  };
+
+  const admin = acesso.admin === true;
+  const funcionalidades = acesso.funcionalidades ?? [];
 
   return {
     estado: "ok",
@@ -150,20 +163,20 @@ async function lerSessao(): Promise<Sessao> {
       id: user.id,
       nome,
       email,
+      admin,
+      perfilId: acesso.perfil_id ?? null,
+      equipeId: acesso.equipe_id ?? null,
+      funcionalidades,
+      modulos: acesso.modulos ?? [],
+      visaoDiretoriaProjetos: funcionalidades.includes(FEATURE_PROJETOS_DIRETORIA),
+      gestorPortfolio: funcionalidades.includes(FEATURE_PROJETOS_PORTFOLIO),
+      coachProjetos: admin || funcionalidades.includes(FEATURE_PROJETOS_COACH),
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
       tenantNome: tenant.nome,
       tipoMembro: tenant.tipo,
       tenants,
-      permissoes,
       adminPlataforma: adminRes.data === true,
-      admin: permissoes.includes("tenant.configurar"),
-      perfilId: null,
-      equipeId: null,
-      funcionalidades: permissoes,
-      visaoDiretoriaProjetos: permissoes.includes(FEATURE_PROJETOS_DIRETORIA),
-      gestorPortfolio: permissoes.includes(FEATURE_PROJETOS_PORTFOLIO),
-      coachProjetos: true,
     },
   };
 }

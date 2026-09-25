@@ -25,14 +25,13 @@ select is((select count(*) from public.expediente e, t where e.tenant_id = t.alf
           10, 'Expediente padrao: 5 dias x 2 faixas');
 
 -- 3
-select ok(exists(select 1 from public.papel_permissoes pp join public.papeis p on p.id = pp.papel_id, t
-                  where p.tenant_id = t.alfa and p.chave = 'admin_tenant'
-                    and pp.permissao = 'cadastro.gerenciar'),
-          'Admin do tenant recebe cadastro.gerenciar');
+select ok(exists(select 1 from public.tenant_membros m join public.perfis_acesso p on p.id = m.perfil_id, t
+                  where m.tenant_id = t.alfa and m.admin and p.nome = 'Administrador de TI'),
+          'Dono da empresa entra como administrador, perfil Administrador de TI');
 
 -- 4
 select throws_ok(
-  format($$update public.tenant_membros set equipe_id = (select id from public.equipes where tenant_id = %L)
+  format($$update public.tenant_membros set equipe_id = (select id from public.equipes where tenant_id = %L and nome = 'Infra Beta')
            where tenant_id = %L$$, (select beta from t), (select alfa from t)),
   '23503', null, 'Membro nao pode apontar para equipe de outro tenant');
 
@@ -43,7 +42,7 @@ select set_config('request.jwt.claims',
 
 -- 5
 select lives_ok(
-  format($$insert into public.equipes (tenant_id, nome) values (%L, 'Service Desk')$$, (select alfa from t)),
+  format($$insert into public.equipes (tenant_id, nome) values (%L, 'Suporte N2')$$, (select alfa from t)),
   'Admin cria equipe no proprio tenant');
 
 -- 6

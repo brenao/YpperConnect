@@ -35,9 +35,9 @@ select ok(exists(select 1 from public.tenant_membros m, t
           'Dominio verificado inclui o usuario no tenant');
 
 -- 3
-select is((select p.chave from public.atribuicoes a join public.papeis p on p.id = a.papel_id
-            where a.usuario_id = '00000000-0000-0000-0000-00000000000c'),
-          'solicitante', 'Ingresso por dominio recebe papel de solicitante');
+select is((select p.nome from public.tenant_membros m join public.perfis_acesso p on p.id = m.perfil_id
+            where m.usuario_id = '00000000-0000-0000-0000-00000000000c'),
+          'Usuário final', 'Ingresso por dominio recebe o perfil Usuario final');
 
 -- Agora como Ana (usuaria autenticada, sujeita ao RLS)
 set local role authenticated;
