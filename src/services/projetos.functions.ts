@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { ResultadoCampo } from "@/repositories/projetos.repo";
+import type { Dependencia } from "@/services/dependencias";
 
 /**
  * Server functions do portfólio de projetos.
@@ -299,6 +300,8 @@ const CampoSchema = z.object({
    * `inicio` — sem data proposta não há conflito a resolver.
    */
   forcarData: z.boolean().optional(),
+  /** Solta a data fixada à mão. É o clique no cadeado da grade. */
+  limparRestricao: z.boolean().optional(),
 });
 
 export type CampoTarefaInput = z.infer<typeof CampoSchema>;
@@ -326,13 +329,33 @@ export const atualizarCampoTarefaFn = createServerFn({ method: "POST" })
     return atualizarCampoTarefa(await ctx(), id, campos);
   });
 
+/**
+ * Dependência completa: para onde aponta, de que tipo e com quanta
+ * defasagem.
+ *
+ * Os quatro tipos são a nomenclatura do MS Project traduzida, e a
+ * defasagem é contada na régua do projeto — dias úteis ou corridos,
+ * conforme o cadastro dele.
+ *
+ * O teto de 365 dias para cada lado é o mesmo do CHECK da tabela:
+ * defasagem maior que isso é quase sempre erro de digitação, e o
+ * cronograma que ela produz ninguém consegue conferir.
+ */
+const DependenciaSchema = z.object({
+  predecessoraId: z.string(),
+  tipo: z.enum(["TI", "II", "TT", "IT"]),
+  defasagem: z.number().int().min(-365).max(365),
+});
+
 const VinculosSchema = z.object({
   id: z.string(),
   responsaveis: z.array(z.string()).max(20).optional(),
-  predecessoras: z.array(z.string()).max(20).optional(),
+  predecessoras: z.array(DependenciaSchema).max(20).optional(),
 });
 
 export type VinculosTarefaInput = z.infer<typeof VinculosSchema>;
+/** Reexportado para a grade tipar o que manda sem importar o repositório. */
+export type { Dependencia };
 
 /** Edição em linha de responsável e predecessora, sem tocar no resto. */
 export const atualizarVinculosTarefaFn = createServerFn({ method: "POST" })
@@ -553,3 +576,25 @@ export const resumoPortfolioFn = createServerFn({ method: "GET" }).handler(async
   const { resumoPortfolio } = await import("@/repositories/projetos.repo");
   return resumoPortfolio(await ctx());
 });
+
+/**
+ * Reordena arrastando na grade.
+ *
+ * Só entre tarefas do mesmo nível: mudar de mãe é endentar, e isso tem
+ * regras próprias em `aninharTarefa`.
+ */
+export const moverOrdemTarefaFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) =>
+    z
+      .object({
+        id: z.string(),
+        alvoId: z.string(),
+        posicao: z.enum(["antes", "depois"]),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { moverOrdemTarefa } = await import("@/repositories/projetos.repo");
+    await moverOrdemTarefa(await ctx(), data.id, data.alvoId, data.posicao);
+    return { ok: true };
+  });

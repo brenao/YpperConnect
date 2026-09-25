@@ -16,8 +16,11 @@ import {
   ChevronDown,
   ChevronRight,
   CornerDownRight,
+  GripVertical,
+  Lock,
   IndentDecrease,
   IndentIncrease,
+  Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -46,12 +49,14 @@ import type {
   Tarefa,
   TarefaCalculada,
 } from "@/repositories/projetos.repo";
+import { formatarDependencia, lerDependencias, type Dependencia } from "@/services/dependencias";
 import {
   aninharTarefaFn,
   atualizarCampoTarefaFn,
   atualizarVinculosTarefaFn,
   excluirTarefaFn,
   inserirAbaixoFn,
+  moverOrdemTarefaFn,
   type CampoTarefaInput,
   type VinculosTarefaInput,
 } from "@/services/projetos.functions";
@@ -101,11 +106,25 @@ function duracaoExibida(valor: number, unidade: Unidade): string {
   return `${numeroCurto(valor)}${unidade === "horas" ? "h" : "d"}`;
 }
 
+/**
+ * Onde a linha arrastada vai cair.
+ *
+ * Guardado no componente de cima porque a faixa de destino é desenhada
+ * na linha do alvo, e só ela sabe se o ponteiro está na metade de cima
+ * ou de baixo.
+ */
+interface Arraste {
+  id: string;
+  alvoId: string;
+  posicao: "antes" | "depois";
+}
+
 export interface ProjectTasksProps {
   projeto: Projeto;
   wbs: { tarefa: TarefaCalculada; nivel: number }[];
   cpm: Record<string, DadosCpm>;
-  predecessoras: Record<string, string[]>;
+  /** Arestas completas: a grade é quem edita tipo e defasagem. */
+  predecessoras: Record<string, Dependencia[]>;
   responsaveis: Record<string, string[]>;
   recursos: { id: string; nome: string; papel: string | null }[];
   progressoEsperado: number;
@@ -129,11 +148,36 @@ export function ProjectTasks({
   onDetalhe,
   onNovaTarefa,
 }: ProjectTasksProps) {
+  const qc = useQueryClient();
   const [unidade, setUnidade] = useState<Unidade>("horas");
 
   // Ids das tarefas mãe recolhidas. Guardado por id, não por índice: a
   // linha muda de número a cada inserção, o id não.
   const [recolhidas, setRecolhidas] = useState<Set<string>>(new Set());
+
+  /**
+   * Projeto recolhido: esconde o cronograma inteiro.
+   *
+   * A linha do projeto é a raiz da árvore e faltava o único controle
+   * que todas as outras linhas de agrupamento já tinham. Em cronograma
+   * de trezentas tarefas, recolher tudo é o jeito mais rápido de voltar
+   * ao topo — e de conferir o cabeçalho sem a lista competindo pela
+   * atenção.
+   */
+  const [projetoRecolhido, setProjetoRecolhido] = useState(false);
+
+  /** Linha sendo arrastada e onde ela cairia se soltasse agora. */
+  const [arrastando, setArrastando] = useState<string | null>(null);
+  const [alvo, setAlvo] = useState<Arraste | null>(null);
+
+  const mover = useMutation({
+    mutationFn: (v: Arraste) =>
+      moverOrdemTarefaFn({
+        data: { id: v.id, alvoId: v.alvoId, posicao: v.posicao },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projeto", projeto.id] }),
+    onError: (e: Error) => toast.error("Não foi possível mover", { description: e.message }),
+  });
 
   function alternarRecolhida(id: string) {
     setRecolhidas((atual) => {
@@ -158,8 +202,20 @@ export function ProjectTasks({
     return m;
   }, [wbs]);
 
+  /** Pai de cada tarefa: o arrasto só vale entre irmãos. */
+  const paiPorId = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const { tarefa } of wbs) m.set(tarefa.id, tarefa.paiId);
+    return m;
+  }, [wbs]);
+
   const opcoesRecurso: OpcaoSeletor[] = useMemo(
-    () => recursos.map((r) => ({ id: r.id, rotulo: r.nome, detalhe: r.papel ?? undefined })),
+    () =>
+      recursos.map((r) => ({
+        id: r.id,
+        rotulo: r.nome,
+        detalhe: r.papel ?? undefined,
+      })),
     [recursos],
   );
 
@@ -171,6 +227,7 @@ export function ProjectTasks({
    * como "7" passaria a apontar para outra tarefa.
    */
   const visiveis = useMemo(() => {
+    if (projetoRecolhido) return [];
     if (recolhidas.size === 0) return wbs.map((w, i) => ({ ...w, indice: i + 1 }));
 
     const escondidas = new Set<string>();
@@ -185,7 +242,7 @@ export function ProjectTasks({
       saida.push({ tarefa, nivel, indice: i + 1 });
     });
     return saida;
-  }, [wbs, recolhidas]);
+  }, [wbs, recolhidas, projetoRecolhido]);
 
   const criticas = Object.values(cpm).filter((c) => c.critica).length;
   const atrasoPontos = progressoEsperado - progressoReal;
@@ -209,11 +266,34 @@ export function ProjectTasks({
 
   const duracaoProjeto = diasEntre(projeto.inicio, projeto.fim);
 
+  /**
+   * Fim do arrasto: grava se caiu em lugar válido.
+   *
+   * A validação de mesmo nível é repetida no servidor — esta aqui só
+   * evita a ida ao banco para um gesto que já se sabe recusado, e
+   * permite explicar o motivo na hora.
+   */
+  function soltar() {
+    const destino = alvo;
+    setArrastando(null);
+    setAlvo(null);
+    if (!destino || destino.id === destino.alvoId) return;
+
+    if (paiPorId.get(destino.id) !== paiPorId.get(destino.alvoId)) {
+      toast.error("Só dá para reordenar entre tarefas do mesmo nível.", {
+        description: "Para mudar o nível, use os botões de endentar da linha.",
+      });
+      return;
+    }
+    mover.mutate(destino);
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
           Clique em qualquer campo para editar. Linhas com subtarefas mostram o consolidado.
+          {editavel ? " Arraste pela alça à esquerda para reordenar." : ""}
           {criticas > 0 ? (
             <>
               {" "}
@@ -258,7 +338,7 @@ export function ProjectTasks({
         <table className="w-full min-w-[64rem] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <th className="w-[4.75rem] px-2 py-2 font-medium">#</th>
+              <th className="w-[5.5rem] px-2 py-2 font-medium">#</th>
               <th className="px-3 py-2 font-medium">Tarefa</th>
               <th className="w-24 px-3 py-2 font-medium">Duração</th>
               <th className="w-20 px-3 py-2 font-medium">Início</th>
@@ -275,8 +355,27 @@ export function ProjectTasks({
             <tr className="border-b-2 border-primary/30 bg-primary/10 font-semibold">
               <td className="px-2 py-2 font-mono text-xs text-muted-foreground">0</td>
               <td className="px-3 py-2">
-                <span className="block truncate">{projeto.nome}</span>
-                <span className="block truncate text-[11px] font-normal text-muted-foreground">
+                {/* O mesmo controle das tarefas mãe, na mesma posição:
+                    a linha do projeto é a raiz da árvore, e era a única
+                    sem ele. */}
+                <span className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => setProjetoRecolhido((v) => !v)}
+                    title={projetoRecolhido ? "Expandir o cronograma" : "Recolher o cronograma"}
+                    aria-expanded={!projetoRecolhido}
+                    className="shrink-0 rounded text-muted-foreground hover:text-foreground"
+                  >
+                    {projetoRecolhido ? (
+                      <ChevronRight className="size-3.5" />
+                    ) : (
+                      <ChevronDown className="size-3.5" />
+                    )}
+                  </button>
+                  <span className="truncate">{projeto.nome}</span>
+                </span>
+                <span className="block truncate pl-5 text-[11px] font-normal text-muted-foreground">
                   {projeto.gerenteNome ?? "Sem gerente"} · {wbs.length} tarefa(s) · {duracaoProjeto}{" "}
                   d de calendário
                   {progressoEsperado > 0 ? (
@@ -326,10 +425,37 @@ export function ProjectTasks({
                 opcoesRecurso={opcoesRecurso}
                 editavel={editavel}
                 onDetalhe={() => onDetalhe(t)}
+                arrastando={arrastando === t.id}
+                marcaDeSolta={alvo?.alvoId === t.id ? alvo.posicao : null}
+                onComecarArraste={() => setArrastando(t.id)}
+                onPassarPor={(posicao) => {
+                  if (!arrastando || arrastando === t.id) return;
+                  setAlvo({ id: arrastando, alvoId: t.id, posicao });
+                }}
+                onSoltar={soltar}
+                onCancelarArraste={() => {
+                  setArrastando(null);
+                  setAlvo(null);
+                }}
               />
             ))}
 
-            {wbs.length === 0 ? (
+            {projetoRecolhido && wbs.length > 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-3 text-center text-xs text-muted-foreground">
+                  {wbs.length} tarefa(s) recolhida(s).{" "}
+                  <button
+                    type="button"
+                    onClick={() => setProjetoRecolhido(false)}
+                    className="text-primary hover:underline"
+                  >
+                    Expandir
+                  </button>
+                </td>
+              </tr>
+            ) : null}
+
+            {!projetoRecolhido && wbs.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">
                   Nenhuma tarefa. Use <strong>Nova tarefa</strong> para começar o cronograma.
@@ -359,6 +485,12 @@ function LinhaTarefa({
   opcoesRecurso,
   editavel,
   onDetalhe,
+  arrastando,
+  marcaDeSolta,
+  onComecarArraste,
+  onPassarPor,
+  onSoltar,
+  onCancelarArraste,
 }: {
   indice: number;
   tarefa: TarefaCalculada;
@@ -367,7 +499,7 @@ function LinhaTarefa({
   onAlternarRecolhida: () => void;
   cpm: DadosCpm | undefined;
   unidade: Unidade;
-  predecessoras: string[];
+  predecessoras: Dependencia[];
   responsaveis: string[];
   indicePorId: Map<string, number>;
   idPorIndice: Map<number, string>;
@@ -375,6 +507,12 @@ function LinhaTarefa({
   opcoesRecurso: OpcaoSeletor[];
   editavel: boolean;
   onDetalhe: () => void;
+  arrastando: boolean;
+  marcaDeSolta: "antes" | "depois" | null;
+  onComecarArraste: () => void;
+  onPassarPor: (posicao: "antes" | "depois") => void;
+  onSoltar: () => void;
+  onCancelarArraste: () => void;
 }) {
   const qc = useQueryClient();
 
@@ -392,9 +530,10 @@ function LinhaTarefa({
    * `forcarData`. Remontar o payload a partir do estado da linha daria
    * margem a divergir do que a pessoa realmente digitou.
    */
-  const [conflito, setConflito] = useState<{ dados: ConflitoData; envio: CampoTarefaInput } | null>(
-    null,
-  );
+  const [conflito, setConflito] = useState<{
+    dados: ConflitoData;
+    envio: CampoTarefaInput;
+  } | null>(null);
 
   const salvarCampo = useMutation({
     mutationFn: (v: CampoTarefaInput) => atualizarCampoTarefaFn({ data: v }),
@@ -455,6 +594,7 @@ function LinhaTarefa({
   // Pai não é editável: seus valores vêm do rollup das filhas.
   const podeEditar = editavel && !t.ehPai;
   const critica = cpm?.critica ?? false;
+  const diasCalendario = cpm?.duracaoDias ?? diasEntre(t.inicioEfetivo, t.fimEfetivo);
 
   /**
    * Folha sem responsável é um buraco silencioso no cronograma.
@@ -463,12 +603,8 @@ function LinhaTarefa({
    * ninguém e — desde o calendário por recurso — ignora férias e
    * feriado de localidade, porque não há de quem herdar. A data dela é
    * a única do projeto calculada no vácuo, e nada na tela dizia isso.
-   *
-   * Mãe fica de fora: quem executa são as filhas, e atribuir gente a um
-   * agrupador é justamente o que a grade recusa.
    */
   const semResponsavel = !t.ehPai && responsaveis.length === 0;
-  const diasCalendario = cpm?.duracaoDias ?? diasEntre(t.inicioEfetivo, t.fimEfetivo);
 
   // Mãe mostra a soma do esforço das filhas; folha mostra o que foi
   // digitado. O `esforcoHoras` já vem resolvido do servidor, sempre em
@@ -479,11 +615,30 @@ function LinhaTarefa({
 
   return (
     <tr
+      // Solta em cima da linha: o alvo é a linha inteira, e a metade em
+      // que o ponteiro está decide se entra antes ou depois dela.
+      onDragOver={(e) => {
+        if (!editavel) return;
+        e.preventDefault();
+        const caixa = e.currentTarget.getBoundingClientRect();
+        onPassarPor(e.clientY < caixa.top + caixa.height / 2 ? "antes" : "depois");
+      }}
+      onDrop={(e) => {
+        if (!editavel) return;
+        e.preventDefault();
+        onSoltar();
+      }}
       className={cn(
         "group border-b border-border/60",
         // Mãe em fundo tênue e texto forte: numa WBS de trinta linhas,
         // a hierarquia precisa ser legível antes da leitura.
         t.ehPai ? "bg-secondary/25 font-semibold" : "",
+        arrastando ? "opacity-40" : "",
+        // A marca de destino é uma borda na aresta em que a linha vai
+        // entrar: mais preciso do que destacar a linha inteira, que não
+        // diria se é acima ou abaixo.
+        marcaDeSolta === "antes" ? "border-t-2 border-t-primary" : "",
+        marcaDeSolta === "depois" ? "border-b-2 border-b-primary" : "",
       )}
     >
       {/* Calha: o número dá lugar aos botões quando o ponteiro entra na
@@ -491,7 +646,22 @@ function LinhaTarefa({
           ocupam pixel nem entram na ordem de tabulação. */}
       <td className="px-2 py-1 align-top">
         <span className="flex h-7 items-center gap-0.5">
+          {/* A alça é o único ponto que inicia o arrasto. A linha inteira
+              arrastável atrapalharia a seleção de texto dos campos. */}
+          {editavel ? (
+            <span
+              draggable
+              onDragStart={onComecarArraste}
+              onDragEnd={onCancelarArraste}
+              title="Arraste para reordenar"
+              className="cursor-grab text-muted-foreground opacity-0 transition-opacity active:cursor-grabbing group-focus-within:opacity-100 group-hover:opacity-100"
+            >
+              <GripVertical className="size-3.5" />
+            </span>
+          ) : null}
+
           <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{indice}</span>
+
           {editavel ? (
             <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
               <Button
@@ -616,14 +786,6 @@ function LinhaTarefa({
             // Espaço reservado: sem ele, folha e mãe desalinham.
             <span className="size-3.5 shrink-0" />
           )}
-          {critica ? (
-            <span
-              className="size-1.5 shrink-0 rounded-full bg-destructive"
-              title="Caminho crítico — atraso aqui empurra a entrega"
-              aria-label="Caminho crítico"
-            />
-          ) : null}
-
           {editavel ? (
             <NomeInline
               valor={t.nome}
@@ -646,6 +808,28 @@ function LinhaTarefa({
             </span>
           )}
 
+          {/* Marcadores vêm DEPOIS do nome. A calha à esquerda pertence
+              à hierarquia, e só a ela: um ponto ali fazia a linha
+              parecer endentada, como se fosse filha de alguém. */}
+          {critica ? (
+            <span
+              className="size-1.5 shrink-0 rounded-full bg-destructive"
+              title="Caminho crítico — atraso aqui empurra a entrega"
+              aria-label="Caminho crítico"
+            />
+          ) : null}
+          {t.restricaoInicio ? (
+            <button
+              type="button"
+              tabIndex={-1}
+              disabled={!editavel}
+              onClick={() => salvarCampo.mutate({ id: t.id, limparRestricao: true })}
+              title="Data fixada à mão. Clique para soltar e deixar o cronograma recalcular."
+              className="shrink-0 text-warning hover:text-foreground disabled:pointer-events-none"
+            >
+              <Lock className="size-3" />
+            </button>
+          ) : null}
           {t.marco ? (
             <Badge variant="outline" className="shrink-0 text-[10px]">
               marco
@@ -658,7 +842,12 @@ function LinhaTarefa({
           ) : null}
         </span>
 
-        {t.atividade || critica || semResponsavel || (cpm && cpm.folgaDias > 0 && !t.ehPai) ? (
+        {/* Segunda linha: só o que nenhuma coluna diz.
+            "Sem responsável" saiu daqui — a coluna Responsável já mostra
+            isso, e repetido em cinco linhas seguidas virava ruído na
+            parte mais densa da tela. O aviso continua existindo, como
+            destaque na própria coluna. */}
+        {t.atividade || critica || (cpm && cpm.folgaDias > 0 && !t.ehPai) ? (
           <span
             className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground"
             style={{ paddingLeft: `${nivel * 14 + 14}px` }}
@@ -671,17 +860,6 @@ function LinhaTarefa({
                 {t.atividade ? " · " : ""}folga de {cpm.folgaDias} d
               </span>
             ) : null}
-            {/* Fica por último e em amarelo: não é erro, é cadastro
-                incompleto — e é o que explica por que férias e feriado
-                municipal não mexem nesta linha. */}
-            {semResponsavel ? (
-              <span
-                className="text-warning"
-                title="Sem responsável: esta tarefa não entra na capacidade da equipe e ignora férias e feriados de localidade"
-              >
-                {t.atividade || critica || (cpm && cpm.folgaDias > 0) ? " · " : ""}sem responsável
-              </span>
-            ) : null}
           </span>
         ) : null}
       </td>
@@ -692,7 +870,11 @@ function LinhaTarefa({
           unidade={unidade}
           editavel={podeEditar}
           onSalvar={(valor) =>
-            salvarCampo.mutate({ id: t.id, duracao: valor, duracaoUnidade: unidade })
+            salvarCampo.mutate({
+              id: t.id,
+              duracao: valor,
+              duracaoUnidade: unidade,
+            })
           }
         />
       </td>
@@ -731,7 +913,7 @@ function LinhaTarefa({
           <span className="text-xs font-normal text-muted-foreground">—</span>
         ) : (
           <CampoPredecessoras
-            valorIds={predecessoras}
+            valor={predecessoras}
             indicePorId={indicePorId}
             idPorIndice={idPorIndice}
             indiceProprio={indice}
@@ -746,14 +928,23 @@ function LinhaTarefa({
         {t.ehPai ? (
           <span className="text-xs font-normal text-muted-foreground">—</span>
         ) : (
-          <SeletorMultiplo
-            opcoes={opcoesRecurso}
-            selecionados={responsaveis}
-            vazio="Sem responsável"
-            titulo="Responsáveis"
-            editavel={editavel}
-            onMudar={(ids) => salvarVinculos.mutate({ id: t.id, responsaveis: ids })}
-          />
+          <span
+            className={cn("block", semResponsavel ? "text-warning" : "")}
+            title={
+              semResponsavel
+                ? "Sem responsável: esta tarefa não entra na capacidade da equipe e ignora férias e feriados de localidade"
+                : undefined
+            }
+          >
+            <SeletorMultiplo
+              opcoes={opcoesRecurso}
+              selecionados={responsaveis}
+              vazio="Sem responsável"
+              titulo="Responsáveis"
+              editavel={editavel}
+              onMudar={(ids) => salvarVinculos.mutate({ id: t.id, responsaveis: ids })}
+            />
+          </span>
         )}
       </td>
     </tr>
@@ -848,17 +1039,24 @@ function DialogoConflito({
 }
 
 /**
- * Predecessoras digitadas pelo número da linha: "3" ou "3, 7".
+ * Predecessoras na notação curta do MS Project: `3`, `3II`, `3TI+2`,
+ * `3TT-1`.
  *
  * Não é seletor de lista porque em cronograma de dezenas de tarefas
  * caçar o nome numa lista é mais lento do que digitar o número que já
- * está à vista na primeira coluna. Salva ao sair do campo.
+ * está à vista na primeira coluna. E não é um seletor de tipo ao lado
+ * porque a notação é o que essas pessoas já usam: quem monta
+ * cronograma há dez anos digita "7II" sem pensar.
  *
  * O número é posicional — ele muda quando alguém insere linha acima.
  * Por isso o que vai para o banco é sempre o id: a tela só traduz.
+ *
+ * TI sem defasagem continua sendo só o número, que é a esmagadora
+ * maioria dos vínculos. Quem nunca precisou de outro tipo digita o que
+ * sempre digitou.
  */
 function CampoPredecessoras({
-  valorIds,
+  valor,
   indicePorId,
   idPorIndice,
   indiceProprio,
@@ -866,18 +1064,22 @@ function CampoPredecessoras({
   editavel,
   onSalvar,
 }: {
-  valorIds: string[];
+  valor: Dependencia[];
   indicePorId: Map<string, number>;
   idPorIndice: Map<number, string>;
   indiceProprio: number;
   totalLinhas: number;
   editavel: boolean;
-  onSalvar: (ids: string[]) => void;
+  onSalvar: (deps: Dependencia[]) => void;
 }) {
-  const texto = valorIds
-    .map((id) => indicePorId.get(id))
-    .filter((n): n is number => n !== undefined)
-    .sort((a, b) => a - b)
+  const texto = valor
+    .map((d) => {
+      const numero = indicePorId.get(d.predecessoraId);
+      return numero === undefined ? null : { numero, d };
+    })
+    .filter((x): x is { numero: number; d: Dependencia } => x !== null)
+    .sort((a, b) => a.numero - b.numero)
+    .map((x) => formatarDependencia(x.numero, x.d.tipo, x.d.defasagem))
     .join(", ");
 
   const [rascunho, setRascunho] = useState(texto);
@@ -892,47 +1094,73 @@ function CampoPredecessoras({
   }
 
   function confirmar() {
-    // Aceita qualquer separador: vírgula, ponto e vírgula ou espaço.
-    const numeros = [
-      ...new Set(
-        rascunho
-          .split(/[^0-9]+/)
-          .filter(Boolean)
-          .map(Number),
-      ),
-    ];
+    const { lidas, invalidos } = lerDependencias(rascunho);
 
-    const invalido = numeros.find((n) => n < 1 || n > totalLinhas || !idPorIndice.has(n));
-    if (invalido !== undefined) {
-      toast.error(`Não existe tarefa número ${invalido}.`);
+    // Erro de digitação volta para a tela em vez de sumir: um vínculo
+    // que desaparece em silêncio é pior do que um campo recusado.
+    if (invalidos.length > 0) {
+      toast.error(`Não entendi “${invalidos[0]}”.`, {
+        description:
+          "Use o número da linha, opcionalmente com TI, II, TT ou IT e ±dias. Ex.: 7II+2",
+      });
       setRascunho(texto);
       return;
     }
-    if (numeros.includes(indiceProprio)) {
+
+    const invalido = lidas.find(
+      (l) =>
+        l.numeroDaLinha < 1 || l.numeroDaLinha > totalLinhas || !idPorIndice.has(l.numeroDaLinha),
+    );
+    if (invalido) {
+      toast.error(`Não existe tarefa número ${invalido.numeroDaLinha}.`);
+      setRascunho(texto);
+      return;
+    }
+    if (lidas.some((l) => l.numeroDaLinha === indiceProprio)) {
       toast.error("Uma tarefa não pode depender de si mesma.");
       setRascunho(texto);
       return;
     }
 
-    const ids = numeros
-      .map((n) => idPorIndice.get(n))
-      .filter((id): id is string => id !== undefined);
+    // A chave é (tarefa, predecessora): dois tipos para o mesmo par não
+    // cabem no banco, e o último digitado vence — mesma regra do
+    // Project.
+    const porId = new Map<string, Dependencia>();
+    for (const l of lidas) {
+      const id = idPorIndice.get(l.numeroDaLinha);
+      if (!id) continue;
+      porId.set(id, {
+        predecessoraId: id,
+        tipo: l.tipo,
+        defasagem: l.defasagem,
+      });
+    }
+    const deps = [...porId.values()];
 
     // Só grava se mudou de fato: sair do campo sem editar não deve
     // disparar requisição nem reescrever vínculos.
-    const iguais = ids.length === valorIds.length && ids.every((id) => valorIds.includes(id));
+    const iguais =
+      deps.length === valor.length &&
+      deps.every((d) =>
+        valor.some(
+          (v) =>
+            v.predecessoraId === d.predecessoraId &&
+            v.tipo === d.tipo &&
+            v.defasagem === d.defasagem,
+        ),
+      );
     if (iguais) {
       setRascunho(texto);
       return;
     }
-    onSalvar(ids);
+    onSalvar(deps);
   }
 
   return (
     <Input
       value={rascunho}
       placeholder="—"
-      title="Números das tarefas das quais esta depende, separados por vírgula"
+      title="Número da tarefa, com tipo e defasagem opcionais. Ex.: 3, 7II, 12TI+2"
       onChange={(e) => setRascunho(e.target.value)}
       onBlur={confirmar}
       onKeyDown={(e) => {
@@ -942,7 +1170,7 @@ function CampoPredecessoras({
           e.currentTarget.blur();
         }
       }}
-      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
+      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs font-normal shadow-none hover:border-border focus:border-primary"
     />
   );
 }
@@ -1001,7 +1229,7 @@ function CampoData({
           setEditando(false);
         }
       }}
-      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
+      className="h-7 border-transparent bg-transparent px-1 font-mono text-xs font-normal shadow-none hover:border-border focus:border-primary"
     />
   );
 }
@@ -1050,7 +1278,7 @@ function CampoDuracao({
             e.currentTarget.blur();
           }
         }}
-        className="h-7 w-14 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
+        className="h-7 w-14 border-transparent bg-transparent px-1 font-mono text-xs font-normal shadow-none hover:border-border focus:border-primary"
       />
       <span className="text-[10px] font-normal text-muted-foreground">
         {unidade === "horas" ? "h" : "d"}
@@ -1094,7 +1322,7 @@ function CampoNumero({
           e.currentTarget.blur();
         }
       }}
-      className="h-7 w-12 border-transparent bg-transparent px-1 font-mono text-xs font-normal hover:border-border focus:border-primary"
+      className="h-7 w-12 border-transparent bg-transparent px-1 font-mono text-xs font-normal shadow-none hover:border-border focus:border-primary"
     />
   );
 }
@@ -1102,6 +1330,11 @@ function CampoNumero({
 /**
  * Nome editável em linha, com ícone separado para abrir o detalhe —
  * clique no texto conflitaria com o foco do campo.
+ *
+ * O ícone é um lápis, e não a seta que estava aqui antes: a seta dizia
+ * "vá para a direita", o que numa grade sugere navegação entre colunas.
+ * Lápis é o símbolo de editar em toda a aplicação, e é o que a pessoa
+ * procura quando quer abrir a tarefa inteira.
  *
  * Atalhos: Enter cria a linha seguinte, Alt+Shift+→ endenta e
  * Alt+Shift+← desendenta. É a convenção do MS Project, que é onde essas
@@ -1158,7 +1391,7 @@ function NomeInline({
           }
         }}
         className={cn(
-          "h-7 min-w-0 flex-1 border-transparent bg-transparent px-1 text-sm hover:border-border focus:border-primary",
+          "h-7 min-w-0 flex-1 border-transparent bg-transparent px-1 text-sm shadow-none hover:border-border focus:border-primary",
           negrito ? "font-semibold" : "font-normal",
           riscado ? "line-through opacity-70" : "",
         )}
@@ -1167,10 +1400,10 @@ function NomeInline({
         variant="ghost"
         size="icon"
         className="size-6 shrink-0"
-        title="Abrir detalhes"
+        title="Abrir detalhes da tarefa"
         onClick={onDetalhe}
       >
-        <ChevronRight className="size-3.5" />
+        <Pencil className="size-3.5" />
       </Button>
     </span>
   );

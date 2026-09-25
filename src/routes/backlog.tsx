@@ -254,7 +254,25 @@ function Backlog() {
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
   }, [filtrados]);
 
-  const priorizados = useMemo(() => filtrados.filter((d) => d.status !== "backlog"), [filtrados]);
+  /**
+   * Priorizados: em ordem alfabética e recortados pelo indicador ativo.
+   *
+   * A ordenação é a mesma da fila. Sem ela, a lista vinha na ordem em
+   * que o banco devolveu — estável o bastante para não parecer
+   * aleatória, e imprevisível o bastante para ninguém achar um projeto
+   * pelo nome.
+   *
+   * Os três indicadores desta tela são de situação, então o recorte
+   * cabe numa comparação direta com o status.
+   */
+  const priorizados = useMemo(() => {
+    const base = filtrados
+      .filter((d) => d.status !== "backlog")
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+
+    if (kpi === null || kpi === "backlog") return base;
+    return base.filter((d) => d.status === kpi);
+  }, [filtrados, kpi]);
 
   /**
    * O que a matriz posiciona: a fila e o que já foi priorizado.
