@@ -183,3 +183,30 @@ export async function trocarTenant(slug: string): Promise<void> {
   if (!existe) throw new Error("Você não tem acesso a esta empresa.");
   setCookie(COOKIE_TENANT, slug, OPCOES_COOKIE_TENANT);
 }
+
+/**
+ * Troca o token do link (convite ou acesso) por uma sessão.
+ * O link leva token_hash, e não a sessão pronta: assim ele só vale uma
+ * vez e expira, e quem abre o e-mail não recebe cookie nenhum sem clicar.
+ */
+export async function confirmarLink(
+  tokenHash: string,
+  tipo: "invite" | "email" | "recovery",
+): Promise<{ erro: string | null }> {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: tipo });
+  if (!error) return { erro: null };
+  if (error.code === "otp_expired") {
+    return { erro: "Este link expirou ou já foi usado. Peça um novo ao administrador." };
+  }
+  return { erro: error.message };
+}
+
+export async function definirSenha(senha: string): Promise<{ erro: string | null }> {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase.auth.updateUser({ password: senha });
+  if (!error) return { erro: null };
+  if (error.code === "same_password") return { erro: null };
+  if (error.code === "weak_password") return { erro: "Senha fraca. Use ao menos 8 caracteres." };
+  return { erro: error.message };
+}

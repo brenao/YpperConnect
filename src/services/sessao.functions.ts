@@ -23,7 +23,12 @@ const PERMISSAO_POR_MODULO: Record<string, string[]> = {
   "/projetos": ["projeto.criar", "projeto.ver_portfolio", "projeto.diretoria"],
   "/recursos": ["projeto.criar", "projeto.ver_portfolio", "projeto.diretoria"],
   "/governanca": ["chamado.ver_todos"],
-  "/administracao": ["usuario.gerenciar", "organizacao.gerenciar", "tenant.configurar"],
+  "/administracao": [
+    "usuario.gerenciar",
+    "cadastro.gerenciar",
+    "organizacao.gerenciar",
+    "tenant.configurar",
+  ],
   "/permissoes": ["papel.gerenciar"],
 };
 
@@ -134,4 +139,23 @@ export const trocarTenantFn = createServerFn({ method: "POST" })
     const { trocarTenant } = await servidor();
     await trocarTenant(data.slug);
     return { ok: true };
+  });
+
+export const confirmarLinkFn = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      tokenHash: z.string().min(10),
+      tipo: z.enum(["invite", "email", "recovery"]),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { confirmarLink } = await servidor();
+    return confirmarLink(data.tokenHash, data.tipo);
+  });
+
+export const definirSenhaFn = createServerFn({ method: "POST" })
+  .validator(z.object({ senha: z.string().min(8, "Use ao menos 8 caracteres.") }))
+  .handler(async ({ data }) => {
+    const { definirSenha } = await servidor();
+    return definirSenha(data.senha);
   });

@@ -16,7 +16,7 @@ import { Toaster } from "../components/ui/sonner";
 import { sessaoFn } from "../services/sessao.functions";
 
 /** Rotas abertas: não exigem sessão. */
-const ROTAS_PUBLICAS = ["/login"];
+const ROTAS_PUBLICAS = ["/login", "/auth/confirm"];
 
 function NotFoundComponent() {
   return (

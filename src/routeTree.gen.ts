@@ -16,6 +16,7 @@ import { Route as BacklogRouteImport } from './routes/backlog'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
 import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
+import { Route as DefinirSenhaRouteImport } from './routes/definir-senha'
 import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
 import { Route as LoginRouteImport } from './routes/login'
@@ -24,6 +25,7 @@ import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as RecursosRouteImport } from './routes/recursos'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiRotinasRouteImport } from './routes/api/rotinas'
+import { Route as AuthConfirmRouteImport } from './routes/auth.confirm'
 import { Route as ProjetosProjectIdRouteImport } from './routes/projetos_.$projectId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -59,6 +61,11 @@ const ChamadosRoute = ChamadosRouteImport.update({
 const ConhecimentoRoute = ConhecimentoRouteImport.update({
   id: '/conhecimento',
   path: '/conhecimento',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DefinirSenhaRoute = DefinirSenhaRouteImport.update({
+  id: '/definir-senha',
+  path: '/definir-senha',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DiretoriaRoute = DiretoriaRouteImport.update({
@@ -101,6 +108,11 @@ const ApiRotinasRoute = ApiRotinasRouteImport.update({
   path: '/api/rotinas',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthConfirmRoute = AuthConfirmRouteImport.update({
+  id: '/auth/confirm',
+  path: '/auth/confirm',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjetosProjectIdRoute = ProjetosProjectIdRouteImport.update({
   id: '/projetos_/$projectId',
   path: '/projetos/$projectId',
@@ -115,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/login': typeof LoginRoute
@@ -123,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
+  '/auth/confirm': typeof AuthConfirmRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRoutesByTo {
@@ -133,6 +147,7 @@ export interface FileRoutesByTo {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/login': typeof LoginRoute
@@ -141,6 +156,7 @@ export interface FileRoutesByTo {
   '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
+  '/auth/confirm': typeof AuthConfirmRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRoutesById {
@@ -152,6 +168,7 @@ export interface FileRoutesById {
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
   '/login': typeof LoginRoute
@@ -160,6 +177,7 @@ export interface FileRoutesById {
   '/recursos': typeof RecursosRoute
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
+  '/auth/confirm': typeof AuthConfirmRoute
   '/projetos_/$projectId': typeof ProjetosProjectIdRoute
 }
 export interface FileRouteTypes {
@@ -172,6 +190,7 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/definir-senha'
     | '/diretoria'
     | '/governanca'
     | '/login'
@@ -180,6 +199,7 @@ export interface FileRouteTypes {
     | '/recursos'
     | '/api/chat'
     | '/api/rotinas'
+    | '/auth/confirm'
     | '/projetos/$projectId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -190,6 +210,7 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/definir-senha'
     | '/diretoria'
     | '/governanca'
     | '/login'
@@ -198,6 +219,7 @@ export interface FileRouteTypes {
     | '/recursos'
     | '/api/chat'
     | '/api/rotinas'
+    | '/auth/confirm'
     | '/projetos/$projectId'
   id:
     | '__root__'
@@ -208,6 +230,7 @@ export interface FileRouteTypes {
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/definir-senha'
     | '/diretoria'
     | '/governanca'
     | '/login'
@@ -216,6 +239,7 @@ export interface FileRouteTypes {
     | '/recursos'
     | '/api/chat'
     | '/api/rotinas'
+    | '/auth/confirm'
     | '/projetos_/$projectId'
   fileRoutesById: FileRoutesById
 }
@@ -227,6 +251,7 @@ export interface RootRouteChildren {
   CatalogoRoute: typeof CatalogoRoute
   ChamadosRoute: typeof ChamadosRoute
   ConhecimentoRoute: typeof ConhecimentoRoute
+  DefinirSenhaRoute: typeof DefinirSenhaRoute
   DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
   LoginRoute: typeof LoginRoute
@@ -235,6 +260,7 @@ export interface RootRouteChildren {
   RecursosRoute: typeof RecursosRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiRotinasRoute: typeof ApiRotinasRoute
+  AuthConfirmRoute: typeof AuthConfirmRoute
   ProjetosProjectIdRoute: typeof ProjetosProjectIdRoute
 }
 
@@ -287,6 +313,13 @@ declare module '@tanstack/react-router' {
       path: '/conhecimento'
       fullPath: '/conhecimento'
       preLoaderRoute: typeof ConhecimentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/definir-senha': {
+      id: '/definir-senha'
+      path: '/definir-senha'
+      fullPath: '/definir-senha'
+      preLoaderRoute: typeof DefinirSenhaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/diretoria': {
@@ -345,6 +378,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiRotinasRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/confirm': {
+      id: '/auth/confirm'
+      path: '/auth/confirm'
+      fullPath: '/auth/confirm'
+      preLoaderRoute: typeof AuthConfirmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projetos_/$projectId': {
       id: '/projetos_/$projectId'
       path: '/projetos/$projectId'
@@ -363,6 +403,7 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogoRoute: CatalogoRoute,
   ChamadosRoute: ChamadosRoute,
   ConhecimentoRoute: ConhecimentoRoute,
+  DefinirSenhaRoute: DefinirSenhaRoute,
   DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
   LoginRoute: LoginRoute,
@@ -371,6 +412,7 @@ const rootRouteChildren: RootRouteChildren = {
   RecursosRoute: RecursosRoute,
   ApiChatRoute: ApiChatRoute,
   ApiRotinasRoute: ApiRotinasRoute,
+  AuthConfirmRoute: AuthConfirmRoute,
   ProjetosProjectIdRoute: ProjetosProjectIdRoute,
 }
 export const routeTree = rootRouteImport
