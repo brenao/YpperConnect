@@ -3,6 +3,7 @@ import {
   Outlet,
   Link,
   createRootRouteWithContext,
+  redirect,
   useRouter,
   HeadContent,
   Scripts,
@@ -12,6 +13,10 @@ import { type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { ThemeProvider } from "../lib/theme";
 import { Toaster } from "../components/ui/sonner";
+import { sessaoFn } from "../services/sessao.functions";
+
+/** Rotas abertas: não exigem sessão. */
+const ROTAS_PUBLICAS = ["/login"];
 
 function NotFoundComponent() {
   return (
@@ -71,6 +76,21 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  /**
+   * Guarda de autenticação de todas as páginas.
+   *
+   * Roda no servidor no primeiro acesso (SSR) e no navegador a cada
+   * navegação, sempre perguntando ao servidor: a sessão mora em cookie
+   * httpOnly, que o JavaScript da página não consegue ler.
+   *
+   * Isto só decide o que MOSTRAR. Quem protege os dados é o RLS no
+   * banco — uma tela aberta sem sessão não traria dado nenhum.
+   */
+  beforeLoad: async ({ location }) => {
+    if (ROTAS_PUBLICAS.some((rota) => location.pathname.endsWith(rota))) return;
+    const sessao = await sessaoFn();
+    if (sessao.estado !== "ok") throw redirect({ to: "/login" });
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },

@@ -18,6 +18,7 @@ import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
 import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as PermissoesRouteImport } from './routes/permissoes'
 import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as RecursosRouteImport } from './routes/recursos'
@@ -70,6 +71,11 @@ const GovernancaRoute = GovernancaRouteImport.update({
   path: '/governanca',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PermissoesRoute = PermissoesRouteImport.update({
   id: '/permissoes',
   path: '/permissoes',
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/conhecimento': typeof ConhecimentoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
+  '/login': typeof LoginRoute
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByTo {
   '/conhecimento': typeof ConhecimentoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
+  '/login': typeof LoginRoute
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
@@ -146,6 +154,7 @@ export interface FileRoutesById {
   '/conhecimento': typeof ConhecimentoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
+  '/login': typeof LoginRoute
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/diretoria'
     | '/governanca'
+    | '/login'
     | '/permissoes'
     | '/projetos'
     | '/recursos'
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/diretoria'
     | '/governanca'
+    | '/login'
     | '/permissoes'
     | '/projetos'
     | '/recursos'
@@ -199,6 +210,7 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/diretoria'
     | '/governanca'
+    | '/login'
     | '/permissoes'
     | '/projetos'
     | '/recursos'
@@ -217,6 +229,7 @@ export interface RootRouteChildren {
   ConhecimentoRoute: typeof ConhecimentoRoute
   DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
+  LoginRoute: typeof LoginRoute
   PermissoesRoute: typeof PermissoesRoute
   ProjetosRoute: typeof ProjetosRoute
   RecursosRoute: typeof RecursosRoute
@@ -290,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GovernancaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/permissoes': {
       id: '/permissoes'
       path: '/permissoes'
@@ -345,6 +365,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConhecimentoRoute: ConhecimentoRoute,
   DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
+  LoginRoute: LoginRoute,
   PermissoesRoute: PermissoesRoute,
   ProjetosRoute: ProjetosRoute,
   RecursosRoute: RecursosRoute,

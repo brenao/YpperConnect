@@ -1,5 +1,5 @@
-import { Link, useRouterState } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { Link, useRouter, useRouterState } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Ticket,
@@ -14,13 +14,14 @@ import {
   Settings,
   KeyRound,
   LogOut,
+  Building2,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import logo from "@/assets/beagleone-logo.png";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
-import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functions";
+import { sairFn, sessaoFn, trocarTenantFn } from "@/services/sessao.functions";
 
 /**
  * Portal externo de chamados. Mesma variável do botão "Abrir chamado".
@@ -55,30 +56,80 @@ const nav = [
 ] as const;
 
 /**
- * Encerra a sessão no /vuelogin, que é quem a mantém.
+ * Encerra a sessão no Supabase e volta para o login.
  *
- * Quem autentica é o OpenResty; a aplicação não tem sessão própria para
- * limpar. Sair é derrubar o token no sistema de login — depois disso, a
- * próxima visita a /ypper é barrada pelo check-token.lua e redirecionada
- * para a tela de login.
- *
- * A URL é montada a partir da origem porque /vuelogin e /ypper são
- * caminhos do mesmo domínio: assim teste e produção funcionam sem
- * configuração, e não há endereço fixo para alguém esquecer de trocar.
+ * O cache do React Query é descartado junto: sem isso, a próxima pessoa
+ * a usar o mesmo navegador veria por um instante os dados da anterior.
  */
 function BotaoSair() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
   return (
     <button
       type="button"
       title="Sair"
       aria-label="Sair"
-      onClick={() => {
-        window.location.href = `${window.location.origin}/vuelogin/logout`;
+      onClick={async () => {
+        await sairFn();
+        queryClient.clear();
+        await router.invalidate();
+        await router.navigate({ to: "/login" });
       }}
       className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
     >
       <LogOut className="size-4" />
     </button>
+  );
+}
+
+/**
+ * Empresa em que a pessoa está trabalhando.
+ *
+ * Com uma empresa só, vira apenas um rótulo. Com várias (a equipe da
+ * plataforma, um consultor que atende clientes), vira seletor. Trocar
+ * de empresa descarta todo o cache: nenhum dado de uma empresa pode
+ * aparecer, nem por um instante, na tela da outra.
+ */
+function SeletorEmpresa({
+  atual,
+  empresas,
+}: {
+  atual: { slug: string; nome: string };
+  empresas: { slug: string; nome: string }[];
+}) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  if (empresas.length <= 1) {
+    return (
+      <span className="hidden items-center gap-1.5 text-xs text-muted-foreground md:inline-flex">
+        <Building2 className="size-3.5" />
+        {atual.nome}
+      </span>
+    );
+  }
+
+  return (
+    <label className="hidden items-center gap-1.5 md:inline-flex">
+      <Building2 className="size-3.5 text-muted-foreground" />
+      <span className="sr-only">Empresa</span>
+      <select
+        value={atual.slug}
+        onChange={async (e) => {
+          await trocarTenantFn({ data: { slug: e.target.value } });
+          queryClient.clear();
+          await router.invalidate();
+        }}
+        className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+      >
+        {empresas.map((t) => (
+          <option key={t.slug} value={t.slug}>
+            {t.nome}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -95,15 +146,12 @@ export function AppShell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
-  const permissoes = useQuery({
-    queryKey: ["minhas-permissoes"],
-    queryFn: () => minhasPermissoesFn(),
-  });
+  const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn() });
+  const dados = sessao.data?.estado === "ok" ? sessao.data : null;
 
   // Enquanto carrega, mostra o menu inteiro: esconder e depois revelar
   // produz um piscar desagradável a cada navegação.
-  const modulos = permissoes.data?.modulos;
+  const modulos: readonly string[] | undefined = dados?.modulos;
   const permitidos = modulos ? nav.filter((item) => modulos.includes(item.to)) : nav;
 
   // Com portal externo, a Visão geral sai: ela é o painel de chamados, e
@@ -173,13 +221,18 @@ export function AppShell({
                 ações da tela: são do usuário, não do que ele está vendo.
                 A divisória marca essa troca de assunto. */}
             <span className="mx-1 h-6 w-px bg-border" aria-hidden="true" />
-            {usuario.data ? (
-              <span className="hidden text-right sm:block">
-                <span className="block text-xs font-medium leading-tight">{usuario.data.nome}</span>
-                <span className="block text-[11px] leading-tight text-muted-foreground">
-                  {usuario.data.admin ? "Administrador" : "Usuário"}
+            {dados?.usuario && dados.tenant ? (
+              <>
+                <SeletorEmpresa atual={dados.tenant} empresas={dados.tenants} />
+                <span className="hidden text-right sm:block">
+                  <span className="block text-xs font-medium leading-tight">
+                    {dados.usuario.nome}
+                  </span>
+                  <span className="block text-[11px] leading-tight text-muted-foreground">
+                    {dados.admin ? "Administrador" : "Usuário"}
+                  </span>
                 </span>
-              </span>
+              </>
             ) : null}
             <BotaoSair />
           </div>
