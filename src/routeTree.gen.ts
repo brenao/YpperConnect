@@ -30,6 +30,7 @@ import { Route as AdministracaoUsuariosRouteImport } from './routes/administraca
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiRotinasRouteImport } from './routes/api/rotinas'
 import { Route as AuthConfirmRouteImport } from './routes/auth.confirm'
+import { Route as PlataformaEmpresasRouteImport } from './routes/plataforma.empresas'
 import { Route as ProjetosProjectIdRouteImport } from './routes/projetos_.$projectId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -138,6 +139,11 @@ const AuthConfirmRoute = AuthConfirmRouteImport.update({
   path: '/auth/confirm',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlataformaEmpresasRoute = PlataformaEmpresasRouteImport.update({
+  id: '/plataforma/empresas',
+  path: '/plataforma/empresas',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjetosProjectIdRoute = ProjetosProjectIdRouteImport.update({
   id: '/projetos_/$projectId',
   path: '/projetos/$projectId',
@@ -165,6 +171,7 @@ export interface FileRoutesByFullPath {
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
+  '/plataforma/empresas': typeof PlataformaEmpresasRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
   '/administracao/': typeof AdministracaoIndexRoute
 }
@@ -189,6 +196,7 @@ export interface FileRoutesByTo {
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
+  '/plataforma/empresas': typeof PlataformaEmpresasRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
   '/administracao': typeof AdministracaoIndexRoute
 }
@@ -214,6 +222,7 @@ export interface FileRoutesById {
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
+  '/plataforma/empresas': typeof PlataformaEmpresasRoute
   '/projetos_/$projectId': typeof ProjetosProjectIdRoute
   '/administracao/': typeof AdministracaoIndexRoute
 }
@@ -240,6 +249,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
+    | '/plataforma/empresas'
     | '/projetos/$projectId'
     | '/administracao/'
   fileRoutesByTo: FileRoutesByTo
@@ -264,6 +274,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
+    | '/plataforma/empresas'
     | '/projetos/$projectId'
     | '/administracao'
   id:
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
+    | '/plataforma/empresas'
     | '/projetos_/$projectId'
     | '/administracao/'
   fileRoutesById: FileRoutesById
@@ -313,6 +325,7 @@ export interface RootRouteChildren {
   ApiChatRoute: typeof ApiChatRoute
   ApiRotinasRoute: typeof ApiRotinasRoute
   AuthConfirmRoute: typeof AuthConfirmRoute
+  PlataformaEmpresasRoute: typeof PlataformaEmpresasRoute
   ProjetosProjectIdRoute: typeof ProjetosProjectIdRoute
   AdministracaoIndexRoute: typeof AdministracaoIndexRoute
 }
@@ -466,6 +479,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthConfirmRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/plataforma/empresas': {
+      id: '/plataforma/empresas'
+      path: '/plataforma/empresas'
+      fullPath: '/plataforma/empresas'
+      preLoaderRoute: typeof PlataformaEmpresasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projetos_/$projectId': {
       id: '/projetos_/$projectId'
       path: '/projetos/$projectId'
@@ -497,6 +517,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiChatRoute: ApiChatRoute,
   ApiRotinasRoute: ApiRotinasRoute,
   AuthConfirmRoute: AuthConfirmRoute,
+  PlataformaEmpresasRoute: PlataformaEmpresasRoute,
   ProjetosProjectIdRoute: ProjetosProjectIdRoute,
   AdministracaoIndexRoute: AdministracaoIndexRoute,
 }

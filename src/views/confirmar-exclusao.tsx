@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +29,7 @@ export function ConfirmarExclusao({
   explicacao,
   excluindo,
   onConfirmar,
+  exigirTexto,
 }: {
   aberto: boolean;
   onAbertoChange: (v: boolean) => void;
@@ -40,7 +42,15 @@ export function ConfirmarExclusao({
   explicacao?: ReactNode;
   excluindo: boolean;
   onConfirmar: () => void;
+  /**
+   * Para exclusões críticas (empresa): a pessoa digita este texto para
+   * liberar o botão. Evita confirmar no automático.
+   */
+  exigirTexto?: string | undefined;
 }) {
+  const [digitado, setDigitado] = useState("");
+  const liberado = !exigirTexto || digitado.trim().toLowerCase() === exigirTexto.toLowerCase();
+
   return (
     <AlertDialog open={aberto} onOpenChange={onAbertoChange}>
       <AlertDialogContent>
@@ -67,14 +77,28 @@ export function ConfirmarExclusao({
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {exigirTexto && !verificando ? (
+          <div className="space-y-1.5">
+            <p className="text-sm">
+              Para confirmar, digite <span className="font-mono font-medium">{exigirTexto}</span>
+            </p>
+            <Input
+              value={digitado}
+              onChange={(e) => setDigitado(e.target.value)}
+              autoComplete="off"
+              aria-label="Texto de confirmação"
+            />
+          </div>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel>Voltar</AlertDialogCancel>
           {verificando ? null : (
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!liberado || excluindo}
               onClick={(e) => {
                 e.preventDefault();
-                onConfirmar();
+                if (liberado) onConfirmar();
               }}
             >
               {excluindo ? "Excluindo..." : "Excluir"}

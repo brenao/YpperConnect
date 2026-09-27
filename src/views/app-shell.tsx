@@ -243,6 +243,10 @@ export function AppShell({
   // produz um piscar desagradável a cada navegação.
   const modulos = permissoes.data?.modulos;
   const permitidos = modulos ? nav.filter((item) => modulos.includes(item.to)) : nav;
+  // Operadores da plataforma (equipe Ypper Tech) veem o cadastro de empresas.
+  const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn() });
+  const operador = sessao.data?.adminPlataforma === true;
+
   const adminPermitidos = modulos
     ? navAdministracao.filter((item) => modulos.includes(item.modulo))
     : navAdministracao;
@@ -293,6 +297,25 @@ export function AppShell({
           })}
           {adminPermitidos.length > 0 ? (
             <GrupoAdministracao itens={adminPermitidos} pathname={pathname} />
+          ) : null}
+          {operador ? (
+            <div className="mt-4">
+              <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                Plataforma
+              </p>
+              <Link
+                to="/plataforma/empresas"
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                  pathname.startsWith("/plataforma/empresas")
+                    ? "bg-sidebar-accent text-sidebar-primary"
+                    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                )}
+              >
+                <Building2 className="size-4" />
+                Empresas
+              </Link>
+            </div>
           ) : null}
         </nav>
       </aside>

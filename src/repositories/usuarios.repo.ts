@@ -163,6 +163,47 @@ function montarLink(tokenHash: string, tipo: "invite" | "email"): string {
 }
 
 /**
+ * Garante a conta de login de um e-mail e devolve o link de acesso.
+ *
+ * - E-mail sem conta: cria a conta e devolve o link de convite.
+ * - Conta que já existe (em outra empresa): devolve a mesma conta; se a
+ *   pessoa nunca entrou, devolve um link novo, senão nenhum.
+ *
+ * Usada por "Novo usuário" e pelo cadastro de empresas (primeiro admin).
+ */
+export async function prepararConta(
+  emailInformado: string,
+  nome: string,
+): Promise<{ id: string; link: string | null }> {
+  const email = emailInformado.trim().toLowerCase();
+  const { getSupabaseAdmin } = await import("@/integrations/supabase/admin.server");
+  const admin = getSupabaseAdmin();
+
+  const existente = await admin.from("usuarios").select("id").eq("email", email).maybeSingle();
+  if (existente.error) throw new Error(existente.error.message);
+
+  if (existente.data) {
+    const id = existente.data.id as string;
+    const conta = await admin.auth.admin.getUserById(id);
+    if (conta.data.user?.last_sign_in_at) return { id, link: null };
+    const gerado = await admin.auth.admin.generateLink({ type: "magiclink", email });
+    if (gerado.error) throw new Error(gerado.error.message);
+    return { id, link: montarLink(gerado.data.properties.hashed_token, "email") };
+  }
+
+  const gerado = await admin.auth.admin.generateLink({
+    type: "invite",
+    email,
+    options: { data: { full_name: nome.trim() } },
+  });
+  if (gerado.error) throw new Error(gerado.error.message);
+  return {
+    id: gerado.data.user.id,
+    link: montarLink(gerado.data.properties.hashed_token, "invite"),
+  };
+}
+
+/**
  * Cria o usuário na empresa.
  *
  * - E-mail sem conta: cria a conta e devolve o link de convite.
@@ -175,34 +216,7 @@ export async function criarUsuario(
 ): Promise<{ id: string; link: string | null }> {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem criar usuários");
 
-  const email = d.email.trim().toLowerCase();
-  const { getSupabaseAdmin } = await import("@/integrations/supabase/admin.server");
-  const admin = getSupabaseAdmin();
-
-  const existente = await admin.from("usuarios").select("id").eq("email", email).maybeSingle();
-  if (existente.error) throw new Error(existente.error.message);
-
-  let id: string;
-  let link: string | null = null;
-
-  if (existente.data) {
-    id = existente.data.id as string;
-    const conta = await admin.auth.admin.getUserById(id);
-    if (!conta.data.user?.last_sign_in_at) {
-      const gerado = await admin.auth.admin.generateLink({ type: "magiclink", email });
-      if (gerado.error) throw new Error(gerado.error.message);
-      link = montarLink(gerado.data.properties.hashed_token, "email");
-    }
-  } else {
-    const gerado = await admin.auth.admin.generateLink({
-      type: "invite",
-      email,
-      options: { data: { full_name: d.nome.trim() } },
-    });
-    if (gerado.error) throw new Error(gerado.error.message);
-    id = gerado.data.user.id;
-    link = montarLink(gerado.data.properties.hashed_token, "invite");
-  }
+  const { id, link } = await prepararConta(d.email, d.nome);
 
   // Vínculo com a sessão de quem cadastrou: RLS e auditoria registram o autor.
   const { error } = await getSupabaseServerClient()

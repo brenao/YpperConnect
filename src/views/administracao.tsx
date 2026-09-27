@@ -52,6 +52,7 @@ import { listarRecursosFn } from "@/services/recursos.functions";
 import { cn } from "@/lib/utils";
 import { sessaoFn } from "@/services/sessao.functions";
 import { ConfirmarExclusao } from "@/views/confirmar-exclusao";
+import { DialogLink } from "@/views/dialog-link";
 import { descreverVinculos } from "@/lib/vinculos";
 import {
   usuarioAtualFn,
@@ -135,58 +136,6 @@ function fmt(v: Date | string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-// ------------------------------------------------------------ link de acesso
-
-/**
- * Link de convite ou de acesso, para o administrador copiar e enviar.
- *
- * É a diferença de login em relação à instalação com AD: sem senha de
- * rede, a pessoa cria a própria senha por este link. Vale uma única vez
- * e expira em 1 hora.
- */
-function DialogLink({
-  link,
-  onFechar,
-}: {
-  link: { url: string; titulo: string } | null;
-  onFechar: () => void;
-}) {
-  const [copiado, setCopiado] = useState(false);
-
-  return (
-    <Dialog open={link !== null} onOpenChange={(aberto) => (aberto ? null : onFechar())}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{link?.titulo}</DialogTitle>
-          <DialogDescription>
-            Envie este link à pessoa. Ele vale uma única vez e expira em 1 hora. Ao abrir, ela
-            define a própria senha.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex gap-2">
-          <Input readOnly value={link?.url ?? ""} className="font-mono text-xs" />
-          <Button
-            type="button"
-            variant="outline"
-            className="shrink-0 gap-2"
-            onClick={async () => {
-              await navigator.clipboard.writeText(link?.url ?? "");
-              setCopiado(true);
-              setTimeout(() => setCopiado(false), 2000);
-            }}
-          >
-            {copiado ? <Check className="size-4" /> : <Copy className="size-4" />}
-            {copiado ? "Copiado" : "Copiar"}
-          </Button>
-        </div>
-        <DialogFooter>
-          <Button onClick={onFechar}>Concluir</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 // ------------------------------------------------------------ diálogo usuário
