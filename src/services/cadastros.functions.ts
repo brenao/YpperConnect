@@ -155,6 +155,15 @@ export const definirSistemaAtivoFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+/** Exclui sistema cadastrado errado (só enquanto nenhum chamado o usa). */
+export const excluirSistemaFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { excluirSistema } = await import("@/repositories/catalogo.repo");
+    await excluirSistema(await ctx(), data.id);
+    return { ok: true };
+  });
+
 // ---------------------------------------------------------------- categorias
 
 const CategoriaSchema = z.object({

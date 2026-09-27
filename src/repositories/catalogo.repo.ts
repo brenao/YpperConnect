@@ -1,14 +1,17 @@
-import { consultar, consultarUm, executar } from "@/integrations/postgres/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { getSupabaseServerClient } from "@/integrations/supabase/server";
+import { ErroDominio } from "./tipos";
 import type { RecordType } from "@/models/itsm-types";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
 /**
  * Catálogo de serviços, inventário de sistemas e categorias.
  *
+ * Mesma interface do repositório legado; por dentro, Supabase com a
+ * sessão de quem chamou (o RLS confere a empresa de novo).
+ *
  * Regra transversal: nada é excluído de verdade. Chamados históricos
  * apontam para serviço e sistema por chave estrangeira, e DELETE
- * quebraria o histórico. Tudo desativa com ativo = 0.
+ * quebraria o histórico. Tudo desativa com ativo = false.
  */
 
 export type Criticidade = "alta" | "media" | "baixa";
@@ -52,29 +55,61 @@ export interface Categoria {
   ativo: boolean;
 }
 
-function novoId(): string {
-  return crypto.randomUUID();
-}
-
 function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
   if (!ctx.admin) throw new ErroDominio(`Somente administradores podem ${acao}`);
 }
 
+async function tenantAtual(): Promise<string> {
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  return (await getUsuarioAtual()).tenantId;
+}
+
+function falha(erro: { code?: string; message: string }, duplicado?: string): never {
+  if (erro.code === "23505" && duplicado) throw new ErroDominio(duplicado);
+  if (erro.code === "23503") {
+    throw new ErroDominio("Um dos itens selecionados não pertence a esta empresa.");
+  }
+  if (erro.code === "42501") throw new ErroDominio("Somente administradores podem alterar");
+  throw new Error(erro.message);
+}
+
+/** Nomes de categorias, equipes e pessoas da empresa, para montar as listas. */
+async function nomesDeApoio(tenantId: string, pessoas: string[] = []) {
+  const sb = getSupabaseServerClient();
+  const [categorias, equipes, usuarios] = await Promise.all([
+    sb.from("categorias").select("id, nome").eq("tenant_id", tenantId),
+    sb.from("equipes").select("id, nome").eq("tenant_id", tenantId),
+    pessoas.length
+      ? sb.from("usuarios").select("id, nome").in("id", pessoas)
+      : Promise.resolve({ data: [] as { id: string; nome: string }[], error: null }),
+  ]);
+  if (categorias.error) falha(categorias.error);
+  if (equipes.error) falha(equipes.error);
+  if (usuarios.error) falha(usuarios.error);
+
+  const mapa = (l: { id: unknown; nome: unknown }[] | null) =>
+    new Map((l ?? []).map((x) => [x.id as string, x.nome as string]));
+  return {
+    categoria: mapa(categorias.data),
+    equipe: mapa(equipes.data),
+    pessoa: mapa(usuarios.data),
+  };
+}
+
+const nomeDe = (mapa: Map<string, string>, id: unknown): string | null =>
+  id ? (mapa.get(id as string) ?? null) : null;
+
 // ------------------------------------------------------------- categorias
 
 export async function listarCategorias(escopo?: EscopoCategoria): Promise<Categoria[]> {
-  const linhas = await consultar<{
-    id: string;
-    nome: string;
-    escopo: EscopoCategoria;
-    ativo: number;
-  }>(
-    `SELECT id, nome, escopo, ativo FROM categorias
-      ${escopo ? "WHERE escopo = :escopo" : ""}
-      ORDER BY escopo, nome`,
-    escopo ? { escopo } : {},
-  );
-  return linhas.map((l) => ({ ...l, ativo: paraBool(l.ativo) }));
+  let q = getSupabaseServerClient()
+    .from("categorias")
+    .select("id, nome, escopo, ativo")
+    .eq("tenant_id", await tenantAtual());
+  if (escopo) q = q.eq("escopo", escopo);
+  const { data, error } = await q.order("escopo").order("nome");
+  if (error) falha(error);
+  return (data ?? []) as Categoria[];
 }
 
 export async function criarCategoria(
@@ -84,62 +119,78 @@ export async function criarCategoria(
   exigirAdmin(ctx, "criar categorias");
   if (dados.nome.trim().length < 2) throw new ErroDominio("Informe o nome da categoria");
 
-  const id = novoId();
-  await executar(
-    `INSERT INTO categorias (id, nome, escopo, ativo) VALUES (:id, :nome, :escopo, 1)`,
-    { id, nome: dados.nome.trim(), escopo: dados.escopo },
-  );
-  return id;
+  const { data, error } = await getSupabaseServerClient()
+    .from("categorias")
+    .insert({ tenant_id: ctx.tenantId, nome: dados.nome.trim(), escopo: dados.escopo })
+    .select("id")
+    .single();
+  if (error) falha(error, "Já existe uma categoria com esse nome.");
+  return data.id as string;
 }
 
 export async function renomearCategoria(ctx: ContextoUsuario, id: string, nome: string) {
   exigirAdmin(ctx, "alterar categorias");
-  const n = await executar(`UPDATE categorias SET nome = :nome WHERE id = :id`, {
-    id,
-    nome: nome.trim(),
-  });
-  if (n === 0) throw new ErroDominio(`Categoria ${id} não encontrada`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("categorias")
+    .update({ nome: nome.trim() })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error, "Já existe uma categoria com esse nome.");
+  if (!data?.length) throw new ErroDominio(`Categoria ${id} não encontrada`);
 }
 
 export async function definirCategoriaAtiva(ctx: ContextoUsuario, id: string, ativo: boolean) {
   exigirAdmin(ctx, "alterar categorias");
-  await executar(`UPDATE categorias SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
+  const { error } = await getSupabaseServerClient()
+    .from("categorias")
+    .update({ ativo })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id);
+  if (error) falha(error);
 }
 
 // --------------------------------------------------------------- serviços
 
-const SELECT_SERVICO = `
-  SELECT s.id, s.nome, s.categoria_id, ct.nome AS categoria_nome,
-         s.descricao, s.tipo_padrao, s.sla_horas,
-         s.equipe_id, eq.nome AS equipe_nome, s.gerado_por_ia, s.ativo
-    FROM servicos s
-    LEFT JOIN categorias ct ON ct.id = s.categoria_id
-    LEFT JOIN equipes eq ON eq.id = s.equipe_id`;
+const COLUNAS_SERVICO =
+  "id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id, gerado_por_ia, ativo";
 
-interface LinhaServico extends Omit<Servico, "ativo" | "geradoPorIa"> {
-  ativo: number;
-  geradoPorIa: number;
+async function carregarServicos(filtro: {
+  apenasAtivos?: boolean;
+  id?: string;
+}): Promise<Servico[]> {
+  const tenantId = await tenantAtual();
+  let q = getSupabaseServerClient()
+    .from("servicos")
+    .select(COLUNAS_SERVICO)
+    .eq("tenant_id", tenantId);
+  if (filtro.apenasAtivos) q = q.eq("ativo", true);
+  if (filtro.id) q = q.eq("id", filtro.id);
+
+  const [{ data, error }, nomes] = await Promise.all([q.order("nome"), nomesDeApoio(tenantId)]);
+  if (error) falha(error);
+
+  return (data ?? []).map((s) => ({
+    id: s.id as string,
+    nome: s.nome as string,
+    categoriaId: (s.categoria_id as string | null) ?? null,
+    categoriaNome: nomeDe(nomes.categoria, s.categoria_id),
+    descricao: (s.descricao as string | null) ?? null,
+    tipoPadrao: s.tipo_padrao as RecordType,
+    slaHoras: s.sla_horas as number,
+    equipeId: (s.equipe_id as string | null) ?? null,
+    equipeNome: nomeDe(nomes.equipe, s.equipe_id),
+    geradoPorIa: s.gerado_por_ia as boolean,
+    ativo: s.ativo as boolean,
+  }));
 }
 
-const mapServico = (l: LinhaServico): Servico => ({
-  ...l,
-  ativo: paraBool(l.ativo),
-  geradoPorIa: paraBool(l.geradoPorIa),
-});
-
 export async function listarServicos(apenasAtivos = true): Promise<Servico[]> {
-  const linhas = await consultar<LinhaServico>(
-    `${SELECT_SERVICO} ${apenasAtivos ? "WHERE s.ativo = 1" : ""} ORDER BY s.nome`,
-  );
-  return linhas.map(mapServico);
+  return carregarServicos({ apenasAtivos });
 }
 
 export async function buscarServico(id: string): Promise<Servico | null> {
-  const l = await consultarUm<LinhaServico>(`${SELECT_SERVICO} WHERE s.id = :id`, { id });
-  return l ? mapServico(l) : null;
+  return (await carregarServicos({ id }))[0] ?? null;
 }
 
 export interface DadosServico {
@@ -163,26 +214,22 @@ export async function criarServico(ctx: ContextoUsuario, d: DadosServico): Promi
   exigirAdmin(ctx, "criar serviços");
   validarServico(d);
 
-  const id = novoId();
-  await executar(
-    `INSERT INTO servicos
-       (id, nome, categoria_id, descricao, tipo_padrao, sla_horas, equipe_id,
-        gerado_por_ia, ativo, criado_em, atualizado_em)
-     VALUES
-       (:id, :nome, :categoriaId, :descricao, :tipoPadrao, :slaHoras, :equipeId,
-        :geradoPorIa, 1, LOCALTIMESTAMP, LOCALTIMESTAMP)`,
-    {
-      id,
+  const { data, error } = await getSupabaseServerClient()
+    .from("servicos")
+    .insert({
+      tenant_id: ctx.tenantId,
       nome: d.nome.trim(),
-      categoriaId: d.categoriaId ?? null,
+      categoria_id: d.categoriaId ?? null,
       descricao: d.descricao?.trim() ?? null,
-      tipoPadrao: d.tipoPadrao,
-      slaHoras: d.slaHoras,
-      equipeId: d.equipeId ?? null,
-      geradoPorIa: deBool(d.geradoPorIa),
-    },
-  );
-  return id;
+      tipo_padrao: d.tipoPadrao,
+      sla_horas: d.slaHoras,
+      equipe_id: d.equipeId ?? null,
+      gerado_por_ia: d.geradoPorIa ?? false,
+    })
+    .select("id")
+    .single();
+  if (error) falha(error);
+  return data.id as string;
 }
 
 export async function atualizarServico(
@@ -193,27 +240,21 @@ export async function atualizarServico(
   exigirAdmin(ctx, "alterar serviços");
   validarServico(d);
 
-  const n = await executar(
-    `UPDATE servicos
-        SET nome = :nome,
-            categoria_id = :categoriaId,
-            descricao = :descricao,
-            tipo_padrao = :tipoPadrao,
-            sla_horas = :slaHoras,
-            equipe_id = :equipeId,
-            atualizado_em = LOCALTIMESTAMP
-      WHERE id = :id`,
-    {
-      id,
+  const { data, error } = await getSupabaseServerClient()
+    .from("servicos")
+    .update({
       nome: d.nome.trim(),
-      categoriaId: d.categoriaId ?? null,
+      categoria_id: d.categoriaId ?? null,
       descricao: d.descricao?.trim() ?? null,
-      tipoPadrao: d.tipoPadrao,
-      slaHoras: d.slaHoras,
-      equipeId: d.equipeId ?? null,
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Serviço ${id} não encontrado`);
+      tipo_padrao: d.tipoPadrao,
+      sla_horas: d.slaHoras,
+      equipe_id: d.equipeId ?? null,
+    })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Serviço ${id} não encontrado`);
 }
 
 /**
@@ -223,36 +264,52 @@ export async function atualizarServico(
  */
 export async function definirServicoAtivo(ctx: ContextoUsuario, id: string, ativo: boolean) {
   exigirAdmin(ctx, "alterar serviços");
-  await executar(
-    `UPDATE servicos SET ativo = :ativo, atualizado_em = LOCALTIMESTAMP WHERE id = :id`,
-    { id, ativo: deBool(ativo) },
-  );
+  const { error } = await getSupabaseServerClient()
+    .from("servicos")
+    .update({ ativo })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id);
+  if (error) falha(error);
 }
 
 // --------------------------------------------------------------- sistemas
 
-const SELECT_SISTEMA = `
-  SELECT s.id, s.nome, s.descricao, s.categoria_id, ct.nome AS categoria_nome,
-         s.criticidade, s.equipe_id, eq.nome AS equipe_nome,
-         s.responsavel_id, ur.nome AS responsavel_nome,
-         s.atribuicao_id, ua.nome AS atribuicao_nome, s.ativo
-    FROM sistemas s
-    LEFT JOIN categorias ct ON ct.id = s.categoria_id
-    LEFT JOIN equipes eq ON eq.id = s.equipe_id
-    LEFT JOIN usuarios ur ON ur.id = s.responsavel_id
-    LEFT JOIN usuarios ua ON ua.id = s.atribuicao_id`;
-
-interface LinhaSistema extends Omit<Sistema, "ativo"> {
-  ativo: number;
-}
-
-const mapSistema = (l: LinhaSistema): Sistema => ({ ...l, ativo: paraBool(l.ativo) });
-
 export async function listarSistemas(apenasAtivos = true): Promise<Sistema[]> {
-  const linhas = await consultar<LinhaSistema>(
-    `${SELECT_SISTEMA} ${apenasAtivos ? "WHERE s.ativo = 1" : ""} ORDER BY s.nome`,
-  );
-  return linhas.map(mapSistema);
+  const tenantId = await tenantAtual();
+  let q = getSupabaseServerClient()
+    .from("sistemas")
+    .select(
+      "id, nome, descricao, categoria_id, criticidade, equipe_id, responsavel_id, atribuicao_id, ativo",
+    )
+    .eq("tenant_id", tenantId);
+  if (apenasAtivos) q = q.eq("ativo", true);
+
+  const { data, error } = await q.order("nome");
+  if (error) falha(error);
+
+  const linhas = data ?? [];
+  const pessoas = [
+    ...new Set(
+      linhas.flatMap((s) => [s.responsavel_id, s.atribuicao_id]).filter(Boolean) as string[],
+    ),
+  ];
+  const nomes = await nomesDeApoio(tenantId, pessoas);
+
+  return linhas.map((s) => ({
+    id: s.id as string,
+    nome: s.nome as string,
+    descricao: (s.descricao as string | null) ?? null,
+    categoriaId: (s.categoria_id as string | null) ?? null,
+    categoriaNome: nomeDe(nomes.categoria, s.categoria_id),
+    criticidade: s.criticidade as Criticidade,
+    equipeId: (s.equipe_id as string | null) ?? null,
+    equipeNome: nomeDe(nomes.equipe, s.equipe_id),
+    responsavelId: (s.responsavel_id as string | null) ?? null,
+    responsavelNome: nomeDe(nomes.pessoa, s.responsavel_id),
+    atribuicaoId: (s.atribuicao_id as string | null) ?? null,
+    atribuicaoNome: nomeDe(nomes.pessoa, s.atribuicao_id),
+    ativo: s.ativo as boolean,
+  }));
 }
 
 export interface DadosSistema {
@@ -265,30 +322,29 @@ export interface DadosSistema {
   atribuicaoId?: string | null | undefined;
 }
 
+function linhaSistema(d: DadosSistema) {
+  return {
+    nome: d.nome.trim(),
+    descricao: d.descricao?.trim() ?? null,
+    categoria_id: d.categoriaId ?? null,
+    responsavel_id: d.responsavelId ?? null,
+    atribuicao_id: d.atribuicaoId ?? null,
+    equipe_id: d.equipeId ?? null,
+    criticidade: d.criticidade,
+  };
+}
+
 export async function criarSistema(ctx: ContextoUsuario, d: DadosSistema): Promise<string> {
   exigirAdmin(ctx, "criar sistemas");
   if (d.nome.trim().length < 2) throw new ErroDominio("Informe o nome do sistema");
 
-  const id = novoId();
-  await executar(
-    `INSERT INTO sistemas
-       (id, nome, descricao, categoria_id, responsavel_id, atribuicao_id,
-        equipe_id, criticidade, ativo)
-     VALUES
-       (:id, :nome, :descricao, :categoriaId, :responsavelId, :atribuicaoId,
-        :equipeId, :criticidade, 1)`,
-    {
-      id,
-      nome: d.nome.trim(),
-      descricao: d.descricao?.trim() ?? null,
-      categoriaId: d.categoriaId ?? null,
-      responsavelId: d.responsavelId ?? null,
-      atribuicaoId: d.atribuicaoId ?? null,
-      equipeId: d.equipeId ?? null,
-      criticidade: d.criticidade,
-    },
-  );
-  return id;
+  const { data, error } = await getSupabaseServerClient()
+    .from("sistemas")
+    .insert({ tenant_id: ctx.tenantId, ...linhaSistema(d) })
+    .select("id")
+    .single();
+  if (error) falha(error, "Já existe um sistema com esse nome.");
+  return data.id as string;
 }
 
 export async function atualizarSistema(
@@ -299,34 +355,48 @@ export async function atualizarSistema(
   exigirAdmin(ctx, "alterar sistemas");
   if (d.nome.trim().length < 2) throw new ErroDominio("Informe o nome do sistema");
 
-  const n = await executar(
-    `UPDATE sistemas
-        SET nome = :nome,
-            descricao = :descricao,
-            categoria_id = :categoriaId,
-            responsavel_id = :responsavelId,
-            atribuicao_id = :atribuicaoId,
-            equipe_id = :equipeId,
-            criticidade = :criticidade
-      WHERE id = :id`,
-    {
-      id,
-      nome: d.nome.trim(),
-      descricao: d.descricao?.trim() ?? null,
-      categoriaId: d.categoriaId ?? null,
-      responsavelId: d.responsavelId ?? null,
-      atribuicaoId: d.atribuicaoId ?? null,
-      equipeId: d.equipeId ?? null,
-      criticidade: d.criticidade,
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Sistema ${id} não encontrado`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("sistemas")
+    .update(linhaSistema(d))
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error, "Já existe um sistema com esse nome.");
+  if (!data?.length) throw new ErroDominio(`Sistema ${id} não encontrado`);
 }
 
 export async function definirSistemaAtivo(ctx: ContextoUsuario, id: string, ativo: boolean) {
   exigirAdmin(ctx, "alterar sistemas");
-  await executar(`UPDATE sistemas SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
+  const { error } = await getSupabaseServerClient()
+    .from("sistemas")
+    .update({ ativo })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id);
+  if (error) falha(error);
+}
+
+/**
+ * Exclui um sistema cadastrado errado.
+ *
+ * Só enquanto nenhum chamado usar o sistema: depois disso, a chave
+ * estrangeira dos chamados barra a exclusão, e o caminho é desativar
+ * (o histórico precisa continuar legível). Fica na auditoria.
+ */
+export async function excluirSistema(ctx: ContextoUsuario, id: string): Promise<void> {
+  exigirAdmin(ctx, "excluir sistemas");
+  const { data, error } = await getSupabaseServerClient()
+    .from("sistemas")
+    .delete()
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) {
+    if (error.code === "23503") {
+      throw new ErroDominio(
+        "Este sistema já é usado em chamados e não pode ser excluído. Desative-o em vez disso.",
+      );
+    }
+    falha(error);
+  }
+  if (!data?.length) throw new ErroDominio(`Sistema ${id} não encontrado`);
 }

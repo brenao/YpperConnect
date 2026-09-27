@@ -15,6 +15,7 @@ import {
   EyeOff,
   Loader2,
   KeyRound,
+  Trash2,
   Check,
   Copy,
 } from "lucide-react";
@@ -69,6 +70,7 @@ import {
   processarFilaEmailFn,
   testarSmtpFn,
   gerarLinkAcessoFn,
+  excluirSistemaFn,
   type UsuarioInput,
   type UsuarioUpdateInput,
   type SistemaInput,
@@ -952,6 +954,16 @@ function Administracao() {
     onError: erro,
   });
 
+  const excluirSistema = useMutation({
+    mutationFn: (id: string) => excluirSistemaFn({ data: { id } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sistemas"] });
+      qc.invalidateQueries({ queryKey: ["sistemas-admin"] });
+      toast.success("Sistema excluído");
+    },
+    onError: erro,
+  });
+
   const alternarSistema = useMutation({
     mutationFn: (v: AtivoInput) => definirSistemaAtivoFn({ data: v }),
     onSuccess: (_r, v) => {
@@ -1324,6 +1336,16 @@ function Administracao() {
                               ) : (
                                 <Eye className="size-3.5 text-success" />
                               )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              title="Excluir (só enquanto nenhum chamado usar o sistema)"
+                              disabled={excluirSistema.isPending}
+                              onClick={() => excluirSistema.mutate(s.id)}
+                            >
+                              <Trash2 className="size-3.5" />
                             </Button>
                           </span>
                         ) : null}
