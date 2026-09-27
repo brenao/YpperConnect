@@ -1040,14 +1040,14 @@ export interface DadosTarefa {
   ordem?: number | undefined;
   responsaveis?: string[] | undefined;
   /**
-   * Predecessoras como ids simples, gravadas como TI sem defasagem.
+   * Predecessoras com tipo e defasagem.
    *
-   * O formulário de tarefa cria vínculo simples, que é o caso comum; o
-   * tipo e a defasagem são editados na grade, por
-   * `atualizarVinculosTarefa`. Ampliar os dois caminhos ao mesmo tempo
-   * dobraria a superfície de erro sem atender a nenhum caso real.
+   * O formulário e a grade gravam a mesma coisa: quem monta o vínculo
+   * no diálogo precisa das mesmas quatro opções que tem na grade, e ter
+   * um caminho que só grava TI faria a pessoa editar duas vezes o mesmo
+   * vínculo — uma para criar, outra para corrigir o tipo.
    */
-  predecessoras?: string[] | undefined;
+  predecessoras?: Dependencia[] | undefined;
 }
 
 /**
@@ -1113,12 +1113,15 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
         r,
       });
     }
-    for (const p of new Set(d.predecessoras ?? [])) {
-      if (p === id) continue;
-      // Tipo e defasagem ficam no padrão do banco: TI, sem defasagem.
+    // Um tipo por par: a chave primária é (tarefa, predecessora), e o
+    // último declarado vence — mesma regra da grade.
+    const deps = new Map((d.predecessoras ?? []).map((p) => [p.predecessoraId, p]));
+    for (const p of deps.values()) {
+      if (p.predecessoraId === id) continue;
       await tx.executar(
-        `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id) VALUES (:t, :p)`,
-        { t: id, p },
+        `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id, tipo, defasagem)
+         VALUES (:t, :p, :tipo, :defasagem)`,
+        { t: id, p: p.predecessoraId, tipo: p.tipo, defasagem: p.defasagem },
       );
     }
   });
@@ -1185,11 +1188,13 @@ export async function atualizarTarefa(
     }
     if (d.predecessoras) {
       await tx.executar(`DELETE FROM tarefa_predecessoras WHERE tarefa_id = :id`, { id });
-      for (const p of new Set(d.predecessoras)) {
-        if (p === id) continue;
+      const deps = new Map(d.predecessoras.map((p) => [p.predecessoraId, p]));
+      for (const p of deps.values()) {
+        if (p.predecessoraId === id) continue;
         await tx.executar(
-          `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id) VALUES (:t, :p)`,
-          { t: id, p },
+          `INSERT INTO tarefa_predecessoras (tarefa_id, predecessora_id, tipo, defasagem)
+           VALUES (:t, :p, :tipo, :defasagem)`,
+          { t: id, p: p.predecessoraId, tipo: p.tipo, defasagem: p.defasagem },
         );
       }
     }
