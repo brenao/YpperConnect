@@ -281,7 +281,8 @@ export async function listarSistemas(apenasAtivos = true): Promise<Sistema[]> {
     .select(
       "id, nome, descricao, categoria_id, criticidade, equipe_id, responsavel_id, atribuicao_id, ativo",
     )
-    .eq("tenant_id", tenantId);
+    .eq("tenant_id", tenantId)
+    .is("excluido_em", null);
   if (apenasAtivos) q = q.eq("ativo", true);
 
   const { data, error } = await q.order("nome");
@@ -375,28 +376,24 @@ export async function definirSistemaAtivo(ctx: ContextoUsuario, id: string, ativ
   if (error) falha(error);
 }
 
+/** Chamados e projetos que apontam para o sistema, para avisar antes de excluir. */
+export async function vinculosSistema(
+  ctx: ContextoUsuario,
+  id: string,
+): Promise<{ chamados: number; projetos: number }> {
+  exigirAdmin(ctx, "excluir sistemas");
+  const { data, error } = await getSupabaseServerClient().rpc("vinculos_sistema", { p_id: id });
+  if (error) falha(error);
+  return data as { chamados: number; projetos: number };
+}
+
 /**
- * Exclui um sistema cadastrado errado.
- *
- * Só enquanto nenhum chamado usar o sistema: depois disso, a chave
- * estrangeira dos chamados barra a exclusão, e o caminho é desativar
- * (o histórico precisa continuar legível). Fica na auditoria.
+ * Exclui um sistema (exclusão lógica). Ele some das telas e dos
+ * formulários; o registro fica no banco, com data e autor, e os chamados
+ * antigos continuam mostrando o sistema.
  */
 export async function excluirSistema(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirAdmin(ctx, "excluir sistemas");
-  const { data, error } = await getSupabaseServerClient()
-    .from("sistemas")
-    .delete()
-    .eq("tenant_id", ctx.tenantId)
-    .eq("id", id)
-    .select("id");
-  if (error) {
-    if (error.code === "23503") {
-      throw new ErroDominio(
-        "Este sistema já é usado em chamados e não pode ser excluído. Desative-o em vez disso.",
-      );
-    }
-    falha(error);
-  }
-  if (!data?.length) throw new ErroDominio(`Sistema ${id} não encontrado`);
+  const { error } = await getSupabaseServerClient().rpc("excluir_sistema", { p_id: id });
+  if (error) falha(error);
 }

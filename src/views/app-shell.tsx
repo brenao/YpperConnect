@@ -15,8 +15,13 @@ import {
   KeyRound,
   LogOut,
   Building2,
+  Server,
+  CalendarDays,
+  Mail,
+  UserCog,
+  ChevronDown,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import logo from "@/assets/beagleone-logo.png";
 import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
@@ -52,9 +57,89 @@ const nav = [
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },
   { to: "/governanca", label: "Governança ITIL", icon: ShieldCheck },
   { to: "/assistente", label: "Assistente IA", icon: Sparkles },
-  { to: "/administracao", label: "Administração", icon: Settings },
-  { to: "/permissoes", label: "Perfis de acesso", icon: KeyRound },
 ] as const;
+
+/**
+ * Administração em grupo, com uma página por assunto.
+ *
+ * `modulo` é a chave de perfil_modulos que libera o item: as páginas de
+ * cadastro seguem "/administracao" e Perfis de acesso segue "/permissoes",
+ * as mesmas chaves de antes — nenhum perfil precisa ser reconfigurado.
+ */
+const navAdministracao = [
+  { to: "/administracao/usuarios", label: "Usuários", icon: UserCog, modulo: "/administracao" },
+  { to: "/permissoes", label: "Perfis de acesso", icon: KeyRound, modulo: "/permissoes" },
+  { to: "/administracao/sistemas", label: "Sistemas", icon: Server, modulo: "/administracao" },
+  {
+    to: "/administracao/calendario",
+    label: "Calendário",
+    icon: CalendarDays,
+    modulo: "/administracao",
+  },
+  {
+    to: "/administracao/notificacoes",
+    label: "Notificações",
+    icon: Mail,
+    modulo: "/administracao",
+  },
+] as const;
+
+/**
+ * Grupo recolhível do menu. Abre sozinho quando a página atual é dele,
+ * para a pessoa ver onde está; fora dele, abre e fecha pelo título.
+ */
+function GrupoAdministracao({
+  itens,
+  pathname,
+}: {
+  itens: readonly (typeof navAdministracao)[number][];
+  pathname: string;
+}) {
+  const dentro = itens.some((i) => pathname.startsWith(i.to));
+  const [aberto, setAberto] = useState(dentro);
+  const expandido = aberto || dentro;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={expandido}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+          dentro
+            ? "text-sidebar-foreground"
+            : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+        )}
+      >
+        <Settings className="size-4" />
+        Administração
+        <ChevronDown
+          className={cn("ml-auto size-4 transition-transform", expandido ? "" : "-rotate-90")}
+        />
+      </button>
+      {expandido ? (
+        <div className="ml-5 mt-1 flex flex-col gap-1 border-l border-sidebar-border pl-2">
+          {itens.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className={cn(
+                "flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm transition-colors",
+                pathname.startsWith(item.to)
+                  ? "bg-sidebar-accent text-sidebar-primary"
+                  : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+              )}
+            >
+              <item.icon className="size-4" />
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * Encerra a sessão e volta para o login.
@@ -135,11 +220,14 @@ function SeletorEmpresa() {
 export function AppShell({
   title,
   subtitle,
+  trilha,
   actions,
   children,
 }: {
   title: string;
   subtitle?: string;
+  /** Seção acima do título (ex.: "Administração"), para a pessoa saber onde está. */
+  trilha?: string;
   actions?: ReactNode;
   children: ReactNode;
 }) {
@@ -155,6 +243,9 @@ export function AppShell({
   // produz um piscar desagradável a cada navegação.
   const modulos = permissoes.data?.modulos;
   const permitidos = modulos ? nav.filter((item) => modulos.includes(item.to)) : nav;
+  const adminPermitidos = modulos
+    ? navAdministracao.filter((item) => modulos.includes(item.modulo))
+    : navAdministracao;
 
   // Com portal externo, a Visão geral sai: ela é o painel de chamados, e
   // a raiz virou apenas desvio para a tela de projetos.
@@ -200,6 +291,9 @@ export function AppShell({
               </Link>
             );
           })}
+          {adminPermitidos.length > 0 ? (
+            <GrupoAdministracao itens={adminPermitidos} pathname={pathname} />
+          ) : null}
         </nav>
       </aside>
 
@@ -211,6 +305,7 @@ export function AppShell({
             identidade na direita em qualquer largura. */}
         <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-border bg-background/80 px-6 py-4 backdrop-blur">
           <div className="min-w-0 flex-1">
+            {trilha ? <p className="truncate text-xs text-muted-foreground">{trilha} /</p> : null}
             <h1 className="truncate text-lg font-semibold">{title}</h1>
             {subtitle ? <p className="truncate text-sm text-muted-foreground">{subtitle}</p> : null}
           </div>
@@ -254,6 +349,15 @@ export function AppShell({
               </Link>
             );
           })}
+          {adminPermitidos.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className="whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted-foreground"
+            >
+              {item.label}
+            </Link>
+          ))}
         </nav>
 
         <main className="flex-1 px-6 py-6">{children}</main>

@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AdministracaoRouteImport } from './routes/administracao'
 import { Route as AssistenteRouteImport } from './routes/assistente'
 import { Route as BacklogRouteImport } from './routes/backlog'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
@@ -23,6 +22,11 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as PermissoesRouteImport } from './routes/permissoes'
 import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as RecursosRouteImport } from './routes/recursos'
+import { Route as AdministracaoIndexRouteImport } from './routes/administracao.index'
+import { Route as AdministracaoCalendarioRouteImport } from './routes/administracao.calendario'
+import { Route as AdministracaoNotificacoesRouteImport } from './routes/administracao.notificacoes'
+import { Route as AdministracaoSistemasRouteImport } from './routes/administracao.sistemas'
+import { Route as AdministracaoUsuariosRouteImport } from './routes/administracao.usuarios'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiRotinasRouteImport } from './routes/api/rotinas'
 import { Route as AuthConfirmRouteImport } from './routes/auth.confirm'
@@ -31,11 +35,6 @@ import { Route as ProjetosProjectIdRouteImport } from './routes/projetos_.$proje
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdministracaoRoute = AdministracaoRouteImport.update({
-  id: '/administracao',
-  path: '/administracao',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AssistenteRoute = AssistenteRouteImport.update({
@@ -98,6 +97,32 @@ const RecursosRoute = RecursosRouteImport.update({
   path: '/recursos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdministracaoIndexRoute = AdministracaoIndexRouteImport.update({
+  id: '/administracao/',
+  path: '/administracao/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdministracaoCalendarioRoute = AdministracaoCalendarioRouteImport.update({
+  id: '/administracao/calendario',
+  path: '/administracao/calendario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdministracaoNotificacoesRoute =
+  AdministracaoNotificacoesRouteImport.update({
+    id: '/administracao/notificacoes',
+    path: '/administracao/notificacoes',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const AdministracaoSistemasRoute = AdministracaoSistemasRouteImport.update({
+  id: '/administracao/sistemas',
+  path: '/administracao/sistemas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdministracaoUsuariosRoute = AdministracaoUsuariosRouteImport.update({
+  id: '/administracao/usuarios',
+  path: '/administracao/usuarios',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiChatRoute = ApiChatRouteImport.update({
   id: '/api/chat',
   path: '/api/chat',
@@ -121,7 +146,6 @@ const ProjetosProjectIdRoute = ProjetosProjectIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/administracao': typeof AdministracaoRoute
   '/assistente': typeof AssistenteRoute
   '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
@@ -134,14 +158,18 @@ export interface FileRoutesByFullPath {
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
+  '/administracao/calendario': typeof AdministracaoCalendarioRoute
+  '/administracao/notificacoes': typeof AdministracaoNotificacoesRoute
+  '/administracao/sistemas': typeof AdministracaoSistemasRoute
+  '/administracao/usuarios': typeof AdministracaoUsuariosRoute
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
+  '/administracao/': typeof AdministracaoIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/administracao': typeof AdministracaoRoute
   '/assistente': typeof AssistenteRoute
   '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
@@ -154,15 +182,19 @@ export interface FileRoutesByTo {
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
+  '/administracao/calendario': typeof AdministracaoCalendarioRoute
+  '/administracao/notificacoes': typeof AdministracaoNotificacoesRoute
+  '/administracao/sistemas': typeof AdministracaoSistemasRoute
+  '/administracao/usuarios': typeof AdministracaoUsuariosRoute
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
+  '/administracao': typeof AdministracaoIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/administracao': typeof AdministracaoRoute
   '/assistente': typeof AssistenteRoute
   '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
@@ -175,16 +207,20 @@ export interface FileRoutesById {
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
+  '/administracao/calendario': typeof AdministracaoCalendarioRoute
+  '/administracao/notificacoes': typeof AdministracaoNotificacoesRoute
+  '/administracao/sistemas': typeof AdministracaoSistemasRoute
+  '/administracao/usuarios': typeof AdministracaoUsuariosRoute
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
   '/projetos_/$projectId': typeof ProjetosProjectIdRoute
+  '/administracao/': typeof AdministracaoIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/administracao'
     | '/assistente'
     | '/backlog'
     | '/catalogo'
@@ -197,14 +233,18 @@ export interface FileRouteTypes {
     | '/permissoes'
     | '/projetos'
     | '/recursos'
+    | '/administracao/calendario'
+    | '/administracao/notificacoes'
+    | '/administracao/sistemas'
+    | '/administracao/usuarios'
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
     | '/projetos/$projectId'
+    | '/administracao/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/administracao'
     | '/assistente'
     | '/backlog'
     | '/catalogo'
@@ -217,14 +257,18 @@ export interface FileRouteTypes {
     | '/permissoes'
     | '/projetos'
     | '/recursos'
+    | '/administracao/calendario'
+    | '/administracao/notificacoes'
+    | '/administracao/sistemas'
+    | '/administracao/usuarios'
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
     | '/projetos/$projectId'
+    | '/administracao'
   id:
     | '__root__'
     | '/'
-    | '/administracao'
     | '/assistente'
     | '/backlog'
     | '/catalogo'
@@ -237,15 +281,19 @@ export interface FileRouteTypes {
     | '/permissoes'
     | '/projetos'
     | '/recursos'
+    | '/administracao/calendario'
+    | '/administracao/notificacoes'
+    | '/administracao/sistemas'
+    | '/administracao/usuarios'
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
     | '/projetos_/$projectId'
+    | '/administracao/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AdministracaoRoute: typeof AdministracaoRoute
   AssistenteRoute: typeof AssistenteRoute
   BacklogRoute: typeof BacklogRoute
   CatalogoRoute: typeof CatalogoRoute
@@ -258,10 +306,15 @@ export interface RootRouteChildren {
   PermissoesRoute: typeof PermissoesRoute
   ProjetosRoute: typeof ProjetosRoute
   RecursosRoute: typeof RecursosRoute
+  AdministracaoCalendarioRoute: typeof AdministracaoCalendarioRoute
+  AdministracaoNotificacoesRoute: typeof AdministracaoNotificacoesRoute
+  AdministracaoSistemasRoute: typeof AdministracaoSistemasRoute
+  AdministracaoUsuariosRoute: typeof AdministracaoUsuariosRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiRotinasRoute: typeof ApiRotinasRoute
   AuthConfirmRoute: typeof AuthConfirmRoute
   ProjetosProjectIdRoute: typeof ProjetosProjectIdRoute
+  AdministracaoIndexRoute: typeof AdministracaoIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -271,13 +324,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/administracao': {
-      id: '/administracao'
-      path: '/administracao'
-      fullPath: '/administracao'
-      preLoaderRoute: typeof AdministracaoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/assistente': {
@@ -364,6 +410,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RecursosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/administracao/': {
+      id: '/administracao/'
+      path: '/administracao'
+      fullPath: '/administracao/'
+      preLoaderRoute: typeof AdministracaoIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/administracao/calendario': {
+      id: '/administracao/calendario'
+      path: '/administracao/calendario'
+      fullPath: '/administracao/calendario'
+      preLoaderRoute: typeof AdministracaoCalendarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/administracao/notificacoes': {
+      id: '/administracao/notificacoes'
+      path: '/administracao/notificacoes'
+      fullPath: '/administracao/notificacoes'
+      preLoaderRoute: typeof AdministracaoNotificacoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/administracao/sistemas': {
+      id: '/administracao/sistemas'
+      path: '/administracao/sistemas'
+      fullPath: '/administracao/sistemas'
+      preLoaderRoute: typeof AdministracaoSistemasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/administracao/usuarios': {
+      id: '/administracao/usuarios'
+      path: '/administracao/usuarios'
+      fullPath: '/administracao/usuarios'
+      preLoaderRoute: typeof AdministracaoUsuariosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/chat': {
       id: '/api/chat'
       path: '/api/chat'
@@ -397,7 +478,6 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AdministracaoRoute: AdministracaoRoute,
   AssistenteRoute: AssistenteRoute,
   BacklogRoute: BacklogRoute,
   CatalogoRoute: CatalogoRoute,
@@ -410,10 +490,15 @@ const rootRouteChildren: RootRouteChildren = {
   PermissoesRoute: PermissoesRoute,
   ProjetosRoute: ProjetosRoute,
   RecursosRoute: RecursosRoute,
+  AdministracaoCalendarioRoute: AdministracaoCalendarioRoute,
+  AdministracaoNotificacoesRoute: AdministracaoNotificacoesRoute,
+  AdministracaoSistemasRoute: AdministracaoSistemasRoute,
+  AdministracaoUsuariosRoute: AdministracaoUsuariosRoute,
   ApiChatRoute: ApiChatRoute,
   ApiRotinasRoute: ApiRotinasRoute,
   AuthConfirmRoute: AuthConfirmRoute,
   ProjetosProjectIdRoute: ProjetosProjectIdRoute,
+  AdministracaoIndexRoute: AdministracaoIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

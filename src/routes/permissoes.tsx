@@ -235,7 +235,7 @@ function Permissoes() {
 
   if (perfisQuery.isPending) {
     return (
-      <AppShell title="Perfis de acesso" subtitle="Carregando...">
+      <AppShell trilha="Administração" title="Perfis de acesso" subtitle="Carregando...">
         <p className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" /> Carregando perfis...
         </p>
@@ -245,6 +245,7 @@ function Permissoes() {
 
   return (
     <AppShell
+      trilha="Administração"
       title="Perfis de acesso"
       subtitle="Defina quais menus e funcionalidades cada usuário poderá acessar"
       actions={
@@ -270,12 +271,15 @@ function Permissoes() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="panel h-fit p-3">
-          <p className="px-2 pb-2 text-xs uppercase tracking-wide text-muted-foreground">
+      {/* Perfis numa faixa no topo, não numa coluna: com poucos perfis, a
+          coluna ocupava a altura toda vazia e roubava ~300px de largura do
+          detalhe. A faixa quebra linha quando houver muitos perfis. */}
+      <div className="flex flex-col gap-4">
+        <nav className="panel p-3" aria-label="Perfis cadastrados">
+          <p className="px-1 pb-2 text-xs uppercase tracking-wide text-muted-foreground">
             Perfis cadastrados
           </p>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap gap-2">
             {perfis.map((p) => {
               const active = p.id === selected?.id;
               return (
@@ -283,10 +287,11 @@ function Permissoes() {
                   key={p.id}
                   type="button"
                   onClick={() => setSelectedId(p.id)}
-                  className={`rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                  aria-pressed={active}
+                  className={`min-w-44 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                     active
-                      ? "bg-sidebar-accent text-sidebar-primary"
-                      : "text-muted-foreground hover:bg-sidebar-accent/60"
+                      ? "border-primary/40 bg-sidebar-accent text-sidebar-primary"
+                      : "border-border text-muted-foreground hover:bg-sidebar-accent/60"
                   }`}
                 >
                   <span className="flex items-center justify-between gap-2">
@@ -301,7 +306,7 @@ function Permissoes() {
               );
             })}
           </div>
-        </aside>
+        </nav>
 
         {selected ? (
           <div className="flex min-w-0 flex-col gap-4">
@@ -416,13 +421,13 @@ function Permissoes() {
                 ) : null}
               </div>
 
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 {GRUPOS.map((grupo) => (
                   <div key={grupo} className="rounded-xl border border-border p-3">
                     <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
                       {grupo}
                     </p>
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-0.5">
                       {APP_MODULES.filter((m) => m.grupo === grupo).map((m) => (
                         <label
                           key={m.key}
@@ -469,13 +474,13 @@ function Permissoes() {
                 </Badge>
               </div>
 
-              <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                 {Array.from(new Set(APP_FEATURES.map((f) => f.grupo))).map((grupo) => (
                   <div key={grupo} className="rounded-xl border border-border p-3">
                     <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
                       {grupo}
                     </p>
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-0.5">
                       {APP_FEATURES.filter((f) => f.grupo === grupo).map((f) => (
                         <label
                           key={f.key}

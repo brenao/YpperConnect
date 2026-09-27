@@ -42,6 +42,7 @@ import {
   type FeriadoUpdateInput,
 } from "@/services/calendario.functions";
 import { cn } from "@/lib/utils";
+import { ConfirmarExclusao } from "@/views/confirmar-exclusao";
 
 /**
  * Calendário da instalação: localidades e feriados.
@@ -492,10 +493,13 @@ function LinhaFeriado({
     onError: erro,
   });
 
+  // Toda exclusão pede confirmação (e é lógica: o feriado fica no histórico).
+  const [confirmando, setConfirmando] = useState(false);
   const excluir = useMutation({
     mutationFn: () => excluirFeriadoFn({ data: { id: f.id } }),
     onSuccess: () => {
       invalidar();
+      setConfirmando(false);
       toast.success("Feriado excluído");
     },
     onError: erro,
@@ -550,10 +554,23 @@ function LinhaFeriado({
               className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               title="Excluir"
               disabled={excluir.isPending}
-              onClick={() => excluir.mutate()}
+              onClick={() => setConfirmando(true)}
             >
               <Trash2 className="size-3.5" />
             </Button>
+            <ConfirmarExclusao
+              aberto={confirmando}
+              onAbertoChange={setConfirmando}
+              nome={f.descricao}
+              explicacao={
+                <>
+                  O feriado sai da lista e deixa de contar nos prazos de chamados e cronogramas. Ele
+                  continua guardado no histórico.
+                </>
+              }
+              excluindo={excluir.isPending}
+              onConfirmar={() => excluir.mutate()}
+            />
           </span>
         ) : null}
       </td>

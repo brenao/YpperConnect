@@ -155,7 +155,15 @@ export const definirSistemaAtivoFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-/** Exclui sistema cadastrado errado (só enquanto nenhum chamado o usa). */
+/** Chamados e projetos vinculados, mostrados antes de confirmar a exclusão. */
+export const vinculosSistemaFn = createServerFn({ method: "GET" })
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { vinculosSistema } = await import("@/repositories/catalogo.repo");
+    return vinculosSistema(await ctx(), data.id);
+  });
+
+/** Exclui sistema (exclusão lógica, depois da confirmação do usuário). */
 export const excluirSistemaFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
   .handler(async ({ data }) => {

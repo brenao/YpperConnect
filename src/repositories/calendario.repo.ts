@@ -117,6 +117,7 @@ export async function listarLocalidades(apenasAtivas = false): Promise<Localidad
       .select("localidade_id")
       .eq("tenant_id", ctx.tenantId)
       .eq("ativo", true)
+      .is("excluido_em", null)
       .not("localidade_id", "is", null),
   ]);
   if (locais.error) falha(locais.error);
@@ -304,7 +305,8 @@ export async function listarFeriados(filtro: {
     sb
       .from("feriados")
       .select("id, data, descricao, tipo, recorrente, localidade_id, ativo")
-      .eq("tenant_id", ctx.tenantId),
+      .eq("tenant_id", ctx.tenantId)
+      .is("excluido_em", null),
     sb.from("localidades").select("id, nome").eq("tenant_id", ctx.tenantId),
   ]);
   if (feriados.error) falha(feriados.error);
@@ -431,16 +433,14 @@ export async function definirFeriadoAtivo(
   await invalidarCalendario();
 }
 
-/** Apaga de verdade, para o cadastro errado. Prazos já gravados não mudam. */
+/**
+ * Exclui o feriado cadastrado errado (exclusão lógica): ele sai da
+ * lista e do cálculo de prazos, mas fica registrado. Prazos já gravados
+ * não mudam.
+ */
 export async function excluirFeriado(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirGestor(ctx, "excluir feriados");
-  const { data, error } = await getSupabaseServerClient()
-    .from("feriados")
-    .delete()
-    .eq("tenant_id", ctx.tenantId)
-    .eq("id", id)
-    .select("id");
+  const { error } = await getSupabaseServerClient().rpc("excluir_feriado", { p_id: id });
   if (error) falha(error);
-  if (!data?.length) throw new ErroDominio(`Feriado ${id} não encontrado`);
   await invalidarCalendario();
 }

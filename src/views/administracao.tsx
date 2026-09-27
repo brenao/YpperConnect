@@ -1,4 +1,3 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -43,7 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { CRITICALITY_LABEL, type SystemCriticality } from "@/models/itsm-types";
 import type { Sistema } from "@/repositories/catalogo.repo";
@@ -52,6 +51,8 @@ import { Paginacao, usePaginacao } from "@/views/paginacao";
 import { listarRecursosFn } from "@/services/recursos.functions";
 import { cn } from "@/lib/utils";
 import { sessaoFn } from "@/services/sessao.functions";
+import { ConfirmarExclusao } from "@/views/confirmar-exclusao";
+import { descreverVinculos } from "@/lib/vinculos";
 import {
   usuarioAtualFn,
   listarUsuariosFn,
@@ -71,6 +72,7 @@ import {
   testarSmtpFn,
   gerarLinkAcessoFn,
   excluirSistemaFn,
+  vinculosSistemaFn,
   type UsuarioInput,
   type UsuarioUpdateInput,
   type SistemaInput,
@@ -78,26 +80,27 @@ import {
   type AtivoInput,
 } from "@/services/cadastros.functions";
 
-export const Route = createFileRoute("/administracao")({
-  head: () => ({
-    meta: [
-      { title: "Administração · BeagleOne" },
-      {
-        name: "description",
-        content:
-          "Administração do BeagleOne: usuários, administradores, responsáveis por sistema, atribuição automática de chamados e notificações por e-mail.",
-      },
-      { property: "og:title", content: "Administração · BeagleOne" },
-      {
-        property: "og:description",
-        content: "Usuários, administradores, responsáveis por sistema e notificações.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
-  component: Administracao,
-});
+/** Cada submenu de Administração é uma página com rota própria. */
+export type SecaoAdministracao = "usuarios" | "sistemas" | "calendario" | "notificacoes";
+
+const CABECALHO: Record<SecaoAdministracao, { titulo: string; subtitulo: string }> = {
+  usuarios: {
+    titulo: "Usuários",
+    subtitulo: "Quem acessa o sistema, perfil, equipe e administradores",
+  },
+  sistemas: {
+    titulo: "Sistemas",
+    subtitulo: "Inventário, responsáveis e atribuição automática de chamados",
+  },
+  calendario: {
+    titulo: "Calendário",
+    subtitulo: "Localidades e feriados usados nos prazos e cronogramas",
+  },
+  notificacoes: {
+    titulo: "Notificações",
+    subtitulo: "Fila de e-mails, rotinas agendadas e servidor de envio",
+  },
+};
 
 /** Radix não aceita SelectItem com value vazio. */
 const SEM = "__nenhum__";
@@ -888,12 +891,12 @@ function TabelaUsuarios({
   );
 }
 
-function Administracao() {
+export function Administracao({ secao }: { secao: SecaoAdministracao }) {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const [mostrarInativos, setMostrarInativos] = useState(false);
   const [filtroCartao, setFiltroCartao] = useState<FiltroCartao>("todos");
-  const [aba, setAba] = useState("usuarios");
+  const aba = secao;
   // Um diálogo só para a lista inteira, aberto pela linha clicada.
   const [usuarioEditando, setUsuarioEditando] = useState<Usuario | undefined>(undefined);
   const [edicaoAberta, setEdicaoAberta] = useState(false);
@@ -954,11 +957,21 @@ function Administracao() {
     onError: erro,
   });
 
+  // Exclusão: a lixeira abre a confirmação, que primeiro consulta os
+  // vínculos (chamados e projetos) e só então oferece o botão Excluir.
+  const [sistemaExcluindo, setSistemaExcluindo] = useState<Sistema | null>(null);
+  const vinculosSistema = useQuery({
+    queryKey: ["vinculos-sistema", sistemaExcluindo?.id],
+    queryFn: () => vinculosSistemaFn({ data: { id: sistemaExcluindo!.id } }),
+    enabled: sistemaExcluindo !== null,
+    staleTime: 0,
+  });
   const excluirSistema = useMutation({
     mutationFn: (id: string) => excluirSistemaFn({ data: { id } }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sistemas"] });
       qc.invalidateQueries({ queryKey: ["sistemas-admin"] });
+      setSistemaExcluindo(null);
       toast.success("Sistema excluído");
     },
     onError: erro,
@@ -1075,23 +1088,25 @@ function Administracao() {
 
   function alternarCartao(f: FiltroCartao) {
     setFiltroCartao((atual) => (atual === f ? "todos" : f));
-    setAba("usuarios");
   }
 
   return (
     <AppShell
-      title="Administração"
-      subtitle="Usuários, administradores, responsáveis por sistema e notificações"
+      trilha="Administração"
+      title={CABECALHO[secao].titulo}
+      subtitle={CABECALHO[secao].subtitulo}
       actions={
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-2 text-muted-foreground"
-          onClick={() => setMostrarInativos((v) => !v)}
-        >
-          {mostrarInativos ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
-          {mostrarInativos ? "Ocultar inativos" : "Mostrar inativos"}
-        </Button>
+        secao === "usuarios" || secao === "sistemas" ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-2 text-muted-foreground"
+            onClick={() => setMostrarInativos((v) => !v)}
+          >
+            {mostrarInativos ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+            {mostrarInativos ? "Ocultar inativos" : "Mostrar inativos"}
+          </Button>
+        ) : undefined
       }
     >
       {!isAdmin ? (
@@ -1100,61 +1115,39 @@ function Administracao() {
         </div>
       ) : null}
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <CartaoFiltro
-          label="Usuários"
-          value={String(usuarios.filter((u) => u.ativo).length)}
-          hint="ativos no sistema"
-          ativo={filtroCartao === "todos" && aba === "usuarios"}
-          onClick={() => {
-            setFiltroCartao("todos");
-            setAba("usuarios");
-          }}
-        />
-        <CartaoFiltro
-          label="Administradores"
-          value={String(usuarios.filter((u) => u.admin && u.ativo).length)}
-          hint="com acesso total"
-          ativo={filtroCartao === "admins"}
-          onClick={() => alternarCartao("admins")}
-        />
-        <CartaoFiltro
-          label="Atendentes"
-          value={String(usuarios.filter((u) => u.equipeId && u.ativo).length)}
-          hint="podem receber chamado"
-          ativo={filtroCartao === "atendentes"}
-          onClick={() => alternarCartao("atendentes")}
-        />
-        <CartaoFiltro
-          label="Sistemas"
-          value={String(sistemas.filter((s) => s.ativo).length)}
-          hint="no inventário"
-          ativo={aba === "sistemas"}
-          onClick={() => setAba("sistemas")}
-        />
-      </div>
+      {/* Os cartões filtram a lista de usuários: só fazem sentido aqui. */}
+      {secao === "usuarios" ? (
+        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+          <CartaoFiltro
+            label="Usuários"
+            value={String(usuarios.filter((u) => u.ativo).length)}
+            hint="ativos no sistema"
+            ativo={filtroCartao === "todos"}
+            onClick={() => setFiltroCartao("todos")}
+          />
+          <CartaoFiltro
+            label="Administradores"
+            value={String(usuarios.filter((u) => u.admin && u.ativo).length)}
+            hint="com acesso total"
+            ativo={filtroCartao === "admins"}
+            onClick={() => alternarCartao("admins")}
+          />
+          <CartaoFiltro
+            label="Atendentes"
+            value={String(usuarios.filter((u) => u.equipeId && u.ativo).length)}
+            hint="podem receber chamado"
+            ativo={filtroCartao === "atendentes"}
+            onClick={() => alternarCartao("atendentes")}
+          />
+        </div>
+      ) : null}
 
       {carregando ? (
         <p className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" /> Carregando cadastros...
         </p>
       ) : (
-        <Tabs value={aba} onValueChange={setAba}>
-          <TabsList>
-            <TabsTrigger value="usuarios" className="gap-2">
-              <UserCog className="size-4" /> Usuários
-            </TabsTrigger>
-            <TabsTrigger value="sistemas" className="gap-2">
-              <Server className="size-4" /> Sistemas
-            </TabsTrigger>
-            <TabsTrigger value="calendario" className="gap-2">
-              <CalendarDays className="size-4" /> Calendário
-            </TabsTrigger>
-            <TabsTrigger value="emails" className="gap-2">
-              <Mail className="size-4" /> Notificações
-            </TabsTrigger>
-          </TabsList>
-
+        <Tabs value={aba}>
           {/* -------------------------------------------------- usuários */}
           <TabsContent value="usuarios" className="mt-4 space-y-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -1341,9 +1334,9 @@ function Administracao() {
                               variant="ghost"
                               size="icon"
                               className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                              title="Excluir (só enquanto nenhum chamado usar o sistema)"
+                              title="Excluir"
                               disabled={excluirSistema.isPending}
-                              onClick={() => excluirSistema.mutate(s.id)}
+                              onClick={() => setSistemaExcluindo(s)}
                             >
                               <Trash2 className="size-3.5" />
                             </Button>
@@ -1497,6 +1490,15 @@ function Administracao() {
         }}
       />
       <DialogLink link={link} onFechar={() => setLink(null)} />
+      <ConfirmarExclusao
+        aberto={sistemaExcluindo !== null}
+        onAbertoChange={(v) => (v ? null : setSistemaExcluindo(null))}
+        nome={sistemaExcluindo?.nome ?? ""}
+        verificando={vinculosSistema.isPending}
+        vinculos={descreverVinculos(vinculosSistema.data)}
+        excluindo={excluirSistema.isPending}
+        onConfirmar={() => sistemaExcluindo && excluirSistema.mutate(sistemaExcluindo.id)}
+      />
     </AppShell>
   );
 }
