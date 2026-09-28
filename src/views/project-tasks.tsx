@@ -60,10 +60,40 @@ import {
   type CampoTarefaInput,
   type VinculosTarefaInput,
 } from "@/services/projetos.functions";
+import {
+  AlcaColuna,
+  MenuColunas,
+  useColunas,
+  type ColunaAjustada,
+  type DefColuna,
+} from "@/views/colunas-ajustaveis";
+import { CHAVE_COLUNAS_CRONOGRAMA } from "@/views/project-schedule";
 import { SeletorMultiplo, type OpcaoSeletor } from "@/views/seletor-multiplo";
 
 /** Jornada usada na conversão horas ↔ dias. Igual à do repositório. */
 const HORAS_POR_DIA = 8;
+
+/**
+ * Colunas da grade, na ordem padrão.
+ *
+ * A calha é presa: ela carrega o número da linha, a alça de arrastar e
+ * os botões de inserir e excluir. Movê-la para o meio da tabela
+ * esconderia as ações onde ninguém procura, e escondê-la deixaria a
+ * linha sem como ser manipulada.
+ *
+ * O padrão é o que vinha antes deste mecanismo existir: quem nunca
+ * abrir o menu de colunas não percebe diferença nenhuma.
+ */
+const COLUNAS_PADRAO: DefColuna[] = [
+  { chave: "indice", rotulo: "#", largura: 88, presa: true, minima: 72 },
+  { chave: "nome", rotulo: "Tarefa", largura: 360, minima: 180 },
+  { chave: "duracao", rotulo: "Duração", largura: 96, minima: 80 },
+  { chave: "inicio", rotulo: "Início", largura: 80, minima: 70 },
+  { chave: "fim", rotulo: "Fim", largura: 80, minima: 70 },
+  { chave: "progresso", rotulo: "% concl.", largura: 112, minima: 90 },
+  { chave: "predecessora", rotulo: "Predecessora", largura: 112, minima: 90 },
+  { chave: "responsavel", rotulo: "Responsável", largura: 256, minima: 140 },
+];
 
 type Unidade = "horas" | "dias";
 
@@ -150,6 +180,11 @@ export function ProjectTasks({
 }: ProjectTasksProps) {
   const qc = useQueryClient();
   const [unidade, setUnidade] = useState<Unidade>("horas");
+
+  // Mesma preferência do Gantt: as duas telas mostram a mesma grade, e
+  // arrumar as colunas duas vezes é o que faz ninguém arrumar nenhuma.
+  const controle = useColunas(CHAVE_COLUNAS_CRONOGRAMA, COLUNAS_PADRAO);
+  const colunas = controle.colunas;
 
   // Ids das tarefas mãe recolhidas. Guardado por id, não por índice: a
   // linha muda de número a cada inserção, o id não.
@@ -312,6 +347,7 @@ export function ProjectTasks({
               <Plus className="size-4" /> Nova tarefa
             </Button>
           ) : null}
+          <MenuColunas controle={controle} />
           <span className="text-xs text-muted-foreground">Duração em</span>
           <div className="flex items-center rounded-md border border-border p-0.5">
             {(["horas", "dias"] as Unidade[]).map((u) => (
@@ -335,17 +371,41 @@ export function ProjectTasks({
       </div>
 
       <div className="panel overflow-x-auto">
-        <table className="w-full min-w-[64rem] text-sm">
+        {/* `table-layout: fixed` com `<colgroup>`: sem isso o navegador
+            distribui a largura pelo conteúdo e ignora o que o usuário
+            arrastou. A largura total vem da soma das colunas, para a
+            rolagem horizontal aparecer quando não couber. */}
+        <table
+          className="text-sm"
+          style={{
+            tableLayout: "fixed",
+            width: `${colunas.reduce((soma, c) => soma + c.largura, 0)}px`,
+            minWidth: "100%",
+          }}
+        >
+          <colgroup>
+            {colunas.map((c) => (
+              <col key={c.chave} style={{ width: `${c.largura}px` }} />
+            ))}
+          </colgroup>
+
           <thead>
             <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <th className="w-[5.5rem] px-2 py-2 font-medium">#</th>
-              <th className="px-3 py-2 font-medium">Tarefa</th>
-              <th className="w-24 px-3 py-2 font-medium">Duração</th>
-              <th className="w-20 px-3 py-2 font-medium">Início</th>
-              <th className="w-20 px-3 py-2 font-medium">Fim</th>
-              <th className="w-28 px-3 py-2 font-medium">% concl.</th>
-              <th className="w-28 px-3 py-2 font-medium">Predecessora</th>
-              <th className="w-64 px-3 py-2 font-medium">Responsável</th>
+              {colunas.map((c) => (
+                <th key={c.chave} className="px-3 py-2 font-medium">
+                  {/* A alça precisa de um contexto de posicionamento
+                      próprio: o `<th>` de uma tabela com `table-layout`
+                      fixo não serve de âncora confiável. */}
+                  <span className="relative block truncate pr-1">
+                    {c.rotulo}
+                    <AlcaColuna
+                      largura={c.largura}
+                      minima={c.minima ?? 56}
+                      onRedimensionar={(l) => controle.redimensionar(c.chave, l)}
+                    />
+                  </span>
+                </th>
+              ))}
             </tr>
           </thead>
 
@@ -353,58 +413,75 @@ export function ProjectTasks({
             {/* Linha do projeto: fundo próprio e borda mais forte, para
                 não se confundir com uma tarefa mãe. */}
             <tr className="border-b-2 border-primary/30 bg-primary/10 font-semibold">
-              <td className="px-2 py-2 font-mono text-xs text-muted-foreground">0</td>
-              <td className="px-3 py-2">
-                {/* O mesmo controle das tarefas mãe, na mesma posição:
-                    a linha do projeto é a raiz da árvore, e era a única
-                    sem ele. */}
-                <span className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => setProjetoRecolhido((v) => !v)}
-                    title={projetoRecolhido ? "Expandir o cronograma" : "Recolher o cronograma"}
-                    aria-expanded={!projetoRecolhido}
-                    className="shrink-0 rounded text-muted-foreground hover:text-foreground"
-                  >
-                    {projetoRecolhido ? (
-                      <ChevronRight className="size-3.5" />
-                    ) : (
-                      <ChevronDown className="size-3.5" />
-                    )}
-                  </button>
-                  <span className="truncate">{projeto.nome}</span>
-                </span>
-                <span className="block truncate pl-5 text-[11px] font-normal text-muted-foreground">
-                  {projeto.gerenteNome ?? "Sem gerente"} · {wbs.length} tarefa(s) · {duracaoProjeto}{" "}
-                  d de calendário
-                  {progressoEsperado > 0 ? (
+              {colunas.map((c) => (
+                <td
+                  key={c.chave}
+                  className={cn(
+                    "px-3 py-2",
+                    c.chave === "indice" ? "px-2 font-mono text-xs text-muted-foreground" : "",
+                    c.chave === "duracao" || c.chave === "inicio" || c.chave === "fim"
+                      ? "font-mono text-xs"
+                      : "",
+                    c.chave === "duracao" ? "text-muted-foreground" : "",
+                  )}
+                  title={c.chave === "duracao" ? "Esforço somado de todas as tarefas" : undefined}
+                >
+                  {c.chave === "indice" ? "0" : null}
+
+                  {c.chave === "nome" ? (
                     <>
-                      {" · esperado "}
-                      {progressoEsperado}%
-                      {atrasoPontos > 0 ? (
-                        <span className="text-warning"> ({atrasoPontos} pts atrás)</span>
-                      ) : null}
+                      {/* O mesmo controle das tarefas mãe, na mesma
+                          posição: a linha do projeto é a raiz da
+                          árvore, e era a única sem ele. */}
+                      <span className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          onClick={() => setProjetoRecolhido((v) => !v)}
+                          title={
+                            projetoRecolhido ? "Expandir o cronograma" : "Recolher o cronograma"
+                          }
+                          aria-expanded={!projetoRecolhido}
+                          className="shrink-0 rounded text-muted-foreground hover:text-foreground"
+                        >
+                          {projetoRecolhido ? (
+                            <ChevronRight className="size-3.5" />
+                          ) : (
+                            <ChevronDown className="size-3.5" />
+                          )}
+                        </button>
+                        <span className="truncate">{projeto.nome}</span>
+                      </span>
+                      <span className="block truncate pl-5 text-[11px] font-normal text-muted-foreground">
+                        {projeto.gerenteNome ?? "Sem gerente"} · {wbs.length} tarefa(s) ·{" "}
+                        {duracaoProjeto} d de calendário
+                        {progressoEsperado > 0 ? (
+                          <>
+                            {" · esperado "}
+                            {progressoEsperado}%
+                            {atrasoPontos > 0 ? (
+                              <span className="text-warning"> ({atrasoPontos} pts atrás)</span>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </span>
                     </>
                   ) : null}
-                </span>
-              </td>
-              <td
-                className="px-3 py-2 font-mono text-xs text-muted-foreground"
-                title="Esforço somado de todas as tarefas"
-              >
-                {duracaoExibida(converterDuracao(esforcoProjeto, "horas", unidade), unidade)}
-              </td>
-              <td className="px-3 py-2 font-mono text-xs">{curta(projeto.inicio)}</td>
-              <td className="px-3 py-2 font-mono text-xs">{curta(projeto.fim)}</td>
-              <td className="px-3 py-2">
-                <span className="flex items-center gap-2">
-                  <span className="font-mono text-xs">{progressoReal}%</span>
-                  <Progress value={progressoReal} className="h-1 w-10" />
-                </span>
-              </td>
-              <td />
-              <td />
+
+                  {c.chave === "duracao"
+                    ? duracaoExibida(converterDuracao(esforcoProjeto, "horas", unidade), unidade)
+                    : null}
+                  {c.chave === "inicio" ? curta(projeto.inicio) : null}
+                  {c.chave === "fim" ? curta(projeto.fim) : null}
+
+                  {c.chave === "progresso" ? (
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono text-xs">{progressoReal}%</span>
+                      <Progress value={progressoReal} className="h-1 w-10" />
+                    </span>
+                  ) : null}
+                </td>
+              ))}
             </tr>
 
             {visiveis.map(({ tarefa: t, nivel, indice }) => (
@@ -417,6 +494,7 @@ export function ProjectTasks({
                 onAlternarRecolhida={() => alternarRecolhida(t.id)}
                 cpm={cpm[t.id]}
                 unidade={unidade}
+                colunas={colunas}
                 predecessoras={predecessoras[t.id] ?? []}
                 responsaveis={responsaveis[t.id] ?? []}
                 indicePorId={indicePorId}
@@ -442,7 +520,10 @@ export function ProjectTasks({
 
             {projetoRecolhido && wbs.length > 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-3 text-center text-xs text-muted-foreground">
+                <td
+                  colSpan={colunas.length}
+                  className="px-4 py-3 text-center text-xs text-muted-foreground"
+                >
                   {wbs.length} tarefa(s) recolhida(s).{" "}
                   <button
                     type="button"
@@ -457,7 +538,10 @@ export function ProjectTasks({
 
             {!projetoRecolhido && wbs.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">
+                <td
+                  colSpan={colunas.length}
+                  className="px-4 py-10 text-center text-muted-foreground"
+                >
                   Nenhuma tarefa. Use <strong>Nova tarefa</strong> para começar o cronograma.
                 </td>
               </tr>
@@ -477,6 +561,7 @@ function LinhaTarefa({
   onAlternarRecolhida,
   cpm,
   unidade,
+  colunas,
   predecessoras,
   responsaveis,
   indicePorId,
@@ -499,6 +584,8 @@ function LinhaTarefa({
   onAlternarRecolhida: () => void;
   cpm: DadosCpm | undefined;
   unidade: Unidade;
+  /** Na ordem escolhida pelo usuário, já sem as ocultas. */
+  colunas: ColunaAjustada[];
   predecessoras: Dependencia[];
   responsaveis: string[];
   indicePorId: Map<string, number>;
@@ -613,6 +700,352 @@ function LinhaTarefa({
   const duracaoBase = t.ehPai ? t.esforcoHoras : t.duracao !== null ? t.duracao : diasCalendario;
   const duracaoOrigem: Unidade = t.ehPai ? "horas" : t.duracao !== null ? unidadeOrigem : "dias";
 
+  /**
+   * Conteúdo de cada coluna, resolvido pela chave.
+   *
+   * Um mapa em vez de células escritas na ordem: a ordem agora é do
+   * usuário, e uma lista fixa de `<td>` deixaria de casar com o
+   * cabeçalho no primeiro ajuste feito no menu de colunas.
+   */
+  const celula = (chave: string) => {
+    switch (chave) {
+      case "indice":
+        return (
+          <>
+            <span className="flex h-7 items-center gap-0.5">
+              {/* A alça é o único ponto que inicia o arrasto. A linha inteira
+                arrastável atrapalharia a seleção de texto dos campos. */}
+              {editavel ? (
+                <span
+                  draggable
+                  onDragStart={onComecarArraste}
+                  onDragEnd={onCancelarArraste}
+                  title="Arraste para reordenar"
+                  className="cursor-grab text-muted-foreground opacity-0 transition-opacity active:cursor-grabbing group-focus-within:opacity-100 group-hover:opacity-100"
+                >
+                  <GripVertical className="size-3.5" />
+                </span>
+              ) : null}
+
+              <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{indice}</span>
+
+              {editavel ? (
+                <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    tabIndex={-1}
+                    className="size-6"
+                    title="Inserir tarefa abaixo (Enter)"
+                    disabled={inserir.isPending}
+                    onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: false })}
+                  >
+                    <Plus className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    tabIndex={-1}
+                    className="size-6"
+                    title="Inserir subtarefa"
+                    disabled={inserir.isPending}
+                    onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: true })}
+                  >
+                    <CornerDownRight className="size-3.5" />
+                  </Button>
+                  {/* Indentar e desindentar: o atalho de teclado existe, mas
+                    só quem já sabe descobre. O botão é o caminho visível
+                    para associar uma tarefa a outra depois de criada. */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    tabIndex={-1}
+                    className="size-6"
+                    title="Tornar subtarefa da linha acima (Alt+Shift+→)"
+                    disabled={aninhar.isPending}
+                    onClick={() => aninhar.mutate("dentro")}
+                  >
+                    <IndentIncrease className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    tabIndex={-1}
+                    className="size-6"
+                    title="Subir um nível (Alt+Shift+←)"
+                    disabled={aninhar.isPending || t.paiId === null}
+                    onClick={() => aninhar.mutate("fora")}
+                  >
+                    <IndentDecrease className="size-3.5" />
+                  </Button>
+                  {/* Separado dos dois de inserir e só vermelho no hover: é o
+                    único destrutivo do trio e não pode ser clicado por
+                    reflexo. */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    tabIndex={-1}
+                    className="ml-1 size-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    title="Excluir tarefa"
+                    disabled={excluir.isPending}
+                    onClick={() => setConfirmandoExclusao(true)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </span>
+              ) : null}
+            </span>
+
+            <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Excluir “{t.nome}”?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t.ehPai ? `As ${t.totalFolhas} subtarefas serão excluídas junto. ` : ""}A
+                    tarefa sai do cronograma e para de contar no progresso, mas continua guardada no
+                    banco — o histórico de baselines permanece íntegro.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      excluir.mutate();
+                    }}
+                  >
+                    {excluir.isPending ? "Excluindo..." : "Excluir"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
+            <DialogoConflito
+              conflito={conflito}
+              nomeTarefa={t.nome}
+              salvando={salvarCampo.isPending}
+              onFechar={() => setConflito(null)}
+              onReenviar={(v) => {
+                setConflito(null);
+                salvarCampo.mutate(v);
+              }}
+            />
+          </>
+        );
+
+      case "nome":
+        return (
+          <>
+            <span className="flex items-center gap-1.5" style={{ paddingLeft: `${nivel * 14}px` }}>
+              {t.ehPai ? (
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={onAlternarRecolhida}
+                  title={recolhida ? "Expandir subtarefas" : "Recolher subtarefas"}
+                  className="shrink-0 rounded text-muted-foreground hover:text-foreground"
+                >
+                  {recolhida ? (
+                    <ChevronRight className="size-3.5" />
+                  ) : (
+                    <ChevronDown className="size-3.5" />
+                  )}
+                </button>
+              ) : (
+                // Espaço reservado: sem ele, folha e mãe desalinham.
+                <span className="size-3.5 shrink-0" />
+              )}
+              {editavel ? (
+                <NomeInline
+                  valor={t.nome}
+                  negrito={t.ehPai}
+                  riscado={t.quadro === "done"}
+                  onSalvar={(v) => salvarCampo.mutate({ id: t.id, nome: v })}
+                  onDetalhe={onDetalhe}
+                  onNovaLinha={() => inserir.mutate({ referenciaId: t.id, comoFilha: false })}
+                  onAninhar={(direcao) => aninhar.mutate(direcao)}
+                />
+              ) : (
+                <span
+                  className={cn(
+                    "truncate",
+                    t.ehPai ? "font-semibold" : "",
+                    t.quadro === "done" ? "line-through opacity-70" : "",
+                  )}
+                >
+                  {t.nome}
+                </span>
+              )}
+
+              {/* Marcadores vêm DEPOIS do nome. A calha à esquerda pertence
+                à hierarquia, e só a ela: um ponto ali fazia a linha
+                parecer endentada, como se fosse filha de alguém. */}
+              {critica ? (
+                <span
+                  className="size-1.5 shrink-0 rounded-full bg-destructive"
+                  title="Caminho crítico — atraso aqui empurra a entrega"
+                  aria-label="Caminho crítico"
+                />
+              ) : null}
+              {t.restricaoInicio ? (
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  disabled={!editavel}
+                  onClick={() => salvarCampo.mutate({ id: t.id, limparRestricao: true })}
+                  title="Data fixada à mão. Clique para soltar e deixar o cronograma recalcular."
+                  className="shrink-0 text-warning hover:text-foreground disabled:pointer-events-none"
+                >
+                  <Lock className="size-3" />
+                </button>
+              ) : null}
+              {t.marco ? (
+                <Badge variant="outline" className="shrink-0 text-[10px]">
+                  marco
+                </Badge>
+              ) : null}
+              {t.ehPai ? (
+                <span className="shrink-0 text-[10px] font-normal text-muted-foreground">
+                  ({t.totalFolhas} subtarefa{t.totalFolhas > 1 ? "s" : ""})
+                </span>
+              ) : null}
+            </span>
+
+            {/* Segunda linha: só o que nenhuma coluna diz.
+              "Sem responsável" saiu daqui — a coluna Responsável já mostra
+              isso, e repetido em cinco linhas seguidas virava ruído na
+              parte mais densa da tela. O aviso continua existindo, como
+              destaque na própria coluna. */}
+            {t.atividade || critica || (cpm && cpm.folgaDias > 0 && !t.ehPai) ? (
+              <span
+                className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground"
+                style={{ paddingLeft: `${nivel * 14 + 14}px` }}
+              >
+                {t.atividade ? <span>{t.atividade}</span> : null}
+                {critica ? (
+                  <span className="text-destructive">
+                    {t.atividade ? " · " : ""}caminho crítico
+                  </span>
+                ) : cpm && !t.ehPai && cpm.folgaDias > 0 ? (
+                  <span>
+                    {t.atividade ? " · " : ""}folga de {cpm.folgaDias} d
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+          </>
+        );
+
+      case "duracao":
+        return (
+          <>
+            <CampoDuracao
+              valor={converterDuracao(duracaoBase, duracaoOrigem, unidade)}
+              unidade={unidade}
+              editavel={podeEditar}
+              onSalvar={(valor) =>
+                salvarCampo.mutate({
+                  id: t.id,
+                  duracao: valor,
+                  duracaoUnidade: unidade,
+                })
+              }
+            />
+          </>
+        );
+
+      case "inicio":
+        return (
+          <>
+            <CampoData
+              valor={t.inicioEfetivo}
+              editavel={podeEditar}
+              onSalvar={(v) =>
+                salvarCampo.mutate({
+                  id: t.id,
+                  inicio: new Date(`${v}T12:00:00`),
+                })
+              }
+            />
+          </>
+        );
+
+      case "fim":
+        return (
+          <>
+            <CampoData
+              valor={t.fimEfetivo}
+              editavel={podeEditar}
+              onSalvar={(v) => salvarCampo.mutate({ id: t.id, fim: new Date(`${v}T12:00:00`) })}
+            />
+          </>
+        );
+
+      case "progresso":
+        return (
+          <>
+            <span className="flex items-center gap-2">
+              <CampoNumero
+                valor={t.progressoEfetivo}
+                editavel={podeEditar}
+                onSalvar={(v) => salvarCampo.mutate({ id: t.id, progresso: v })}
+              />
+              <Progress value={t.progressoEfetivo} className="h-1 w-8" />
+            </span>
+          </>
+        );
+
+      case "predecessora":
+        return (
+          <>
+            {t.ehPai ? (
+              <span className="text-xs font-normal text-muted-foreground">—</span>
+            ) : (
+              <CampoPredecessoras
+                valor={predecessoras}
+                indicePorId={indicePorId}
+                idPorIndice={idPorIndice}
+                indiceProprio={indice}
+                totalLinhas={totalLinhas}
+                editavel={editavel}
+                onSalvar={(ids) => salvarVinculos.mutate({ id: t.id, predecessoras: ids })}
+              />
+            )}
+          </>
+        );
+
+      case "responsavel":
+        return (
+          <>
+            {t.ehPai ? (
+              <span className="text-xs font-normal text-muted-foreground">—</span>
+            ) : (
+              <span
+                className={cn("block", semResponsavel ? "text-warning" : "")}
+                title={
+                  semResponsavel
+                    ? "Sem responsável: esta tarefa não entra na capacidade da equipe e ignora férias e feriados de localidade"
+                    : undefined
+                }
+              >
+                <SeletorMultiplo
+                  opcoes={opcoesRecurso}
+                  selecionados={responsaveis}
+                  vazio="Sem responsável"
+                  titulo="Responsáveis"
+                  editavel={editavel}
+                  onMudar={(ids) => salvarVinculos.mutate({ id: t.id, responsaveis: ids })}
+                />
+              </span>
+            )}
+          </>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <tr
       // Solta em cima da linha: o alvo é a linha inteira, e a metade em
@@ -641,312 +1074,11 @@ function LinhaTarefa({
         marcaDeSolta === "depois" ? "border-b-2 border-b-primary" : "",
       )}
     >
-      {/* Calha: o número dá lugar aos botões quando o ponteiro entra na
-          linha ou algum campo dela recebe foco. Fora do hover eles não
-          ocupam pixel nem entram na ordem de tabulação. */}
-      <td className="px-2 py-1 align-top">
-        <span className="flex h-7 items-center gap-0.5">
-          {/* A alça é o único ponto que inicia o arrasto. A linha inteira
-              arrastável atrapalharia a seleção de texto dos campos. */}
-          {editavel ? (
-            <span
-              draggable
-              onDragStart={onComecarArraste}
-              onDragEnd={onCancelarArraste}
-              title="Arraste para reordenar"
-              className="cursor-grab text-muted-foreground opacity-0 transition-opacity active:cursor-grabbing group-focus-within:opacity-100 group-hover:opacity-100"
-            >
-              <GripVertical className="size-3.5" />
-            </span>
-          ) : null}
-
-          <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{indice}</span>
-
-          {editavel ? (
-            <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-              <Button
-                variant="ghost"
-                size="icon"
-                tabIndex={-1}
-                className="size-6"
-                title="Inserir tarefa abaixo (Enter)"
-                disabled={inserir.isPending}
-                onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: false })}
-              >
-                <Plus className="size-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                tabIndex={-1}
-                className="size-6"
-                title="Inserir subtarefa"
-                disabled={inserir.isPending}
-                onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: true })}
-              >
-                <CornerDownRight className="size-3.5" />
-              </Button>
-              {/* Indentar e desindentar: o atalho de teclado existe, mas
-                  só quem já sabe descobre. O botão é o caminho visível
-                  para associar uma tarefa a outra depois de criada. */}
-              <Button
-                variant="ghost"
-                size="icon"
-                tabIndex={-1}
-                className="size-6"
-                title="Tornar subtarefa da linha acima (Alt+Shift+→)"
-                disabled={aninhar.isPending}
-                onClick={() => aninhar.mutate("dentro")}
-              >
-                <IndentIncrease className="size-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                tabIndex={-1}
-                className="size-6"
-                title="Subir um nível (Alt+Shift+←)"
-                disabled={aninhar.isPending || t.paiId === null}
-                onClick={() => aninhar.mutate("fora")}
-              >
-                <IndentDecrease className="size-3.5" />
-              </Button>
-              {/* Separado dos dois de inserir e só vermelho no hover: é o
-                  único destrutivo do trio e não pode ser clicado por
-                  reflexo. */}
-              <Button
-                variant="ghost"
-                size="icon"
-                tabIndex={-1}
-                className="ml-1 size-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                title="Excluir tarefa"
-                disabled={excluir.isPending}
-                onClick={() => setConfirmandoExclusao(true)}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
-            </span>
-          ) : null}
-        </span>
-
-        <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Excluir “{t.nome}”?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {t.ehPai ? `As ${t.totalFolhas} subtarefas serão excluídas junto. ` : ""}A tarefa
-                sai do cronograma e para de contar no progresso, mas continua guardada no banco — o
-                histórico de baselines permanece íntegro.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={(e) => {
-                  e.preventDefault();
-                  excluir.mutate();
-                }}
-              >
-                {excluir.isPending ? "Excluindo..." : "Excluir"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-
-        <DialogoConflito
-          conflito={conflito}
-          nomeTarefa={t.nome}
-          salvando={salvarCampo.isPending}
-          onFechar={() => setConflito(null)}
-          onReenviar={(v) => {
-            setConflito(null);
-            salvarCampo.mutate(v);
-          }}
-        />
-      </td>
-
-      <td className="px-3 py-1">
-        <span className="flex items-center gap-1.5" style={{ paddingLeft: `${nivel * 14}px` }}>
-          {t.ehPai ? (
-            <button
-              type="button"
-              tabIndex={-1}
-              onClick={onAlternarRecolhida}
-              title={recolhida ? "Expandir subtarefas" : "Recolher subtarefas"}
-              className="shrink-0 rounded text-muted-foreground hover:text-foreground"
-            >
-              {recolhida ? (
-                <ChevronRight className="size-3.5" />
-              ) : (
-                <ChevronDown className="size-3.5" />
-              )}
-            </button>
-          ) : (
-            // Espaço reservado: sem ele, folha e mãe desalinham.
-            <span className="size-3.5 shrink-0" />
-          )}
-          {editavel ? (
-            <NomeInline
-              valor={t.nome}
-              negrito={t.ehPai}
-              riscado={t.quadro === "done"}
-              onSalvar={(v) => salvarCampo.mutate({ id: t.id, nome: v })}
-              onDetalhe={onDetalhe}
-              onNovaLinha={() => inserir.mutate({ referenciaId: t.id, comoFilha: false })}
-              onAninhar={(direcao) => aninhar.mutate(direcao)}
-            />
-          ) : (
-            <span
-              className={cn(
-                "truncate",
-                t.ehPai ? "font-semibold" : "",
-                t.quadro === "done" ? "line-through opacity-70" : "",
-              )}
-            >
-              {t.nome}
-            </span>
-          )}
-
-          {/* Marcadores vêm DEPOIS do nome. A calha à esquerda pertence
-              à hierarquia, e só a ela: um ponto ali fazia a linha
-              parecer endentada, como se fosse filha de alguém. */}
-          {critica ? (
-            <span
-              className="size-1.5 shrink-0 rounded-full bg-destructive"
-              title="Caminho crítico — atraso aqui empurra a entrega"
-              aria-label="Caminho crítico"
-            />
-          ) : null}
-          {t.restricaoInicio ? (
-            <button
-              type="button"
-              tabIndex={-1}
-              disabled={!editavel}
-              onClick={() => salvarCampo.mutate({ id: t.id, limparRestricao: true })}
-              title="Data fixada à mão. Clique para soltar e deixar o cronograma recalcular."
-              className="shrink-0 text-warning hover:text-foreground disabled:pointer-events-none"
-            >
-              <Lock className="size-3" />
-            </button>
-          ) : null}
-          {t.marco ? (
-            <Badge variant="outline" className="shrink-0 text-[10px]">
-              marco
-            </Badge>
-          ) : null}
-          {t.ehPai ? (
-            <span className="shrink-0 text-[10px] font-normal text-muted-foreground">
-              ({t.totalFolhas} subtarefa{t.totalFolhas > 1 ? "s" : ""})
-            </span>
-          ) : null}
-        </span>
-
-        {/* Segunda linha: só o que nenhuma coluna diz.
-            "Sem responsável" saiu daqui — a coluna Responsável já mostra
-            isso, e repetido em cinco linhas seguidas virava ruído na
-            parte mais densa da tela. O aviso continua existindo, como
-            destaque na própria coluna. */}
-        {t.atividade || critica || (cpm && cpm.folgaDias > 0 && !t.ehPai) ? (
-          <span
-            className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground"
-            style={{ paddingLeft: `${nivel * 14 + 14}px` }}
-          >
-            {t.atividade ? <span>{t.atividade}</span> : null}
-            {critica ? (
-              <span className="text-destructive">{t.atividade ? " · " : ""}caminho crítico</span>
-            ) : cpm && !t.ehPai && cpm.folgaDias > 0 ? (
-              <span>
-                {t.atividade ? " · " : ""}folga de {cpm.folgaDias} d
-              </span>
-            ) : null}
-          </span>
-        ) : null}
-      </td>
-
-      <td className="px-3 py-1 align-top">
-        <CampoDuracao
-          valor={converterDuracao(duracaoBase, duracaoOrigem, unidade)}
-          unidade={unidade}
-          editavel={podeEditar}
-          onSalvar={(valor) =>
-            salvarCampo.mutate({
-              id: t.id,
-              duracao: valor,
-              duracaoUnidade: unidade,
-            })
-          }
-        />
-      </td>
-
-      <td className="px-3 py-1 align-top">
-        <CampoData
-          valor={t.inicioEfetivo}
-          editavel={podeEditar}
-          onSalvar={(v) => salvarCampo.mutate({ id: t.id, inicio: new Date(`${v}T12:00:00`) })}
-        />
-      </td>
-
-      <td className="px-3 py-1 align-top">
-        <CampoData
-          valor={t.fimEfetivo}
-          editavel={podeEditar}
-          onSalvar={(v) => salvarCampo.mutate({ id: t.id, fim: new Date(`${v}T12:00:00`) })}
-        />
-      </td>
-
-      <td className="px-3 py-1 align-top">
-        <span className="flex items-center gap-2">
-          <CampoNumero
-            valor={t.progressoEfetivo}
-            editavel={podeEditar}
-            onSalvar={(v) => salvarCampo.mutate({ id: t.id, progresso: v })}
-          />
-          <Progress value={t.progressoEfetivo} className="h-1 w-8" />
-        </span>
-      </td>
-
-      {/* Pai não recebe vínculo próprio: quem depende e quem executa são
-          as folhas. */}
-      <td className="px-3 py-1 align-top">
-        {t.ehPai ? (
-          <span className="text-xs font-normal text-muted-foreground">—</span>
-        ) : (
-          <CampoPredecessoras
-            valor={predecessoras}
-            indicePorId={indicePorId}
-            idPorIndice={idPorIndice}
-            indiceProprio={indice}
-            totalLinhas={totalLinhas}
-            editavel={editavel}
-            onSalvar={(ids) => salvarVinculos.mutate({ id: t.id, predecessoras: ids })}
-          />
-        )}
-      </td>
-
-      <td className="px-3 py-1 align-top">
-        {t.ehPai ? (
-          <span className="text-xs font-normal text-muted-foreground">—</span>
-        ) : (
-          <span
-            className={cn("block", semResponsavel ? "text-warning" : "")}
-            title={
-              semResponsavel
-                ? "Sem responsável: esta tarefa não entra na capacidade da equipe e ignora férias e feriados de localidade"
-                : undefined
-            }
-          >
-            <SeletorMultiplo
-              opcoes={opcoesRecurso}
-              selecionados={responsaveis}
-              vazio="Sem responsável"
-              titulo="Responsáveis"
-              editavel={editavel}
-              onMudar={(ids) => salvarVinculos.mutate({ id: t.id, responsaveis: ids })}
-            />
-          </span>
-        )}
-      </td>
+      {colunas.map((c) => (
+        <td key={c.chave} className={cn("px-3 py-1 align-top", c.chave === "indice" ? "px-2" : "")}>
+          {celula(c.chave)}
+        </td>
+      ))}
     </tr>
   );
 }

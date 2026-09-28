@@ -499,7 +499,7 @@ function DetalheProjeto() {
 
         <Tabs defaultValue="tarefas">
           <TabsList>
-            <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
+            <TabsTrigger value="tarefas">Cronograma</TabsTrigger>
             <TabsTrigger value="gantt">Gantt</TabsTrigger>
             <TabsTrigger value="kanban">Kanban</TabsTrigger>
             {mostrarAcesso ? (

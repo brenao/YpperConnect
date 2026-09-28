@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import {
+  Building2,
   CalendarDays,
   ShieldCheck,
   Plus,
@@ -18,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { PainelCalendario } from "@/views/calendario-admin";
+import { PainelFornecedores } from "@/views/fornecedores-admin";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -1049,6 +1051,9 @@ function Administracao() {
             <TabsTrigger value="calendario" className="gap-2">
               <CalendarDays className="size-4" /> Calendário
             </TabsTrigger>
+            <TabsTrigger value="fornecedores" className="gap-2">
+              <Building2 className="size-4" /> Fornecedores
+            </TabsTrigger>
             <TabsTrigger value="emails" className="gap-2">
               <Mail className="size-4" /> Notificações
             </TabsTrigger>
@@ -1254,6 +1259,11 @@ function Administracao() {
                 empresa — é configuração de instalação, e por isso mora
                 aqui e não dentro de um projeto. */}
             <PainelCalendario isAdmin={isAdmin} />
+          </TabsContent>
+
+          {/* ---------------------------------------------- fornecedores */}
+          <TabsContent value="fornecedores" className="mt-4">
+            <PainelFornecedores isAdmin={isAdmin} />
           </TabsContent>
 
           {/* ----------------------------------------------- notificações */}

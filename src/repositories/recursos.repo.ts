@@ -26,6 +26,21 @@ export interface Recurso {
    */
   localidadeId: string | null;
   localidadeNome: string | null;
+  /**
+   * Fornecedor, quando o recurso é terceiro. Nulo significa interno.
+   *
+   * O nome vem junto porque quase toda tela que lista recurso quer
+   * mostrar de quem ele é, e buscar isso depois transformaria uma lista
+   * de cinquenta linhas em cinquenta consultas.
+   */
+  fornecedorId: string | null;
+  fornecedorNome: string | null;
+  /**
+   * Custo por hora. Opcional, e sem relatório em cima dele ainda: a
+   * coluna existe para o dado começar a ser coletado, porque relatório
+   * de custo sem histórico só serve um ano depois.
+   */
+  custoHora: number | null;
   /** Jornada diária total. */
   horasDia: number;
   /** % da jornada dedicada a projetos (o resto vai para atendimento). */
@@ -45,11 +60,13 @@ const SELECT_BASE = `
   SELECT r.id, r.usuario_id, u.nome AS usuario_nome, r.nome, r.papel,
          r.equipe_id, e.nome AS equipe_nome,
          r.localidade_id, l.nome AS localidade_nome,
+         r.fornecedor_id, f.nome AS fornecedor_nome, r.custo_hora,
          r.horas_dia, r.disponibilidade_projetos, r.ativo
     FROM recursos r
     LEFT JOIN usuarios u ON u.id = r.usuario_id
     LEFT JOIN equipes e ON e.id = r.equipe_id
-    LEFT JOIN localidades l ON l.id = r.localidade_id`;
+    LEFT JOIN localidades l ON l.id = r.localidade_id
+    LEFT JOIN fornecedores f ON f.id = r.fornecedor_id`;
 
 const mapear = (l: Linha): Recurso => ({ ...l, ativo: paraBool(l.ativo) });
 
@@ -176,6 +193,16 @@ export interface DadosRecurso {
   equipeId?: string | null | undefined;
   /** Nulo herda a localidade padrão da instalação. */
   localidadeId?: string | null | undefined;
+  /**
+   * Fornecedor do terceiro. Nulo é interno, que é o padrão.
+   *
+   * Um recurso pertence a um fornecedor só. Pessoa que troca de empresa
+   * vira outro recurso: as tarefas antigas continuam apontando para o
+   * vínculo que existia quando foram feitas, e é isso que o histórico
+   * precisa.
+   */
+  fornecedorId?: string | null | undefined;
+  custoHora?: number | null | undefined;
   /** Opcional: sem valor, assume a jornada padrão de 8h. */
   horasDia?: number | undefined;
   disponibilidadeProjetos: number;
@@ -189,6 +216,9 @@ function validar(d: DadosRecurso): void {
   }
   if (d.disponibilidadeProjetos < 0 || d.disponibilidadeProjetos > 100) {
     throw new ErroDominio("Disponibilidade deve estar entre 0 e 100%");
+  }
+  if (d.custoHora !== null && d.custoHora !== undefined && d.custoHora < 0) {
+    throw new ErroDominio("O custo por hora não pode ser negativo");
   }
 }
 
@@ -204,10 +234,12 @@ export async function criarRecurso(ctx: ContextoUsuario, d: DadosRecurso): Promi
   const id = crypto.randomUUID();
   await executar(
     `INSERT INTO recursos
-       (id, usuario_id, nome, papel, equipe_id, localidade_id, horas_dia,
+       (id, usuario_id, nome, papel, equipe_id, localidade_id,
+        fornecedor_id, custo_hora, horas_dia,
         disponibilidade_projetos, ativo)
      VALUES
-       (:id, :usuarioId, :nome, :papel, :equipeId, :localidadeId, :horasDia,
+       (:id, :usuarioId, :nome, :papel, :equipeId, :localidadeId,
+        :fornecedorId, :custoHora, :horasDia,
         :disponibilidade, 1)`,
     {
       id,
@@ -216,6 +248,8 @@ export async function criarRecurso(ctx: ContextoUsuario, d: DadosRecurso): Promi
       papel: d.papel?.trim() ?? null,
       equipeId: d.equipeId ?? null,
       localidadeId: d.localidadeId ?? null,
+      fornecedorId: d.fornecedorId ?? null,
+      custoHora: d.custoHora ?? null,
       horasDia: d.horasDia ?? HORAS_DIA_PADRAO,
       disponibilidade: d.disponibilidadeProjetos,
     },
@@ -238,6 +272,8 @@ export async function atualizarRecurso(
             papel = :papel,
             equipe_id = :equipeId,
             localidade_id = :localidadeId,
+            fornecedor_id = :fornecedorId,
+            custo_hora = :custoHora,
             horas_dia = :horasDia,
             disponibilidade_projetos = :disponibilidade
       WHERE id = :id`,
@@ -248,6 +284,8 @@ export async function atualizarRecurso(
       papel: d.papel?.trim() ?? null,
       equipeId: d.equipeId ?? null,
       localidadeId: d.localidadeId ?? null,
+      fornecedorId: d.fornecedorId ?? null,
+      custoHora: d.custoHora ?? null,
       horasDia: d.horasDia ?? HORAS_DIA_PADRAO,
       disponibilidade: d.disponibilidadeProjetos,
     },
@@ -363,11 +401,19 @@ export async function capacidadeDiariaDaTarefa(tarefaId: string): Promise<number
 
 // --------------------------------------------------------- ausências
 
+/**
+ * O tipo e os rótulos vivem em `@/services/resource-utils`.
+ *
+ * A tela precisa deles no navegador, e importar um VALOR deste arquivo
+ * arrastaria o `client.server.ts` — com as credenciais do banco — para
+ * o bundle do cliente. `import type` some na compilação; import comum,
+ * não. É o mesmo motivo que levou `capacidadeProjeto` para lá.
+ *
+ * Reexportado porque as interfaces daqui o usam, e quem consome o
+ * repositório espera encontrá-lo junto delas.
+ */
 export type TipoAusencia =
   "ferias" | "licenca_medica" | "licenca" | "treinamento" | "folga" | "outro";
-
-// AUSENCIA_LABEL vive em @/services/resource-utils, pelo mesmo motivo de
-// capacidadeProjeto: o mapa de disponibilidade usa no navegador.
 
 export interface Ausencia {
   id: string;
@@ -516,7 +562,9 @@ export async function atualizarAusencia(
  */
 export async function excluirAusencia(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirGestaoRecursos(ctx, "excluir ausências");
-  const n = await executar(`DELETE FROM recurso_ausencias WHERE id = :id`, { id });
+  const n = await executar(`DELETE FROM recurso_ausencias WHERE id = :id`, {
+    id,
+  });
   if (n === 0) throw new ErroDominio(`Ausência ${id} não encontrada`);
 }
 
@@ -578,4 +626,176 @@ export async function ausenciasDoProjeto(projetoId: string): Promise<PeriodoAuse
       ORDER BY a.inicio`,
     { projetoId },
   );
+}
+
+// ------------------------------------------------------- fornecedores
+
+/**
+ * Empresa que fornece gente para os projetos.
+ *
+ * Cadastro próprio, e não texto livre no papel do recurso, porque sem
+ * ele "Operacional", "OPERACIONAL" e "Operacional LTDA" viram três
+ * empresas na primeira semana — e qualquer soma por fornecedor sai
+ * errada sem ninguém perceber.
+ */
+export interface Fornecedor {
+  id: string;
+  nome: string;
+  cnpj: string | null;
+  contatoNome: string | null;
+  contatoEmail: string | null;
+  contatoTelefone: string | null;
+  /** Sugestão de custo/hora para os recursos deste fornecedor. */
+  custoHoraPadrao: number | null;
+  observacao: string | null;
+  ativo: boolean;
+  /** Quantos recursos ativos vêm dele — a tela avisa antes de desativar. */
+  recursos: number;
+}
+
+interface LinhaFornecedor extends Omit<Fornecedor, "ativo"> {
+  ativo: number;
+}
+
+const mapearFornecedor = (l: LinhaFornecedor): Fornecedor => ({
+  ...l,
+  ativo: paraBool(l.ativo),
+});
+
+export async function listarFornecedores(apenasAtivos = false): Promise<Fornecedor[]> {
+  const linhas = await consultar<LinhaFornecedor>(
+    `SELECT f.id, f.nome, f.cnpj, f.contato_nome, f.contato_email, f.contato_telefone,
+            f.custo_hora_padrao, f.observacao, f.ativo,
+            (SELECT COUNT(*) FROM recursos r
+              WHERE r.fornecedor_id = f.id AND r.ativo = 1)::int AS recursos
+       FROM fornecedores f
+      ${apenasAtivos ? "WHERE f.ativo = 1" : ""}
+      ORDER BY f.nome`,
+  );
+  return linhas.map(mapearFornecedor);
+}
+
+export interface DadosFornecedor {
+  nome: string;
+  cnpj?: string | null | undefined;
+  contatoNome?: string | null | undefined;
+  contatoEmail?: string | null | undefined;
+  contatoTelefone?: string | null | undefined;
+  custoHoraPadrao?: number | null | undefined;
+  observacao?: string | null | undefined;
+}
+
+/** Só dígitos: máscara é assunto de tela, e o índice único compara o valor. */
+function limparCnpj(v: string | null | undefined): string | null {
+  const digitos = (v ?? "").replace(/\D/g, "");
+  if (digitos === "") return null;
+  if (digitos.length !== 14) throw new ErroDominio("O CNPJ deve ter 14 dígitos");
+  return digitos;
+}
+
+function validarFornecedor(d: DadosFornecedor): void {
+  if (d.nome.trim().length < 2) throw new ErroDominio("Informe o nome do fornecedor");
+  if (d.custoHoraPadrao !== null && d.custoHoraPadrao !== undefined && d.custoHoraPadrao < 0) {
+    throw new ErroDominio("O custo por hora não pode ser negativo");
+  }
+}
+
+/** Traduz a violação de unicidade, que é o erro mais provável aqui. */
+function traduzirFornecedorDuplicado(e: unknown): never {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.includes("ux_fornecedores_nome")) {
+    throw new ErroDominio("Já existe um fornecedor com esse nome.");
+  }
+  if (msg.includes("ux_fornecedores_cnpj")) {
+    throw new ErroDominio("Já existe um fornecedor com esse CNPJ.");
+  }
+  throw e;
+}
+
+export async function criarFornecedor(ctx: ContextoUsuario, d: DadosFornecedor): Promise<string> {
+  exigirGestaoRecursos(ctx, "cadastrar fornecedores");
+  validarFornecedor(d);
+
+  const id = crypto.randomUUID();
+  try {
+    await executar(
+      `INSERT INTO fornecedores
+         (id, nome, cnpj, contato_nome, contato_email, contato_telefone,
+          custo_hora_padrao, observacao, ativo, criado_em)
+       VALUES
+         (:id, :nome, :cnpj, :contatoNome, :contatoEmail, :contatoTelefone,
+          :custoHoraPadrao, :observacao, 1, LOCALTIMESTAMP)`,
+      {
+        id,
+        nome: d.nome.trim(),
+        cnpj: limparCnpj(d.cnpj),
+        contatoNome: d.contatoNome?.trim() ?? null,
+        contatoEmail: d.contatoEmail?.trim() ?? null,
+        contatoTelefone: d.contatoTelefone?.trim() ?? null,
+        custoHoraPadrao: d.custoHoraPadrao ?? null,
+        observacao: d.observacao?.trim() ?? null,
+      },
+    );
+  } catch (e) {
+    traduzirFornecedorDuplicado(e);
+  }
+  return id;
+}
+
+export async function atualizarFornecedor(
+  ctx: ContextoUsuario,
+  id: string,
+  d: DadosFornecedor,
+): Promise<void> {
+  exigirGestaoRecursos(ctx, "alterar fornecedores");
+  validarFornecedor(d);
+
+  let n = 0;
+  try {
+    n = await executar(
+      `UPDATE fornecedores
+          SET nome = :nome, cnpj = :cnpj,
+              contato_nome = :contatoNome,
+              contato_email = :contatoEmail,
+              contato_telefone = :contatoTelefone,
+              custo_hora_padrao = :custoHoraPadrao,
+              observacao = :observacao
+        WHERE id = :id`,
+      {
+        id,
+        nome: d.nome.trim(),
+        cnpj: limparCnpj(d.cnpj),
+        contatoNome: d.contatoNome?.trim() ?? null,
+        contatoEmail: d.contatoEmail?.trim() ?? null,
+        contatoTelefone: d.contatoTelefone?.trim() ?? null,
+        custoHoraPadrao: d.custoHoraPadrao ?? null,
+        observacao: d.observacao?.trim() ?? null,
+      },
+    );
+  } catch (e) {
+    traduzirFornecedorDuplicado(e);
+  }
+  if (n === 0) throw new ErroDominio(`Fornecedor ${id} não encontrado`);
+}
+
+/**
+ * Desativa em vez de excluir: recursos apontam para ele por FK, e o
+ * contrato que acabou continua explicando quem executou o quê.
+ *
+ * Os recursos dele NÃO são desativados junto. Contrato encerrado não
+ * significa que a pessoa saiu do projeto no mesmo dia, e desativar o
+ * recurso apagaria a alocação dele do cronograma sem aviso. A tela diz
+ * quantos continuam ativos, e quem decide é quem está olhando.
+ */
+export async function definirFornecedorAtivo(
+  ctx: ContextoUsuario,
+  id: string,
+  ativo: boolean,
+): Promise<void> {
+  exigirGestaoRecursos(ctx, "alterar fornecedores");
+  const n = await executar(`UPDATE fornecedores SET ativo = :ativo WHERE id = :id`, {
+    id,
+    ativo: deBool(ativo),
+  });
+  if (n === 0) throw new ErroDominio(`Fornecedor ${id} não encontrado`);
 }

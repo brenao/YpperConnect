@@ -1,5 +1,5 @@
 ﻿/**
- * Aba Cronograma: grade da WBS à esquerda, linha do tempo à direita.
+ * Aba Gantt: grade da WBS à esquerda, linha do tempo à direita.
  *
  * Os dois lados são uma tabela só, com as colunas da esquerda em
  * `position: sticky`. É o que garante que barra e linha nunca saiam de
@@ -14,7 +14,11 @@
  * O nome da tarefa aqui é só leitura. Editar em dois lugares dobra a
  * superfície de erro sem dobrar a utilidade, e cada coluna larga que a
  * grade ocupa é linha do tempo que o Gantt perde — que é justamente o
- * que se vem ver nesta aba. Renomear é na aba Tarefas.
+ * que se vem ver nesta aba. Renomear é na aba Cronograma.
+ *
+ * A largura e a ordem das colunas são do usuário, e a preferência é a
+ * mesma da aba Cronograma: as duas telas mostram a mesma grade, e
+ * configurar duas vezes é o que faz ninguém configurar nenhuma.
  */
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -42,6 +46,13 @@ import {
 } from "@/services/projetos.functions";
 import { BarraProjeto, BarraTarefa, CabecalhoGantt, MarcaHoje } from "@/views/project-gantt";
 import {
+  AlcaColuna,
+  MenuColunas,
+  useColunas,
+  type ColunaAjustada,
+  type DefColuna,
+} from "@/views/colunas-ajustaveis";
+import {
   ZOOM_LABEL,
   estiloFundo,
   montarJanela,
@@ -51,41 +62,50 @@ import {
 } from "@/services/gantt-utils";
 
 /**
- * Colunas fixas. A soma é a largura congelada da esquerda.
+ * Colunas da grade congelada.
  *
- * As colunas de data precisam caber `dd/mm/aaaa` e, quando em edição, o
- * seletor nativo do navegador — que reserva espaço para o ícone de
- * calendário além do texto. Com menos que isto o ano aparece cortado.
+ * As de data precisam caber `dd/mm/aaaa` e, em edição, o seletor nativo
+ * do navegador — que reserva espaço para o ícone de calendário além do
+ * texto. Com menos que isto o ano aparece cortado, e é por isso que a
+ * largura mínima delas é maior que a das outras.
+ *
+ * A calha é presa: ela ancora a leitura da linha e é a primeira coluna
+ * congelada. Movê-la deixaria os botões de inserir tarefa no meio da
+ * grade.
  */
-const COLUNAS = [
-  { chave: "indice", rotulo: "#", largura: 76 },
-  { chave: "nome", rotulo: "Tarefa", largura: 300 },
-  { chave: "inicio", rotulo: "Início", largura: 136 },
-  { chave: "fim", rotulo: "Término", largura: 136 },
-  { chave: "progresso", rotulo: "%", largura: 92 },
-] as const;
+const COLUNAS_PADRAO: DefColuna[] = [
+  { chave: "indice", rotulo: "#", largura: 76, presa: true, minima: 64 },
+  { chave: "nome", rotulo: "Tarefa", largura: 300, minima: 160 },
+  { chave: "inicio", rotulo: "Início", largura: 136, minima: 110 },
+  { chave: "fim", rotulo: "Término", largura: 136, minima: 110 },
+  { chave: "progresso", rotulo: "%", largura: 92, minima: 76 },
+];
 
-const DESLOCAMENTOS = COLUNAS.reduce<number[]>((acc, c, i) => {
-  acc.push((acc[i - 1] ?? 0) + (i === 0 ? 0 : (COLUNAS[i - 1]?.largura ?? 0)));
-  return acc;
-}, []);
-
-const LARGURA_GRADE = COLUNAS.reduce((s, c) => s + c.largura, 0);
+/**
+ * Chave da preferência, compartilhada com a aba Cronograma.
+ *
+ * Mesmo nome de propósito: quem arruma as colunas numa tela espera
+ * encontrar a outra igual.
+ */
+export const CHAVE_COLUNAS_CRONOGRAMA = "cronograma";
 
 const FUNDO_LINHA = "var(--card)";
 const FUNDO_PAI = "color-mix(in oklch, var(--secondary) 35%, var(--card))";
 
-/** Posição e fundo de uma célula congelada. */
-function fixa(indice: number, ehPai: boolean): CSSProperties {
-  return {
-    left: `${DESLOCAMENTOS[indice] ?? 0}px`,
-    backgroundColor: ehPai ? FUNDO_PAI : FUNDO_LINHA,
-  };
-}
-
 const CLASSE_FIXA = "sticky z-20";
 /** Última coluna congelada: a borda marca onde termina a grade. */
 const CLASSE_BORDA = "border-r border-border";
+
+/** Deslocamento acumulado de cada coluna congelada. */
+function deslocamentos(colunas: ColunaAjustada[]): number[] {
+  const saida: number[] = [];
+  let soma = 0;
+  for (const c of colunas) {
+    saida.push(soma);
+    soma += c.largura;
+  }
+  return saida;
+}
 
 export interface ProjectScheduleProps {
   projeto: Projeto;
@@ -115,6 +135,18 @@ export function ProjectSchedule({
 }: ProjectScheduleProps) {
   const hidratado = useHydrated();
   const rolagem = useRef<HTMLDivElement>(null);
+
+  const controle = useColunas(CHAVE_COLUNAS_CRONOGRAMA, COLUNAS_PADRAO);
+  const colunas = controle.colunas;
+
+  const offsets = useMemo(() => deslocamentos(colunas), [colunas]);
+  const larguraGrade = useMemo(() => colunas.reduce((s, c) => s + c.largura, 0), [colunas]);
+
+  /** Posição e fundo de uma célula congelada. */
+  const fixa = (indice: number, ehPai: boolean): CSSProperties => ({
+    left: `${offsets[indice] ?? 0}px`,
+    backgroundColor: ehPai ? FUNDO_PAI : FUNDO_LINHA,
+  });
 
   const tarefas = useMemo(() => wbs.map((w) => w.tarefa), [wbs]);
 
@@ -147,7 +179,9 @@ export function ProjectSchedule({
     const el = rolagem.current;
     if (!el || !hoje) return;
     const dias = Math.round((hoje.getTime() - janela.inicio.getTime()) / 86_400_000);
-    el.scrollTo({ left: Math.max(0, LARGURA_GRADE + dias * janela.px - el.clientWidth / 2) });
+    el.scrollTo({
+      left: Math.max(0, larguraGrade + dias * janela.px - el.clientWidth / 2),
+    });
   };
 
   // Abre já mostrando o presente: em projeto longo, a rolagem começaria
@@ -170,8 +204,8 @@ export function ProjectSchedule({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
-          Clique nas datas e no percentual para editar. O nome se edita na aba Tarefas. Linhas com
-          subtarefas mostram o consolidado e não são editáveis.
+          Clique nas datas e no percentual para editar. O nome se edita na aba Cronograma. Linhas
+          com subtarefas mostram o consolidado e não são editáveis.
           {criticas > 0 ? (
             <>
               {" "}
@@ -182,6 +216,7 @@ export function ProjectSchedule({
         </p>
 
         <div className="flex flex-wrap items-center gap-3">
+          <MenuColunas controle={controle} />
           <div className="flex items-center rounded-md border border-border p-0.5">
             {(Object.keys(ZOOM_LABEL) as ZoomGantt[]).map((z) => (
               <button
@@ -209,10 +244,13 @@ export function ProjectSchedule({
       <div ref={rolagem} className="panel max-h-[70vh] overflow-auto">
         <table
           className="border-separate border-spacing-0 text-sm"
-          style={{ tableLayout: "fixed", width: `${LARGURA_GRADE + janela.largura}px` }}
+          style={{
+            tableLayout: "fixed",
+            width: `${larguraGrade + janela.largura}px`,
+          }}
         >
           <colgroup>
-            {COLUNAS.map((c) => (
+            {colunas.map((c) => (
               <col key={c.chave} style={{ width: `${c.largura}px` }} />
             ))}
             <col style={{ width: `${janela.largura}px` }} />
@@ -220,16 +258,26 @@ export function ProjectSchedule({
 
           <thead>
             <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-              {COLUNAS.map((c, i) => (
+              {colunas.map((c, i) => (
                 <th
                   key={c.chave}
                   className={cn(
                     "sticky top-0 z-40 border-b border-border px-3 py-2 font-medium",
-                    i === COLUNAS.length - 1 ? CLASSE_BORDA : "",
+                    // `relative` não cabe junto de `sticky`, e a alça
+                    // precisa de um contexto de posicionamento: o wrapper
+                    // interno resolve sem quebrar o congelamento.
+                    i === colunas.length - 1 ? CLASSE_BORDA : "",
                   )}
                   style={fixa(i, false)}
                 >
-                  {c.rotulo}
+                  <span className="relative block truncate pr-1">
+                    {c.rotulo}
+                    <AlcaColuna
+                      largura={c.largura}
+                      minima={c.minima ?? 56}
+                      onRedimensionar={(l) => controle.redimensionar(c.chave, l)}
+                    />
+                  </span>
                 </th>
               ))}
               <th
@@ -244,56 +292,39 @@ export function ProjectSchedule({
           <tbody>
             {/* Linha 0: o projeto. Dá a escala de leitura do cronograma. */}
             <tr className="font-medium">
-              <td
-                className={cn(
-                  CLASSE_FIXA,
-                  "border-b border-border px-2 py-2 font-mono text-xs text-muted-foreground",
-                )}
-                style={fixa(0, true)}
-              >
-                0
-              </td>
-              <td
-                className={cn(CLASSE_FIXA, "border-b border-border px-3 py-2")}
-                style={fixa(1, true)}
-                title={projeto.nome}
-              >
-                <span className="block truncate">{projeto.nome}</span>
-                {/* Duração e gerente vêm para cá porque as colunas próprias
-                    deram lugar à faixa do Gantt. */}
-                <span className="block truncate text-[11px] font-normal text-muted-foreground">
-                  {diasEntre(projeto.inicio, projeto.fim)} d
-                  {projeto.gerenteNome ? ` · ${projeto.gerenteNome}` : ""}
-                </span>
-              </td>
-              <td
-                className={cn(
-                  CLASSE_FIXA,
-                  "whitespace-nowrap border-b border-border px-3 py-2 font-mono text-xs",
-                )}
-                style={fixa(2, true)}
-              >
-                {fmt(projeto.inicio)}
-              </td>
-              <td
-                className={cn(
-                  CLASSE_FIXA,
-                  "whitespace-nowrap border-b border-border px-3 py-2 font-mono text-xs",
-                )}
-                style={fixa(3, true)}
-              >
-                {fmt(projeto.fim)}
-              </td>
-              <td
-                className={cn(
-                  CLASSE_FIXA,
-                  CLASSE_BORDA,
-                  "border-b border-border px-3 py-2 font-mono text-xs",
-                )}
-                style={fixa(4, true)}
-              >
-                {progressoProjeto}%
-              </td>
+              {colunas.map((c, i) => (
+                <td
+                  key={c.chave}
+                  className={cn(
+                    CLASSE_FIXA,
+                    "border-b border-border px-3 py-2",
+                    i === colunas.length - 1 ? CLASSE_BORDA : "",
+                    c.chave === "indice" ? "px-2 font-mono text-xs text-muted-foreground" : "",
+                    c.chave === "inicio" || c.chave === "fim" || c.chave === "progresso"
+                      ? "whitespace-nowrap font-mono text-xs"
+                      : "",
+                  )}
+                  style={fixa(i, true)}
+                >
+                  {c.chave === "indice" ? "0" : null}
+                  {c.chave === "nome" ? (
+                    <>
+                      <span className="block truncate" title={projeto.nome}>
+                        {projeto.nome}
+                      </span>
+                      {/* Duração e gerente vêm para cá porque as colunas
+                          próprias deram lugar à faixa do Gantt. */}
+                      <span className="block truncate text-[11px] font-normal text-muted-foreground">
+                        {diasEntre(projeto.inicio, projeto.fim)} d
+                        {projeto.gerenteNome ? ` · ${projeto.gerenteNome}` : ""}
+                      </span>
+                    </>
+                  ) : null}
+                  {c.chave === "inicio" ? fmt(projeto.inicio) : null}
+                  {c.chave === "fim" ? fmt(projeto.fim) : null}
+                  {c.chave === "progresso" ? `${progressoProjeto}%` : null}
+                </td>
+              ))}
               <td
                 className="relative border-b border-border p-0"
                 style={{ ...estiloFundo(janela), backgroundColor: FUNDO_PAI }}
@@ -319,6 +350,8 @@ export function ProjectSchedule({
                 cpm={cpm[t.id]}
                 janela={janela}
                 hoje={hoje}
+                colunas={colunas}
+                fixa={fixa}
                 predecessoras={(predecessoras[t.id] ?? []).map((p) => ({
                   indice: indicePorId.get(p) ?? 0,
                   nome: tarefas.find((x) => x.id === p)?.nome ?? "",
@@ -333,7 +366,7 @@ export function ProjectSchedule({
             {wbs.length === 0 ? (
               <tr>
                 <td
-                  colSpan={COLUNAS.length + 1}
+                  colSpan={colunas.length + 1}
                   className="px-4 py-8 text-center text-muted-foreground"
                 >
                   Nenhuma tarefa. Use <strong>Nova tarefa</strong> para começar o cronograma.
@@ -360,6 +393,8 @@ function LinhaCronograma({
   cpm,
   janela,
   hoje,
+  colunas,
+  fixa,
   predecessoras,
   responsaveis,
   planejado,
@@ -372,6 +407,8 @@ function LinhaCronograma({
   cpm: DadosCpm | undefined;
   janela: JanelaGantt;
   hoje: Date | null;
+  colunas: ColunaAjustada[];
+  fixa: (indice: number, ehPai: boolean) => CSSProperties;
   predecessoras: { indice: number; nome: string }[];
   responsaveis: string[];
   planejado: { inicio: Date; fim: Date } | undefined;
@@ -418,146 +455,171 @@ function LinhaCronograma({
 
   const fundo = fixa(0, t.ehPai).backgroundColor;
 
+  /**
+   * Conteúdo de cada coluna, resolvido pela chave.
+   *
+   * Um mapa em vez de células escritas na ordem: a ordem agora é do
+   * usuário, e uma lista fixa de `<td>` deixaria de casar com o
+   * cabeçalho no primeiro arrasto do menu.
+   */
+  const celula = (chave: string) => {
+    switch (chave) {
+      case "indice":
+        return (
+          // Calha: número dá lugar aos botões no hover ou no foco.
+          <span className="flex h-7 items-center gap-0.5">
+            <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{indice}</span>
+            {editavel ? (
+              <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  tabIndex={-1}
+                  className="size-6"
+                  title="Inserir tarefa abaixo"
+                  disabled={inserir.isPending}
+                  onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: false })}
+                >
+                  <Plus className="size-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  tabIndex={-1}
+                  className="size-6"
+                  title="Inserir subtarefa"
+                  disabled={inserir.isPending}
+                  onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: true })}
+                >
+                  <CornerDownRight className="size-3.5" />
+                </Button>
+              </span>
+            ) : null}
+          </span>
+        );
+
+      case "nome":
+        return (
+          <>
+            {/* Nome em texto: renomear é na aba Cronograma. O ícone à
+                direita abre o detalhe, que é o caminho para o resto. */}
+            <span className="flex items-center gap-1.5" style={{ paddingLeft: `${nivel * 14}px` }}>
+              {t.ehPai ? <ChevronRight className="size-3 shrink-0 text-muted-foreground" /> : null}
+              {critica ? (
+                <span
+                  className="size-1.5 shrink-0 rounded-full bg-destructive"
+                  title="Caminho crítico — atraso aqui empurra a entrega"
+                  aria-label="Caminho crítico"
+                />
+              ) : null}
+
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate",
+                  t.ehPai ? "font-medium" : "",
+                  t.quadro === "done" ? "line-through opacity-70" : "",
+                )}
+                title={t.nome}
+              >
+                {t.nome}
+              </span>
+
+              {t.marco ? (
+                <Badge variant="outline" className="shrink-0 text-[10px]">
+                  marco
+                </Badge>
+              ) : null}
+              {t.ehPai ? (
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  ({t.totalFolhas} subtarefa{t.totalFolhas > 1 ? "s" : ""})
+                </span>
+              ) : null}
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                title="Abrir detalhes"
+                onClick={onDetalhe}
+              >
+                <ChevronRight className="size-3.5" />
+              </Button>
+            </span>
+
+            {secundaria.length ? (
+              <span
+                className="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                style={{ paddingLeft: `${nivel * 14 + 14}px` }}
+                title={secundaria.join(" · ")}
+              >
+                {secundaria.map((parte, i) => (
+                  <span key={i} className={parte === "caminho crítico" ? "text-destructive" : ""}>
+                    {i > 0 ? " · " : ""}
+                    {parte}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </>
+        );
+
+      case "inicio":
+        return (
+          <CampoData
+            valor={t.inicioEfetivo}
+            editavel={podeEditar}
+            onSalvar={(v) =>
+              salvarCampo.mutate({
+                id: t.id,
+                inicio: new Date(`${v}T12:00:00`),
+              })
+            }
+          />
+        );
+
+      case "fim":
+        return (
+          <CampoData
+            valor={t.fimEfetivo}
+            editavel={podeEditar}
+            alerta={desvioFim}
+            onSalvar={(v) => salvarCampo.mutate({ id: t.id, fim: new Date(`${v}T12:00:00`) })}
+          />
+        );
+
+      case "progresso":
+        return (
+          <span className="flex items-center gap-2">
+            <CampoProgresso
+              valor={t.progressoEfetivo}
+              editavel={podeEditar}
+              onSalvar={(v) => salvarCampo.mutate({ id: t.id, progresso: v })}
+            />
+            <Progress value={t.progressoEfetivo} className="h-1 w-8" />
+          </span>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   return (
     <tr className="group">
-      {/* Calha: número dá lugar aos botões no hover ou no foco da linha. */}
-      <td
-        className={cn(CLASSE_FIXA, "border-b border-border/60 px-2 py-1 align-top")}
-        style={fixa(0, t.ehPai)}
-      >
-        <span className="flex h-7 items-center gap-0.5">
-          <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{indice}</span>
-          {editavel ? (
-            <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-              <Button
-                variant="ghost"
-                size="icon"
-                tabIndex={-1}
-                className="size-6"
-                title="Inserir tarefa abaixo"
-                disabled={inserir.isPending}
-                onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: false })}
-              >
-                <Plus className="size-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                tabIndex={-1}
-                className="size-6"
-                title="Inserir subtarefa"
-                disabled={inserir.isPending}
-                onClick={() => inserir.mutate({ referenciaId: t.id, comoFilha: true })}
-              >
-                <CornerDownRight className="size-3.5" />
-              </Button>
-            </span>
-          ) : null}
-        </span>
-      </td>
-
-      <td
-        className={cn(CLASSE_FIXA, "border-b border-border/60 px-3 py-1")}
-        style={fixa(1, t.ehPai)}
-      >
-        {/* Nome em texto: renomear é na aba Tarefas. O ícone à direita
-            abre o detalhe, que é o caminho para o resto dos campos. */}
-        <span className="flex items-center gap-1.5" style={{ paddingLeft: `${nivel * 14}px` }}>
-          {t.ehPai ? <ChevronRight className="size-3 shrink-0 text-muted-foreground" /> : null}
-          {/* Marcador do caminho crítico: folga zero. */}
-          {critica ? (
-            <span
-              className="size-1.5 shrink-0 rounded-full bg-destructive"
-              title="Caminho crítico — atraso aqui empurra a entrega"
-              aria-label="Caminho crítico"
-            />
-          ) : null}
-
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate",
-              t.ehPai ? "font-medium" : "",
-              t.quadro === "done" ? "line-through opacity-70" : "",
-            )}
-            title={t.nome}
-          >
-            {t.nome}
-          </span>
-
-          {t.marco ? (
-            <Badge variant="outline" className="shrink-0 text-[10px]">
-              marco
-            </Badge>
-          ) : null}
-          {t.ehPai ? (
-            <span className="shrink-0 text-[10px] text-muted-foreground">
-              ({t.totalFolhas} subtarefa{t.totalFolhas > 1 ? "s" : ""})
-            </span>
-          ) : null}
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6 shrink-0"
-            title="Abrir detalhes"
-            onClick={onDetalhe}
-          >
-            <ChevronRight className="size-3.5" />
-          </Button>
-        </span>
-
-        {secundaria.length ? (
-          <span
-            className="mt-0.5 block truncate text-[11px] text-muted-foreground"
-            style={{ paddingLeft: `${nivel * 14 + 14}px` }}
-            title={secundaria.join(" · ")}
-          >
-            {secundaria.map((parte, i) => (
-              <span key={i} className={parte === "caminho crítico" ? "text-destructive" : ""}>
-                {i > 0 ? " · " : ""}
-                {parte}
-              </span>
-            ))}
-          </span>
-        ) : null}
-      </td>
-
-      <td
-        className={cn(CLASSE_FIXA, "border-b border-border/60 px-3 py-1 align-top")}
-        style={fixa(2, t.ehPai)}
-      >
-        <CampoData
-          valor={t.inicioEfetivo}
-          editavel={podeEditar}
-          onSalvar={(v) => salvarCampo.mutate({ id: t.id, inicio: new Date(`${v}T12:00:00`) })}
-        />
-      </td>
-
-      <td
-        className={cn(CLASSE_FIXA, "border-b border-border/60 px-3 py-1 align-top")}
-        style={fixa(3, t.ehPai)}
-      >
-        <CampoData
-          valor={t.fimEfetivo}
-          editavel={podeEditar}
-          alerta={desvioFim}
-          onSalvar={(v) => salvarCampo.mutate({ id: t.id, fim: new Date(`${v}T12:00:00`) })}
-        />
-      </td>
-
-      <td
-        className={cn(CLASSE_FIXA, CLASSE_BORDA, "border-b border-border/60 px-3 py-1 align-top")}
-        style={fixa(4, t.ehPai)}
-      >
-        <span className="flex items-center gap-2">
-          <CampoProgresso
-            valor={t.progressoEfetivo}
-            editavel={podeEditar}
-            onSalvar={(v) => salvarCampo.mutate({ id: t.id, progresso: v })}
-          />
-          <Progress value={t.progressoEfetivo} className="h-1 w-8" />
-        </span>
-      </td>
+      {colunas.map((c, i) => (
+        <td
+          key={c.chave}
+          className={cn(
+            CLASSE_FIXA,
+            "border-b border-border/60 px-3 py-1 align-top",
+            i === colunas.length - 1 ? CLASSE_BORDA : "",
+            c.chave === "indice" ? "px-2" : "",
+          )}
+          style={fixa(i, t.ehPai)}
+        >
+          {celula(c.chave)}
+        </td>
+      ))}
 
       <td
         className="relative border-b border-border/60 p-0"

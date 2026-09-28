@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarOff, Loader2, MapPin, Plus, Trash2 } from "lucide-react";
+import { Building2, CalendarOff, Loader2, MapPin, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ import {
   criarRecursoFn,
   atualizarRecursoFn,
   listarLocalidadesFn,
+  listarFornecedoresFn,
   listarAusenciasFn,
   criarAusenciaFn,
   excluirAusenciaFn,
@@ -71,6 +72,10 @@ interface Form {
   papel: string;
   equipeId: string;
   localidadeId: string;
+  /** Vazio = interno. Preenchido = terceiro daquele fornecedor. */
+  fornecedorId: string;
+  /** Texto para aceitar vírgula decimal; convertido só no envio. */
+  custoHora: string;
   disponibilidade: number;
 }
 
@@ -80,6 +85,8 @@ const vazio: Form = {
   papel: SEM,
   equipeId: SEM,
   localidadeId: SEM,
+  fornecedorId: SEM,
+  custoHora: "",
   disponibilidade: 50,
 };
 
@@ -100,6 +107,12 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
     enabled: open,
   });
 
+  const fornecedores = useQuery({
+    queryKey: ["fornecedores"],
+    queryFn: () => listarFornecedoresFn(),
+    enabled: open,
+  });
+
   useEffect(() => {
     if (!open) return;
     setForm(
@@ -113,6 +126,9 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
             papel: resource.papel ?? SEM,
             equipeId: resource.equipeId ?? SEM,
             localidadeId: resource.localidadeId ?? SEM,
+            fornecedorId: resource.fornecedorId ?? SEM,
+            custoHora:
+              resource.custoHora === null ? "" : String(resource.custoHora).replace(".", ","),
             disponibilidade: resource.disponibilidadeProjetos,
           }
         : vazio,
@@ -147,6 +163,20 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
   const lista = localidades.data?.localidades ?? [];
   const padrao = lista.find((l) => l.padrao);
 
+  /**
+   * Custo digitado, em número.
+   *
+   * Vazio é nulo, não zero: "não informado" e "sai de graça" são
+   * afirmações diferentes, e zero em relatório de custo é pior do que
+   * ausência — some na soma sem ninguém notar que faltava o dado.
+   */
+  const custoDigitado = useMemo(() => {
+    const limpo = form.custoHora.replace(/\./g, "").replace(",", ".").trim();
+    if (limpo === "") return null;
+    const n = Number(limpo);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }, [form.custoHora]);
+
   /** Aceita o valor digitado, mas trava na faixa válida. */
   function definirDisponibilidade(valor: number) {
     if (!Number.isFinite(valor)) return;
@@ -154,6 +184,13 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
       ...f,
       disponibilidade: Math.min(100, Math.max(0, Math.round(valor))),
     }));
+  }
+
+  /** Custo padrão do fornecedor, já no formato do campo. */
+  function custoPadraoDe(fornecedorId: string): string {
+    const f = (fornecedores.data?.fornecedores ?? []).find((x) => x.id === fornecedorId);
+    const v = f?.custoHoraPadrao;
+    return v === null || v === undefined ? "" : String(v).replace(".", ",");
   }
 
   function salvar() {
@@ -168,6 +205,8 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
       papel: form.papel === SEM ? null : form.papel,
       equipeId: form.equipeId === SEM ? null : form.equipeId,
       localidadeId: form.localidadeId === SEM ? null : form.localidadeId,
+      fornecedorId: form.fornecedorId === SEM ? null : form.fornecedorId,
+      custoHora: custoDigitado,
       disponibilidadeProjetos: form.disponibilidade,
     };
 
@@ -315,6 +354,80 @@ export function ResourceDialog({ resource, trigger }: { resource?: Recurso; trig
               Define os feriados que valem para esta pessoa no cronograma. Feriado municipal de uma
               cidade não tira o dia de quem trabalha em outra.
             </p>
+          </div>
+
+          {/* Fornecedor e custo andam juntos: os dois só fazem sentido
+              para terceiro, e separá-los faria a pessoa preencher o
+              custo de alguém que a empresa emprega por salário. */}
+          <div className="grid gap-4 rounded-lg border border-border bg-surface p-3">
+            <div className="grid gap-2">
+              <Label className="flex items-center gap-1.5">
+                <Building2 className="size-3.5" /> Fornecedor
+              </Label>
+              <Select
+                value={form.fornecedorId}
+                onValueChange={(v) =>
+                  setForm((f) => ({
+                    ...f,
+                    fornecedorId: v,
+                    // O custo padrão do fornecedor entra como sugestão,
+                    // e só quando o campo está vazio: sobrescrever
+                    // apagaria um valor negociado à parte.
+                    custoHora:
+                      f.custoHora.trim() === "" && v !== SEM ? custoPadraoDe(v) : f.custoHora,
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SEM}>Interno (funcionário da empresa)</SelectItem>
+                  {(fornecedores.data?.fornecedores ?? [])
+                    .filter((f) => f.ativo)
+                    .map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.nome}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {form.fornecedorId === SEM
+                  ? "Pessoa da casa: a capacidade dela conta como capacidade da equipe."
+                  : "Terceiro: recebe tarefa normalmente, mas aparece separado nas contas de capacidade — contrato não é quadro fixo."}
+              </p>
+            </div>
+
+            {form.fornecedorId !== SEM ? (
+              <div className="grid gap-2">
+                <Label htmlFor="res-custo">
+                  Custo por hora <span className="text-xs text-muted-foreground">(opcional)</span>
+                </Label>
+                <span className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                    R$
+                  </span>
+                  <Input
+                    id="res-custo"
+                    inputMode="decimal"
+                    className="pl-10 font-mono"
+                    value={form.custoHora}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        custoHora: e.target.value.replace(/[^\d.,]/g, ""),
+                      })
+                    }
+                    placeholder="0,00"
+                  />
+                </span>
+                <p className="text-xs text-muted-foreground">
+                  Em branco quando o contrato não é por hora. O valor não aparece em relatório ainda
+                  — fica guardado para quando houver histórico que valha somar.
+                </p>
+              </div>
+            ) : null}
           </div>
 
           {/* Barra e número editam o mesmo valor: a barra serve ao ajuste
