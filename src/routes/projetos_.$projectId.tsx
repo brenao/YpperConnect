@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Loader2, Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -108,6 +108,7 @@ function somenteIds(
 
 function DetalheProjeto() {
   const { projectId } = Route.useParams();
+  const router = useRouter();
   const qc = useQueryClient();
 
   const q = useQuery({
@@ -359,12 +360,26 @@ function DetalheProjeto() {
       }
     >
       <div className="space-y-4">
-        <Link
-          to="/projetos"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        {/* Volta no histórico em vez de navegar para a rota.
+        
+            Um link constrói uma URL nova e limpa, e os filtros do
+            portfólio vivem na barra de endereços: quem filtrou por área,
+            entrou num projeto e voltou perdia o recorte e tinha de
+            refazê-lo a cada consulta.
+        
+            O `to` continua ali para quem chegou por link direto — sem
+            histórico para onde voltar, o botão precisa ter um destino. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-auto gap-1 px-1 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            if (window.history.length > 1) router.history.back();
+            else void router.navigate({ to: "/projetos" });
+          }}
         >
           <ArrowLeft className="size-3.5" /> Portfólio
-        </Link>
+        </Button>
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div className="panel p-4">

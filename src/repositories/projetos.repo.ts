@@ -77,6 +77,15 @@ export interface Projeto {
 }
 
 export interface ProjetoComProgresso extends Projeto {
+  /**
+   * Departamento do gerente, para o filtro do portfólio.
+   *
+   * Vem do cadastro de usuários e responde "de qual área é quem toca
+   * este projeto" — pergunta diferente da área demandante, que diz de
+   * quem partiu o pedido. Numa TI que atende a empresa inteira, as duas
+   * quase nunca coincidem.
+   */
+  gerenteDepartamento: string | null;
   totalTarefas: number;
   tarefasConcluidas: number;
   /** Média do progresso das tarefas, 0–100. */
@@ -380,6 +389,7 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
     `SELECT p.id, p.nome, p.objetivo,
             p.sponsor_id, us.nome AS sponsor_nome,
             p.gerente_id, ug.nome AS gerente_nome,
+            ug.departamento AS gerente_departamento,
             p.status, p.inicio, p.fim,
             (p.usa_dias_uteis = 1) AS usa_dias_uteis,
             (p.sigiloso = 1) AS sigiloso,
@@ -808,7 +818,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
      VALUES
        (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status,
         CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :sigiloso, :capex, :moeda,
-        :area, :justificativa,
+        titulo_de_texto(:area), :justificativa,
         :valor, :esforco, :alcance, :confianca,
         CASE WHEN CAST(:status AS varchar) = 'backlog'
              THEN (SELECT COALESCE(MAX(ordem_backlog), 0) + 1
@@ -832,7 +842,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
       // número e ninguém escolheu, que é o caso da esmagadora maioria.
       capex: d.capex ?? null,
       moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
-      area: d.areaDemandante?.trim() ?? null,
+      area: d.areaDemandante ?? null,
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,
       esforco: d.esforco ?? null,
@@ -858,7 +868,7 @@ export async function atualizarProjeto(
             usa_dias_uteis = COALESCE(:usaDiasUteis, usa_dias_uteis),
             sigiloso = COALESCE(:sigiloso, sigiloso),
             capex = :capex, moeda = :moeda,
-            area_demandante = :area, justificativa = :justificativa,
+            area_demandante = titulo_de_texto(:area), justificativa = :justificativa,
             valor = :valor, esforco = :esforco,
             alcance = :alcance, confianca = :confianca,
             atualizado_em = LOCALTIMESTAMP
@@ -877,7 +887,7 @@ export async function atualizarProjeto(
       sigiloso: d.sigiloso === undefined ? null : deBool(d.sigiloso),
       capex: d.capex ?? null,
       moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
-      area: d.areaDemandante?.trim() ?? null,
+      area: d.areaDemandante ?? null,
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,
       esforco: d.esforco ?? null,
@@ -3337,6 +3347,23 @@ export async function conflitoDeData(
 export interface ResumoPortfolio {
   /** Fila de decisão: registrado, ainda não priorizado. */
   backlog: number;
+  /**
+   * Priorizados e não encerrados: a carteira que consome gente hoje.
+   *
+   * É o número que responde "de quantos projetos eu cuido", e por isso
+   * abre a faixa. Concluído e cancelado ficam de fora — não pedem nada
+   * de ninguém, e somá-los faria a carteira crescer para sempre.
+   */
+  priorizados: number;
+  /**
+   * Priorizados sem nenhuma tarefa: projeto aprovado e sem plano.
+   *
+   * É o pior estado possível, e o mais silencioso: não aparece como
+   * atrasado, porque não há data de tarefa para vencer, nem como sem
+   * notícia, se alguém escreveu um acompanhamento. Some dos alertas
+   * justamente por não ter sido planejado.
+   */
+  semCronograma: number;
   /** Dias desde o cadastro da demanda mais antiga ainda na fila. */
   diasNaFila: number;
   /**
@@ -3387,6 +3414,14 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
        COALESCE(SUM(p.capex) FILTER (
                 WHERE p.status = 'backlog' AND p.moeda = 'BRL'), 0) AS investimento_na_fila,
 
+              COUNT(*) FILTER (
+         WHERE p.status IN ('planejamento','execucao','paralisado'))::int AS priorizados,
+
+       COUNT(*) FILTER (
+         WHERE p.status IN ('planejamento','execucao','paralisado')
+           AND NOT EXISTS (SELECT 1 FROM projeto_tarefas t
+                            WHERE t.projeto_id = p.id AND t.ativo = 1))::int AS sem_cronograma,
+
        COUNT(*) FILTER (WHERE p.status = 'planejamento')::int AS planejamento,
        COUNT(*) FILTER (WHERE p.status = 'execucao')::int     AS execucao,
        COUNT(*) FILTER (WHERE p.status = 'paralisado')::int   AS paralisado,
@@ -3417,6 +3452,8 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
   return (
     r ?? {
       backlog: 0,
+      priorizados: 0,
+      semCronograma: 0,
       diasNaFila: 0,
       investimentoNaFila: 0,
       planejamento: 0,
@@ -3563,4 +3600,32 @@ export async function moverOrdemTarefa(
   });
 
   await renumerarTarefas(tarefa.projetoId);
+}
+
+// ------------------------------------------------- áreas demandantes
+
+/**
+ * Áreas já usadas, para o formulário sugerir em vez de deixar digitar
+ * de novo.
+ *
+ * É o que impede a divergência de grafia na origem: quem vê "Comercial"
+ * na lista escolhe "Comercial", em vez de escrever "comercial" e criar
+ * uma segunda área que nenhum agrupamento reconhece.
+ *
+ * Não é cadastro fechado de propósito. Área demandante tem cauda longa
+ * — aparece setor que não está em lista nenhuma —, e obrigar a escolher
+ * faria a pessoa marcar "Outros" e perder a informação. Sugerir resolve
+ * a maioria dos casos sem travar o caso novo.
+ *
+ * Sem filtro de visibilidade: nome de área não é informação sigilosa, e
+ * restringir faria o campo sugerir coisas diferentes para cada pessoa.
+ */
+export async function areasDemandantes(): Promise<string[]> {
+  const linhas = await consultar<{ area: string }>(
+    `SELECT DISTINCT area_demandante AS area
+       FROM projetos
+      WHERE area_demandante IS NOT NULL
+      ORDER BY area_demandante`,
+  );
+  return linhas.map((l) => l.area);
 }

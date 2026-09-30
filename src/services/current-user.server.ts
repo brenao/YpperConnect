@@ -80,11 +80,23 @@ export interface ContextoUsuario {
 }
 
 /**
- * Usado só quando não há token: desenvolvimento local, fora do proxy.
- * Em produção a requisição nunca chega sem token, porque o Lua barra
- * antes.
+ * Identidade para desenvolvimento local, fora do proxy.
+ *
+ * Vem do ambiente e NUNCA do código. Já foi um login fixo aqui dentro,
+ * e isso trazia dois problemas: o nome de uma pessoa real virava
+ * credencial de quem rodasse o projeto, e o caminho ia junto para o
+ * build de produção — bastaria a porta do container ficar exposta para
+ * alguém entrar sem senha, com as permissões daquele login.
+ *
+ * Em produção a variável não é definida, e a ausência é a proteção: sem
+ * token e sem ela, a requisição é recusada. O mesmo erro de
+ * infraestrutura que antes abria a porta agora produz uma tela de erro —
+ * falha fechada, não aberta.
+ *
+ * Para desenvolver fora do proxy: `BEAGLEONE_LOGIN_DEV=seu.login` no
+ * `.env` local, que não é versionado.
  */
-const LOGIN_DESENVOLVIMENTO = "breno";
+const LOGIN_DESENVOLVIMENTO = process.env["BEAGLEONE_LOGIN_DEV"] ?? null;
 
 interface LinhaUsuario {
   id: string;
@@ -147,8 +159,8 @@ function tokenDaRequisicao(): string | null {
 /**
  * Compara logins ignorando o domínio.
  *
- * O token traz `breno`; a tabela pode ter `ROSSET\breno`, herdado do
- * cadastro manual. Normalizar aqui evita ter que higienizar a base
+ * O token traz o login puro; a tabela pode ter `ROSSET\login`, herdado
+ * do cadastro manual. Normalizar aqui evita ter que higienizar a base
  * inteira e continua funcionando quando o AD entrar com o formato dele.
  */
 function normalizarLogin(login: string): string {
@@ -221,14 +233,33 @@ async function cadastrarPeloGlpi(login: string): Promise<ResultadoAutoCadastro> 
 export async function getUsuarioAtual(): Promise<ContextoUsuario> {
   const token = tokenDaRequisicao();
   const username = token ? usuarioDoToken(token) : null;
+
+  /**
+   * Sem token, a identidade de desenvolvimento assume — e ela só existe
+   * onde alguém a definiu no ambiente.
+   *
+   * Em produção não há variável, então não há caminho alternativo: a
+   * requisição que chegar sem token é recusada, e isso só acontece se a
+   * aplicação estiver exposta fora do proxy.
+   */
   const login = username ?? LOGIN_DESENVOLVIMENTO;
+
+  if (!login) {
+    throw new Error(
+      `Requisição sem token de autenticação. Em produção, verifique se a aplicação está ` +
+        `atrás do OpenResty. Em desenvolvimento, defina BEAGLEONE_LOGIN_DEV no .env.`,
+    );
+  }
 
   let linha = await buscarLinha(login);
 
   // Autenticou mas não está na tabela: antes de recusar, procura no
   // GLPI e cadastra. É assim que ninguém precisa cadastrar a empresa
   // inteira de uma vez — cada pessoa entra na primeira vez que loga.
-  // Só com token: sem token é ambiente mal configurado, não pessoa nova.
+  //
+  // Só com token: sem token, quem está aqui é a identidade de
+  // desenvolvimento, e cadastrá-la pelo GLPI criaria usuário a partir de
+  // uma variável de ambiente.
   if (!linha && username) {
     let resultado: ResultadoAutoCadastro;
     try {
@@ -251,7 +282,7 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
     // Cadastrado (ou reativado). Se ainda assim não vier linha, a pessoa
     // existe mas está inativa por decisão local — o GLPI não reativa
     // cadastro manual, de propósito.
-    linha = await buscarLinha(login);
+    linha = await buscarLinha(username);
   }
 
   if (!linha) {
@@ -259,8 +290,8 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
       username
         ? `Usuário '${username}' está cadastrado no BeagleOne, mas inativo. ` +
             `Peça a um administrador para reativá-lo em Administração > Usuários.`
-        : `Requisição sem token de autenticação. Em produção isso não deveria acontecer: ` +
-            `verifique se a aplicação está atrás do OpenResty.`,
+        : `Login de desenvolvimento '${login}' não existe na tabela de usuários ou está ` +
+            `inativo. Confira o valor de BEAGLEONE_LOGIN_DEV no .env.`,
     );
   }
 

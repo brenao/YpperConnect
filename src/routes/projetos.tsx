@@ -48,7 +48,89 @@ import {
 import { usuarioAtualFn } from "@/services/cadastros.functions";
 import { cn } from "@/lib/utils";
 
+/**
+ * Filtros do portfólio, guardados na URL.
+ *
+ * Na URL e não em estado de componente: assim o botão voltar do
+ * navegador devolve a lista como estava ao sair do detalhe de um
+ * projeto, o F5 preserva o recorte e o link pode ser mandado para um
+ * colega já filtrado.
+ *
+ * Guardar em memória resolveria só o caso de voltar; guardar em
+ * `sessionStorage` criaria a situação de abrir a tela do zero e
+ * encontrar filtros de ontem sem entender de onde vieram.
+ */
+export interface FiltrosProjetos {
+  busca: string;
+  /** Nome do gerente. "todos" é o estado neutro. */
+  gp: string;
+  /** Departamento de quem gerencia — de que área é quem TOCA. */
+  departamento: string;
+  /** Área que pediu o projeto — de quem PEDIU. */
+  area: string;
+  status: "todos" | ProjectStatus;
+  kpi: ChaveKpi | null;
+  encerrados: boolean;
+}
+
+const FILTROS_VAZIOS: FiltrosProjetos = {
+  busca: "",
+  gp: "todos",
+  departamento: "todos",
+  area: "todos",
+  status: "todos",
+  kpi: null,
+  encerrados: false,
+};
+
+/**
+ * Lê a URL sem confiar nela.
+ *
+ * Qualquer pessoa pode editar a barra de endereços, e um valor estranho
+ * não pode derrubar a tela: o que não for reconhecido cai no padrão.
+ */
+function lerFiltros(bruto: Record<string, unknown>): FiltrosProjetos {
+  const texto = (v: unknown, padrao: string) =>
+    typeof v === "string" && v.trim() !== "" ? v : padrao;
+
+  const status = texto(bruto["status"], "todos");
+  const statusValido =
+    status === "todos" || Object.keys(PROJECT_STATUS_LABEL).includes(status)
+      ? (status as FiltrosProjetos["status"])
+      : "todos";
+
+  return {
+    busca: texto(bruto["busca"], "").slice(0, 120),
+    gp: texto(bruto["gp"], "todos"),
+    departamento: texto(bruto["departamento"], "todos"),
+    area: texto(bruto["area"], "todos"),
+    status: statusValido,
+    kpi: typeof bruto["kpi"] === "string" ? (bruto["kpi"] as ChaveKpi) : null,
+    encerrados: bruto["encerrados"] === true || bruto["encerrados"] === "true",
+  };
+}
+
+/**
+ * O que vai para a URL: só o que difere do padrão.
+ *
+ * Sem isso, a barra de endereços carregaria `?busca=&gp=todos&...` desde
+ * a primeira visita — ilegível, e impossível de copiar para alguém sem
+ * parecer que há filtro ativo.
+ */
+function escreverFiltros(f: FiltrosProjetos): Record<string, unknown> {
+  const s: Record<string, unknown> = {};
+  if (f.busca.trim() !== "") s["busca"] = f.busca;
+  if (f.gp !== "todos") s["gp"] = f.gp;
+  if (f.departamento !== "todos") s["departamento"] = f.departamento;
+  if (f.area !== "todos") s["area"] = f.area;
+  if (f.status !== "todos") s["status"] = f.status;
+  if (f.kpi !== null) s["kpi"] = f.kpi;
+  if (f.encerrados) s["encerrados"] = true;
+  return s;
+}
+
 export const Route = createFileRoute("/projetos")({
+  validateSearch: (busca: Record<string, unknown>) => escreverFiltros(lerFiltros(busca)),
   head: () => ({
     meta: [
       { title: "Projetos e cronograma · BeagleOne" },
@@ -140,6 +222,10 @@ function estaVivo(p: ProjetoComProgresso): boolean {
  */
 function passaNoKpi(p: ProjetoComProgresso, kpi: ChaveKpi): boolean {
   switch (kpi) {
+    case "priorizados":
+      return estaVivo(p);
+    case "semCronograma":
+      return estaVivo(p) && p.totalTarefas === 0;
     case "execucao":
       return p.status === "execucao";
     case "planejamento":
@@ -163,38 +249,63 @@ function passaNoKpi(p: ProjetoComProgresso, kpi: ChaveKpi): boolean {
 }
 
 function Projetos() {
-  const [busca, setBusca] = useState("");
-  const [gp, setGp] = useState("todos");
-  const [status, setStatus] = useState<"todos" | ProjectStatus>("todos");
-
   /**
-   * Indicador ativo. Convive com o seletor de status em vez de
-   * substituí-lo: escolher um manda no outro voltar para "todos",
-   * porque dois filtros de situação ao mesmo tempo produzem lista vazia
-   * sem explicar por quê.
-   */
-  const [kpi, setKpi] = useState<ChaveKpi | null>(null);
-
-  /**
-   * Encerrados ficam escondidos por padrão.
+   * Os filtros vêm da URL e voltam para ela.
    *
-   * Projeto cancelado ou concluído não pede nada de ninguém, e um
-   * portfólio que acumula anos de encerrados esconde os poucos que
-   * precisam de atenção hoje. Continuam a um clique — some da vista,
-   * não do sistema.
+   * `replace: true` de propósito: cada tecla digitada na busca não pode
+   * virar uma entrada no histórico, senão o botão voltar percorreria a
+   * palavra letra por letra em vez de levar de volta ao detalhe do
+   * projeto.
    */
-  const [mostrarEncerrados, setMostrarEncerrados] = useState(false);
+  const navegar = Route.useNavigate();
+  const filtros = lerFiltros(Route.useSearch() as Record<string, unknown>);
 
-  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
-  const q = useQuery({ queryKey: ["projetos"], queryFn: () => listarProjetosFn() });
+  const mudar = (parcial: Partial<FiltrosProjetos>) => {
+    void navegar({
+      search: escreverFiltros({ ...filtros, ...parcial }),
+      replace: true,
+    });
+  };
+
+  const usuario = useQuery({
+    queryKey: ["usuario-atual"],
+    queryFn: () => usuarioAtualFn(),
+  });
+  const q = useQuery({
+    queryKey: ["projetos"],
+    queryFn: () => listarProjetosFn(),
+  });
 
   // Cadastrar projeto é aberto a toda a empresa: quem cria vira gerente
   // e passa a poder montar o cronograma dele.
   const autenticado = usuario.data !== undefined;
   const projetos: ProjetoComProgresso[] = useMemo(() => q.data ?? [], [q.data]);
 
+  /**
+   * As opções de cada filtro saem da própria carteira.
+   *
+   * Listar departamentos ou áreas sem projeto nenhum daria opções que
+   * sempre resultam em lista vazia — e a pessoa culparia o filtro, não
+   * o cadastro.
+   */
   const gerentes = useMemo(
     () => [...new Set(projetos.map((p) => p.gerenteNome).filter(Boolean))].sort() as string[],
+    [projetos],
+  );
+
+  const departamentos = useMemo(
+    () =>
+      ([...new Set(projetos.map((p) => p.gerenteDepartamento).filter(Boolean))] as string[]).sort(
+        (a, b) => a.localeCompare(b, "pt-BR"),
+      ),
+    [projetos],
+  );
+
+  const areas = useMemo(
+    () =>
+      ([...new Set(projetos.map((p) => p.areaDemandante).filter(Boolean))] as string[]).sort(
+        (a, b) => a.localeCompare(b, "pt-BR"),
+      ),
     [projetos],
   );
 
@@ -204,24 +315,34 @@ function Projetos() {
   );
 
   const filtrados = useMemo(() => {
-    const t = busca.trim().toLowerCase();
+    const t = filtros.busca.trim().toLowerCase();
     return projetos.filter((p) => {
       const encerrado = p.status === "cancelado" || p.status === "concluido";
       // Filtrar por um status encerrado é pedir para vê-lo: o filtro
       // explícito manda mais do que o padrão de esconder.
-      const escondido = encerrado && !mostrarEncerrados && status === "todos";
+      const escondido = encerrado && !filtros.encerrados && filtros.status === "todos";
 
       return (
         !escondido &&
-        (gp === "todos" || p.gerenteNome === gp) &&
-        (status === "todos" || p.status === status) &&
-        (kpi === null || passaNoKpi(p, kpi)) &&
+        (filtros.gp === "todos" || p.gerenteNome === filtros.gp) &&
+        (filtros.departamento === "todos" || p.gerenteDepartamento === filtros.departamento) &&
+        (filtros.area === "todos" || p.areaDemandante === filtros.area) &&
+        (filtros.status === "todos" || p.status === filtros.status) &&
+        (filtros.kpi === null || passaNoKpi(p, filtros.kpi)) &&
         (!t || `${p.nome} ${p.objetivo ?? ""}`.toLowerCase().includes(t))
       );
     });
-  }, [projetos, gp, status, kpi, busca, mostrarEncerrados]);
+  }, [projetos, filtros]);
 
   const atrasados = projetos.filter((p) => calcularSaude(p) === "atrasado").length;
+
+  const temFiltro =
+    filtros.gp !== "todos" ||
+    filtros.departamento !== "todos" ||
+    filtros.area !== "todos" ||
+    filtros.status !== "todos" ||
+    filtros.kpi !== null ||
+    filtros.busca.trim() !== "";
 
   return (
     <AppShell
@@ -235,66 +356,128 @@ function Projetos() {
           </div>
         ) : null}
 
-        {/* O botão fica junto da lista, não no cabeçalho: "Abrir chamado"
-            é ação global de toda tela, e dois botões primários no mesmo
-            canto competem por atenção. */}
-        <div className="grid gap-3 md:grid-cols-[1fr_180px_180px_auto]">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por nome ou objetivo..."
-              value={busca}
-              maxLength={120}
-              onChange={(e) => setBusca(e.target.value)}
-              className="pl-8"
-            />
+        {/* Quatro seletores não cabem numa linha só em tela de notebook:
+            a busca fica larga em cima, com o botão de criar, e os
+            filtros se distribuem abaixo.
+
+            O botão fica junto da lista, não no cabeçalho: "Abrir
+            chamado" é ação global de toda tela, e dois botões primários
+            no mesmo canto competem por atenção. */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-56 flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por nome ou objetivo..."
+                value={filtros.busca}
+                maxLength={120}
+                onChange={(e) => mudar({ busca: e.target.value })}
+                className="pl-8"
+              />
+            </div>
+            {autenticado ? <ProjectDialog /> : null}
           </div>
-          <Select value={gp} onValueChange={setGp}>
-            <SelectTrigger>
-              <SelectValue placeholder="Responsável (GP)" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os GPs</SelectItem>
-              {gerentes.map((g) => (
-                <SelectItem key={g} value={g}>
-                  {g}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={status}
-            onValueChange={(v) => {
-              setStatus(v as typeof status);
-              setKpi(null);
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os status</SelectItem>
-              {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {PROJECT_STATUS_LABEL[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {autenticado ? <ProjectDialog /> : null}
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Select value={filtros.gp} onValueChange={(v) => mudar({ gp: v })}>
+              <SelectTrigger>
+                <SelectValue placeholder="Responsável (GP)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os GPs</SelectItem>
+                {gerentes.map((g) => (
+                  <SelectItem key={g} value={g}>
+                    {g}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Duas perguntas diferentes, e por isso dois filtros: o
+                departamento diz de que área é quem TOCA o projeto; a
+                área demandante, de quem PEDIU. Numa TI que atende a
+                empresa inteira, as duas quase nunca coincidem. */}
+            <Select value={filtros.departamento} onValueChange={(v) => mudar({ departamento: v })}>
+              <SelectTrigger>
+                <SelectValue placeholder="Departamento do GP" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os departamentos</SelectItem>
+                {departamentos.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={filtros.area} onValueChange={(v) => mudar({ area: v })}>
+              <SelectTrigger>
+                <SelectValue placeholder="Área demandante" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todas as áreas</SelectItem>
+                {areas.map((a) => (
+                  <SelectItem key={a} value={a}>
+                    {a}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={filtros.status}
+              onValueChange={(v) =>
+                // Um filtro de situação de cada vez: escolher o status
+                // desliga o indicador, senão a lista vem vazia sem
+                // explicar por quê.
+                mudar({ status: v as FiltrosProjetos["status"], kpi: null })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os status</SelectItem>
+                {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {PROJECT_STATUS_LABEL[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Filtro ativo precisa se anunciar: com quatro seletores é
+              fácil esquecer que um está ligado e concluir que o
+              portfólio encolheu. */}
+          {temFiltro ? (
+            <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              Mostrando {filtrados.length} de {projetos.length} projeto(s).
+              <button
+                type="button"
+                onClick={() => mudar(FILTROS_VAZIOS)}
+                className="text-primary hover:underline"
+              >
+                Limpar filtros
+              </button>
+            </p>
+          ) : null}
         </div>
 
         {/* Os números do topo vêm do servidor e valem para a carteira
             inteira que a pessoa enxerga — não para o resultado da busca.
             Clicar filtra a lista abaixo; clicar de novo desliga. */}
         <KpisPortfolio
-          cards={["execucao", "prazoEstourado", "semAcompanhamento", "paralisado"]}
-          ativo={kpi}
-          onAlternar={(c) => {
-            setKpi(c);
-            // Um filtro de situação de cada vez.
-            if (c !== null) setStatus("todos");
-          }}
+          cards={["priorizados", "prazoEstourado", "semAcompanhamento", "semCronograma"]}
+          ativo={filtros.kpi}
+          onAlternar={(c) =>
+            // Um filtro de situação de cada vez, nos dois sentidos.
+            mudar({
+              kpi: c,
+              ...(c !== null ? { status: "todos" as const } : {}),
+            })
+          }
         />
 
         {projetos.length > 0 ? (
@@ -310,10 +493,10 @@ function Projetos() {
                 variant="ghost"
                 size="sm"
                 className="ml-auto gap-2 text-muted-foreground"
-                onClick={() => setMostrarEncerrados((v) => !v)}
+                onClick={() => mudar({ encerrados: !filtros.encerrados })}
               >
-                {mostrarEncerrados ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                {mostrarEncerrados
+                {filtros.encerrados ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                {filtros.encerrados
                   ? `Ocultar ${encerrados} encerrado(s)`
                   : `Mostrar ${encerrados} encerrado(s)`}
               </Button>
@@ -336,6 +519,16 @@ function Projetos() {
                 ? "Cadastre o primeiro projeto para acompanhar cronograma, riscos e capacidade da equipe."
                 : "Tente outros filtros."}
             </p>
+            {projetos.length > 0 && temFiltro ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-3"
+                onClick={() => mudar(FILTROS_VAZIOS)}
+              >
+                Limpar filtros
+              </Button>
+            ) : null}
           </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
@@ -475,6 +668,14 @@ function CardProjeto({
             ) : null}
           </span>
         </div>
+
+        {/* Área demandante ao lado do objetivo: é o que responde "de quem
+            é este projeto" quando se varre a lista, e agora é filtro. */}
+        {p.areaDemandante ? (
+          <Badge variant="outline" className="mt-2 text-[10px]">
+            {p.areaDemandante}
+          </Badge>
+        ) : null}
 
         {p.objetivo ? (
           <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{p.objetivo}</p>

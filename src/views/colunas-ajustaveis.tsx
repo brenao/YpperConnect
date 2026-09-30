@@ -6,17 +6,31 @@
  * jeito que gosta numa espera encontrar a outra igual — configurar duas
  * vezes é o tipo de coisa que faz a pessoa desistir da configuração.
  *
- * A preferência vive no navegador, não no banco. Salvar no servidor
- * exigiria uma tabela de preferências e uma ida à rede a cada arrasto da
- * borda; o preço de perder o ajuste ao trocar de máquina é pequeno perto
- * disso, e é o que Jira, Smartsheet e Asana fazem com largura de coluna.
+ * A preferência é do USUÁRIO, guardada no banco. Ficou no navegador por
+ * um tempo e falhava em dois casos reais: trocar de máquina devolvia
+ * tudo ao padrão, e duas pessoas no mesmo computador desfaziam o ajuste
+ * uma da outra sem entender por quê.
+ *
+ * O `localStorage` continua em uso, mas como espelho: é ele que pinta a
+ * primeira tela sem esperar a rede. O banco é a fonte da verdade e
+ * corrige o espelho quando a resposta chega.
+ *
+ * A gravação é adiada. Arrastar a borda dispara dezenas de mudanças por
+ * segundo, e uma requisição por pixel derrubaria o servidor por um
+ * ajuste de largura — grava-se quando o gesto para.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Columns3, GripVertical, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  lerPreferenciaFn,
+  gravarPreferenciaFn,
+  removerPreferenciaFn,
+} from "@/services/preferencias.functions";
 import { cn } from "@/lib/utils";
 
 export interface DefColuna {
@@ -48,31 +62,74 @@ interface Preferencia {
 }
 
 const LARGURA_MINIMA = 56;
-const PREFIXO = "beagleone.colunas.";
 
-function ler(chave: string): Preferencia | null {
+/** Prefixo do espelho local e da chave no banco. */
+const PREFIXO = "colunas.";
+const PREFIXO_LOCAL = "beagleone." + PREFIXO;
+
+/** Espera antes de gravar: o suficiente para o arrasto terminar. */
+const ATRASO_GRAVACAO_MS = 600;
+
+/**
+ * Texto JSON que veio do banco ou do espelho, virado preferência.
+ *
+ * Uma função só para os dois caminhos de propósito. Quando eram dois, o
+ * espelho fazia `JSON.parse` e o banco não — e o valor do banco, que é
+ * texto, chegava em `normalizar()` como string. Nenhum campo era
+ * reconhecido, a preferência virava vazia e as colunas voltavam ao
+ * padrão segundos depois de qualquer ajuste. O sintoma parecia perda de
+ * gravação; era leitura.
+ */
+function deJson(texto: string | null | undefined): Preferencia | null {
+  if (texto === null || texto === undefined) return null;
   try {
-    const bruto = localStorage.getItem(PREFIXO + chave);
-    if (!bruto) return null;
-    const p = JSON.parse(bruto) as Partial<Preferencia>;
-    return {
-      ordem: Array.isArray(p.ordem) ? p.ordem : [],
-      larguras: typeof p.larguras === "object" && p.larguras ? p.larguras : {},
-      ocultas: Array.isArray(p.ocultas) ? p.ocultas : [],
-    };
+    return normalizar(JSON.parse(texto));
   } catch {
-    // Preferência corrompida não pode derrubar a tela: cai no padrão.
+    // Texto corrompido cai no padrão: preferência de tela não vale uma
+    // tela branca.
     return null;
   }
 }
 
-function gravar(chave: string, p: Preferencia): void {
+function lerEspelho(chave: string): Preferencia | null {
   try {
-    localStorage.setItem(PREFIXO + chave, JSON.stringify(p));
+    return deJson(localStorage.getItem(PREFIXO_LOCAL + chave));
   } catch {
-    // Navegador com armazenamento cheio ou bloqueado: a tela continua
-    // funcionando, só não lembra do ajuste na próxima visita.
+    // Armazenamento bloqueado: a rede resolve.
+    return null;
   }
+}
+
+function gravarEspelho(chave: string, p: Preferencia | null): void {
+  try {
+    if (p === null) localStorage.removeItem(PREFIXO_LOCAL + chave);
+    else localStorage.setItem(PREFIXO_LOCAL + chave, JSON.stringify(p));
+  } catch {
+    // Armazenamento cheio ou bloqueado: perde-se só a pintura imediata,
+    // e o banco continua sendo a fonte da verdade.
+  }
+}
+
+/**
+ * Aceita o que veio de fora sem confiar no formato.
+ *
+ * O valor é JSON livre por decisão de projeto — a tabela serve a
+ * qualquer preferência de tela —, então a validação é aqui. Dado
+ * estranho vira preferência vazia, e a tela abre no padrão em vez de
+ * quebrar.
+ */
+function normalizar(bruto: unknown): Preferencia {
+  const p = (bruto ?? {}) as Partial<Preferencia>;
+  return {
+    ordem: Array.isArray(p.ordem) ? p.ordem.filter((x) => typeof x === "string") : [],
+    larguras:
+      p.larguras && typeof p.larguras === "object"
+        ? Object.fromEntries(
+            Object.entries(p.larguras).filter(([, v]) => typeof v === "number" && v > 0),
+          )
+        : {},
+    ocultas: Array.isArray(p.ocultas) ? p.ocultas.filter((x) => typeof x === "string") : [],
+  };
 }
 
 export interface ControleColunas {
@@ -89,12 +146,16 @@ export interface ControleColunas {
 }
 
 /**
- * Aplica a preferência salva sobre a definição padrão.
+ * Aplica a preferência do usuário sobre a definição padrão.
  *
- * A leitura é feita depois da montagem, e não no `useState` inicial,
- * porque o servidor renderiza sem `localStorage`: se a primeira pintura
- * já viesse com a largura personalizada, o React acusaria diferença
- * entre o HTML do servidor e o do navegador.
+ * Três camadas, nesta ordem: o espelho local pinta a primeira tela sem
+ * esperar a rede; a resposta do banco corrige o espelho; as mudanças
+ * vão para o banco depois que o gesto termina.
+ *
+ * A leitura do espelho acontece depois da montagem, e não no
+ * `useState` inicial, porque o servidor renderiza sem `localStorage`:
+ * uma primeira pintura já personalizada faria o React acusar diferença
+ * entre o HTML dos dois lados.
  *
  * Coluna nova que o sistema passar a oferecer entra visível, no lugar
  * que a definição manda: a preferência antiga não a conhece, e
@@ -102,16 +163,110 @@ export interface ControleColunas {
  * sistema.
  */
 export function useColunas(chave: string, padrao: DefColuna[]): ControleColunas {
-  const [pref, setPref] = useState<Preferencia | null>(null);
-  const carregou = useRef(false);
+  const qc = useQueryClient();
+  const chaveCompleta = PREFIXO + chave;
 
+  const [pref, setPref] = useState<Preferencia | null>(null);
+
+  // Espelho local: pinta antes da rede responder.
   useEffect(() => {
-    setPref(ler(chave));
-    carregou.current = true;
+    setPref(lerEspelho(chave));
   }, [chave]);
+
+  /**
+   * Ajuste local ainda não confirmado pelo servidor.
+   *
+   * A gravação é adiada, então existe uma janela de alguns segundos em
+   * que o banco ainda tem o valor ANTIGO. Qualquer releitura nesse
+   * intervalo o traria de volta e desfaria o ajuste na cara de quem
+   * acabou de arrastar a coluna.
+   *
+   * Enquanto houver ajuste pendente, o que o servidor diz é ignorado:
+   * quem está com a mão no mouse tem a versão mais recente, não o
+   * banco.
+   */
+  const pendente = useRef(false);
+
+  const salvo = useQuery({
+    queryKey: ["preferencia", chaveCompleta],
+    queryFn: () => lerPreferenciaFn({ data: { chave: chaveCompleta } }),
+    // Preferência muda raramente e só por ação de quem está olhando.
+    staleTime: 5 * 60_000,
+    // Voltar para a aba não é motivo para reler: seria mais uma chance
+    // de a resposta chegar no meio de um ajuste.
+    refetchOnWindowFocus: false,
+  });
+
+  /**
+   * O banco venceu: alinha o estado e o espelho.
+   *
+   * Só quando de fato difere — sem a comparação, cada resposta da
+   * consulta agendaria um estado novo e o componente entraria em ciclo.
+   */
+  useEffect(() => {
+    // Ajuste em andamento manda: aceitar o servidor aqui desfaria o que
+    // a pessoa acabou de fazer.
+    if (pendente.current) return;
+
+    const bruto = salvo.data?.valor;
+    if (bruto === undefined) return;
+
+    const doBanco = deJson(bruto);
+
+    setPref((atual) => {
+      if (JSON.stringify(atual) === JSON.stringify(doBanco)) return atual;
+      gravarEspelho(chave, doBanco);
+      return doBanco;
+    });
+  }, [salvo.data, chave]);
+
+  /**
+   * Gravação adiada.
+   *
+   * O arrasto da borda dispara dezenas de mudanças por segundo. Sem o
+   * atraso, seria uma requisição por pixel percorrido — e a última a
+   * chegar nem sempre seria a última enviada, o que gravaria uma
+   * largura intermediária.
+   */
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const agendarGravacao = useCallback(
+    (valor: Preferencia) => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        gravarPreferenciaFn({
+          data: { chave: chaveCompleta, valor: JSON.stringify(valor) },
+        })
+          .then(() => {
+            // Só agora o banco concorda com a tela. Liberar antes
+            // reabriria a janela em que uma resposta atrasada
+            // sobrescreve o ajuste.
+            pendente.current = false;
+            return qc.invalidateQueries({
+              queryKey: ["preferencia", chaveCompleta],
+            });
+          })
+          .catch(() => {
+            // Falha ao gravar não interrompe o trabalho: o espelho
+            // local mantém o ajuste nesta máquina, e a próxima mudança
+            // tenta de novo. `pendente` continua ligado de propósito —
+            // sem confirmação, o servidor não tem por que mandar.
+          });
+      }, ATRASO_GRAVACAO_MS);
+    },
+    [chaveCompleta, qc],
+  );
+
+  // Gravação pendente ao desmontar seria perdida em silêncio.
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
 
   const atualizar = useCallback(
     (mudanca: (p: Preferencia) => Preferencia) => {
+      pendente.current = true;
       setPref((atual) => {
         const base: Preferencia = atual ?? {
           ordem: padrao.map((c) => c.chave),
@@ -119,11 +274,12 @@ export function useColunas(chave: string, padrao: DefColuna[]): ControleColunas 
           ocultas: [],
         };
         const nova = mudanca(base);
-        gravar(chave, nova);
+        gravarEspelho(chave, nova);
+        agendarGravacao(nova);
         return nova;
       });
     },
-    [chave, padrao],
+    [agendarGravacao, chave, padrao],
   );
 
   const todas = useMemo<ColunaAjustada[]>(() => {
@@ -175,6 +331,10 @@ export function useColunas(chave: string, padrao: DefColuna[]): ControleColunas 
    * arrasto da borda já serve à largura, e dois gestos de arrasto na
    * mesma linha do cabeçalho se confundem — a pessoa tenta redimensionar
    * e move a coluna sem querer.
+   *
+   * A ordem gravada é a de TODAS as colunas, inclusive as ocultas. Sem
+   * isso, esconder uma e mover outra apagaria a posição da escondida, e
+   * ela reapareceria no fim da tabela ao ser reativada.
    */
   const mover = useCallback(
     (k: string, direcao: -1 | 1) => {
@@ -199,20 +359,40 @@ export function useColunas(chave: string, padrao: DefColuna[]): ControleColunas 
     (k: string) => {
       atualizar((p) => ({
         ...p,
+        // A ordem entra junto: esconder uma coluna antes de qualquer
+        // reordenação gravaria `ordem` vazia, e a preferência deixaria
+        // de conhecer as posições.
+        ordem: p.ordem.length > 0 ? p.ordem : todas.map((c) => c.chave),
         ocultas: p.ocultas.includes(k) ? p.ocultas.filter((x) => x !== k) : [...p.ocultas, k],
       }));
     },
-    [atualizar],
+    [atualizar, todas],
   );
 
+  /**
+   * Restaurar é apagar, não gravar um valor vazio.
+   *
+   * Ausência de linha é exatamente o que significa "nunca ajustou", e é
+   * como o usuário novo começa. Um objeto vazio criaria um segundo
+   * jeito de dizer a mesma coisa.
+   */
   const restaurar = useCallback(() => {
-    try {
-      localStorage.removeItem(PREFIXO + chave);
-    } catch {
-      // Sem armazenamento, o estado em memória já resolve a sessão.
-    }
+    if (timer.current) clearTimeout(timer.current);
+    pendente.current = true;
+    gravarEspelho(chave, null);
     setPref(null);
-  }, [chave]);
+    removerPreferenciaFn({ data: { chave: chaveCompleta } })
+      .then(() => {
+        pendente.current = false;
+        return qc.invalidateQueries({
+          queryKey: ["preferencia", chaveCompleta],
+        });
+      })
+      .catch(() => {
+        // Mesma regra da gravação: a tela já voltou ao padrão aqui, e a
+        // próxima mudança sincroniza.
+      });
+  }, [chave, chaveCompleta, qc]);
 
   return {
     colunas,

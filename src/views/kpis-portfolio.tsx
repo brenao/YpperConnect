@@ -35,6 +35,8 @@ import { resumoPortfolioFn } from "@/services/projetos.functions";
 
 export type ChaveKpi =
   | "backlog"
+  | "priorizados"
+  | "semCronograma"
   | "execucao"
   | "planejamento"
   | "paralisado"
@@ -58,6 +60,17 @@ const DEFINICOES: Record<ChaveKpi, Definicao> = {
     icone: Inbox,
     ajuda: "Registrados, aguardando priorização",
   },
+  priorizados: {
+    rotulo: "Priorizados",
+    icone: PlayCircle,
+    ajuda: "",
+  },
+  semCronograma: {
+    rotulo: "Sem cronograma",
+    icone: CircleDashed,
+    ajuda: "",
+    alerta: true,
+  },
   execucao: {
     rotulo: "Em execução",
     icone: PlayCircle,
@@ -80,7 +93,7 @@ const DEFINICOES: Record<ChaveKpi, Definicao> = {
     ajuda: "Entregues",
   },
   prazoEstourado: {
-    rotulo: "Prazo vencido",
+    rotulo: "Atrasados",
     icone: AlertTriangle,
     ajuda: "Término no passado, sem encerrar",
     alerta: true,
@@ -135,6 +148,15 @@ export function KpisPortfolio({ cards, ativo, onAlternar, className }: Props) {
     }
     if (chave === "execucao" && r.planejamento > 0) {
       return `${r.planejamento} em planejamento`;
+    }
+    // A segunda linha do card principal carrega o que dói: o total
+    // sozinho não diz se a carteira está bem ou mal.
+    if (chave === "priorizados" && r.priorizados > 0) {
+      const partes = [
+        r.prazoEstourado > 0 ? `${r.prazoEstourado} atrasado(s)` : null,
+        r.semAcompanhamento > 0 ? `${r.semAcompanhamento} sem notícia` : null,
+      ].filter(Boolean);
+      return partes.length > 0 ? partes.join(" · ") : "todos em dia";
     }
     return null;
   }
