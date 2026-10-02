@@ -178,6 +178,23 @@ function novoId(): string {
 }
 
 /**
+ * Texto de cadastro livre, sem as variações que quebram agrupamento.
+ *
+ * Tira espaços das pontas e colapsa os repetidos do meio. É o mínimo
+ * para que "Comercial" e "Comercial " sejam a mesma área na hora de
+ * filtrar e de contar — o que já bastou para a migration 24 existir.
+ *
+ * A caixa não é tocada: forçar tudo para maiúscula ou para capitalizado
+ * estragaria siglas ("TI" viraria "Ti") e nomes próprios. O que resolve
+ * a divergência de caixa é o formulário sugerir o que já existe, e não
+ * o banco decidir a grafia de ninguém.
+ */
+function normalizarTexto(v: string | null | undefined): string | null {
+  const limpo = (v ?? "").trim().replace(/\s+/g, " ");
+  return limpo === "" ? null : limpo;
+}
+
+/**
  * Quem executa o projeto: gerente, patrocinador ou quem tem tarefa
  * atribuída nele.
  *
@@ -818,7 +835,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
      VALUES
        (:id, :nome, :objetivo, :sponsorId, :gerenteId, :status,
         CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :sigiloso, :capex, :moeda,
-        titulo_de_texto(:area), :justificativa,
+        :area, :justificativa,
         :valor, :esforco, :alcance, :confianca,
         CASE WHEN CAST(:status AS varchar) = 'backlog'
              THEN (SELECT COALESCE(MAX(ordem_backlog), 0) + 1
@@ -842,7 +859,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
       // número e ninguém escolheu, que é o caso da esmagadora maioria.
       capex: d.capex ?? null,
       moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
-      area: d.areaDemandante ?? null,
+      area: normalizarTexto(d.areaDemandante),
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,
       esforco: d.esforco ?? null,
@@ -868,7 +885,7 @@ export async function atualizarProjeto(
             usa_dias_uteis = COALESCE(:usaDiasUteis, usa_dias_uteis),
             sigiloso = COALESCE(:sigiloso, sigiloso),
             capex = :capex, moeda = :moeda,
-            area_demandante = titulo_de_texto(:area), justificativa = :justificativa,
+            area_demandante = :area, justificativa = :justificativa,
             valor = :valor, esforco = :esforco,
             alcance = :alcance, confianca = :confianca,
             atualizado_em = LOCALTIMESTAMP
@@ -887,7 +904,7 @@ export async function atualizarProjeto(
       sigiloso: d.sigiloso === undefined ? null : deBool(d.sigiloso),
       capex: d.capex ?? null,
       moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
-      area: d.areaDemandante ?? null,
+      area: normalizarTexto(d.areaDemandante),
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,
       esforco: d.esforco ?? null,
@@ -1049,6 +1066,7 @@ export interface DadosTarefa {
   alocacaoPct?: number | null | undefined;
   ordem?: number | undefined;
   responsaveis?: string[] | undefined;
+
   /**
    * Predecessoras com tipo e defasagem.
    *
@@ -3331,19 +3349,6 @@ export async function conflitoDeData(
 
 // ------------------------------------------------- resumo do portfólio
 
-/**
- * Números do topo das telas de portfólio.
- *
- * Uma consulta para as três telas — backlog, projetos e diretoria —
- * porque três consultas com regras próprias é como se chega ao dia em
- * que o backlog diz 12, a diretoria diz 14, e as duas estão "certas"
- * por critérios que ninguém lembra de comparar. Cada tela escolhe quais
- * campos exibe; nenhuma recalcula.
- *
- * Não há contagem de "total" aqui de propósito: é o número que menos
- * informa e ocuparia o lugar mais nobre da leitura. Quem quiser o total
- * soma o que interessa.
- */
 export interface ResumoPortfolio {
   /** Fila de decisão: registrado, ainda não priorizado. */
   backlog: number;
@@ -3360,8 +3365,7 @@ export interface ResumoPortfolio {
    *
    * É o pior estado possível, e o mais silencioso: não aparece como
    * atrasado, porque não há data de tarefa para vencer, nem como sem
-   * notícia, se alguém escreveu um acompanhamento. Some dos alertas
-   * justamente por não ter sido planejado.
+   * notícia, se alguém escreveu um acompanhamento.
    */
   semCronograma: number;
   /** Dias desde o cadastro da demanda mais antiga ainda na fila. */
@@ -3414,7 +3418,7 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
        COALESCE(SUM(p.capex) FILTER (
                 WHERE p.status = 'backlog' AND p.moeda = 'BRL'), 0) AS investimento_na_fila,
 
-              COUNT(*) FILTER (
+       COUNT(*) FILTER (
          WHERE p.status IN ('planejamento','execucao','paralisado'))::int AS priorizados,
 
        COUNT(*) FILTER (
@@ -3628,4 +3632,56 @@ export async function areasDemandantes(): Promise<string[]> {
       ORDER BY area_demandante`,
   );
   return linhas.map((l) => l.area);
+}
+
+// --------------------------------------------- projetos sem acesso
+
+/**
+ * Projeto que a pessoa enxerga pelo nome, mas não pode abrir.
+ *
+ * Só o cabeçalho: nome, quem gerencia e de que área veio. É o suficiente
+ * para reconhecer o projeto e pedir acesso, e nada além disso — o
+ * conteúdo é justamente o que a restrição protege.
+ */
+export interface ProjetoSemAcesso {
+  id: string;
+  nome: string;
+  gerenteNome: string | null;
+  areaDemandante: string | null;
+  status: ProjectStatus;
+}
+
+/**
+ * O que está priorizado e a pessoa não pode abrir.
+ *
+ * Existe porque a porta de pedir acesso estava no lugar errado. Quem
+ * precisa de um projeto priorizado procura em Projetos — é onde projeto
+ * priorizado mora —, e só encontrava o pedido no Backlog, numa aba
+ * chamada "Já priorizados". O nome da tela diz que ali está o que ainda
+ * não foi decidido, então ninguém vai procurar lá.
+ *
+ * Sigiloso fica de fora. É a única exceção à regra de que todo mundo vê
+ * o nome de todo projeto, e o motivo dela é exatamente não revelar que
+ * o projeto existe.
+ *
+ * Encerrados também: pedir acesso a um projeto concluído é consulta a
+ * histórico, não trabalho — e encheria a lista com anos de carteira.
+ *
+ * Quem enxerga tudo recebe lista vazia, sem consulta: não há projeto
+ * fora do alcance dessas pessoas.
+ */
+export async function listarProjetosSemAcesso(ctx: ContextoUsuario): Promise<ProjetoSemAcesso[]> {
+  const f = filtroVisibilidadeProjetos(ctx);
+  if (f.clausula === "TRUE") return [];
+
+  return consultar<ProjetoSemAcesso>(
+    `SELECT p.id, p.nome, ug.nome AS gerente_nome, p.area_demandante, p.status
+       FROM projetos p
+       LEFT JOIN usuarios ug ON ug.id = p.gerente_id
+      WHERE p.status IN ('planejamento', 'execucao', 'paralisado')
+        AND p.sigiloso = 0
+        AND NOT (${f.clausula})
+      ORDER BY p.nome`,
+    f.binds,
+  );
 }

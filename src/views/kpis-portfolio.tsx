@@ -63,7 +63,7 @@ const DEFINICOES: Record<ChaveKpi, Definicao> = {
   priorizados: {
     rotulo: "Priorizados",
     icone: PlayCircle,
-    ajuda: "",
+    ajuda: "Carteira ativa, sem os encerrados",
   },
   semCronograma: {
     rotulo: "Sem cronograma",

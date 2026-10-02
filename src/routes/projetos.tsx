@@ -8,6 +8,7 @@ import {
   EyeOff,
   Loader2,
   ListChecks,
+  Lock,
   Search,
   Trash2,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { KpisPortfolio, type ChaveKpi } from "@/views/kpis-portfolio";
 import { ProjectDialog } from "@/views/project-dialogs";
+import { DialogoSolicitarAcesso } from "@/views/dialogo-solicitar-acesso";
 import { SeletorStatusProjeto } from "@/views/seletor-status-projeto";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,11 +43,13 @@ import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
 import type { ProjetoComProgresso } from "@/repositories/projetos.repo";
 import {
   listarProjetosFn,
+  listarProjetosSemAcessoFn,
   definirStatusProjetoFn,
   excluirProjetoFn,
   impedimentosDeExclusaoFn,
 } from "@/services/projetos.functions";
 import { usuarioAtualFn } from "@/services/cadastros.functions";
+import { listarMinhasSolicitacoesFn } from "@/services/acesso-projeto.functions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -276,6 +280,32 @@ function Projetos() {
     queryFn: () => listarProjetosFn(),
   });
 
+  /**
+   * O que está priorizado e esta pessoa não pode abrir.
+   *
+   * A porta de pedir acesso ficava só no Backlog, numa aba chamada "Já
+   * priorizados" — e ninguém procura projeto em execução numa tela cujo
+   * nome diz que ali está o que ainda não foi decidido. Quem enxerga
+   * tudo recebe lista vazia e não vê seção nenhuma.
+   */
+  const semAcesso = useQuery({
+    queryKey: ["projetos-sem-acesso"],
+    queryFn: () => listarProjetosSemAcessoFn(),
+  });
+
+  // Pedido já enviado não pode oferecer "Solicitar acesso" de novo: a
+  // pessoa pediria duas vezes e o gerente receberia duas notificações.
+  const minhas = useQuery({
+    queryKey: ["minhas-solicitacoes"],
+    queryFn: () => listarMinhasSolicitacoesFn(),
+  });
+
+  const pedidosPendentes = useMemo(
+    () =>
+      new Set((minhas.data ?? []).filter((s) => s.situacao === "pendente").map((s) => s.projetoId)),
+    [minhas.data],
+  );
+
   // Cadastrar projeto é aberto a toda a empresa: quem cria vira gerente
   // e passa a poder montar o cronograma dele.
   const autenticado = usuario.data !== undefined;
@@ -469,7 +499,7 @@ function Projetos() {
             inteira que a pessoa enxerga — não para o resultado da busca.
             Clicar filtra a lista abaixo; clicar de novo desliga. */}
         <KpisPortfolio
-          cards={["priorizados", "prazoEstourado", "semAcompanhamento", "semCronograma"]}
+          cards={["execucao", "prazoEstourado", "semAcompanhamento", "paralisado"]}
           ativo={filtros.kpi}
           onAlternar={(c) =>
             // Um filtro de situação de cada vez, nos dois sentidos.
@@ -537,6 +567,58 @@ function Projetos() {
             ))}
           </div>
         )}
+
+        {/* Projetos que a pessoa vê pelo nome mas não pode abrir.
+
+            Fica no fim de propósito: é o que ela NÃO tem, e abrir a tela
+            com isso inverteria a prioridade da leitura. Mas fica nesta
+            tela, e não só no backlog, porque é aqui que se procura
+            projeto priorizado — era essa a porta que faltava. */}
+        {(semAcesso.data ?? []).length > 0 ? (
+          <section className="space-y-2 pt-2">
+            <div>
+              <h2 className="text-sm font-semibold">Projetos sem acesso</h2>
+              <p className="text-xs text-muted-foreground">
+                Priorizados, tocados por outras áreas. Você vê o nome para saber que existem; para
+                abrir o cronograma, peça acesso ao gerente.
+              </p>
+            </div>
+
+            <div className="grid gap-2 lg:grid-cols-2">
+              {(semAcesso.data ?? []).map((p) => (
+                <article
+                  key={p.id}
+                  className="panel flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{p.nome}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {p.gerenteNome ?? "Sem gerente"}
+                      {p.areaDemandante ? ` · ${p.areaDemandante}` : ""}
+                    </p>
+                  </div>
+
+                  {/* Três estados, não dois: sem o do meio, o botão
+                      continuaria convidando a pedir depois de a pessoa
+                      já ter pedido. */}
+                  {pedidosPendentes.has(p.id) ? (
+                    <span className="shrink-0 text-xs text-warning">Pedido em análise</span>
+                  ) : (
+                    <DialogoSolicitarAcesso
+                      projetoId={p.id}
+                      projetoNome={p.nome}
+                      trigger={
+                        <Button variant="outline" size="sm" className="shrink-0 gap-1.5">
+                          <Lock className="size-3.5" /> Solicitar acesso
+                        </Button>
+                      }
+                    />
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
     </AppShell>
   );

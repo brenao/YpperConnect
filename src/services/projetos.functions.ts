@@ -61,6 +61,18 @@ export const listarProjetosFn = createServerFn({ method: "GET" }).handler(async 
   return listarProjetos(await ctx());
 });
 
+/**
+ * O que está priorizado e a pessoa não pode abrir.
+ *
+ * Alimenta a seção de pedido de acesso na lista de projetos. É a mesma
+ * visibilidade de nome que o backlog já usava — só que agora na tela
+ * onde se procura projeto priorizado, que é onde a porta faltava.
+ */
+export const listarProjetosSemAcessoFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { listarProjetosSemAcesso } = await import("@/repositories/projetos.repo");
+  return listarProjetosSemAcesso(await ctx());
+});
+
 /** Detalhe completo: tudo o que a tela do projeto precisa, numa ida só. */
 export const detalheProjetoFn = createServerFn({ method: "GET" })
   .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
