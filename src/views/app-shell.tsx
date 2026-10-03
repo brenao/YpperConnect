@@ -77,6 +77,12 @@ const navAdministracao = [
     modulo: "/administracao",
   },
   {
+    to: "/administracao/fornecedores",
+    label: "Fornecedores",
+    icon: Building2,
+    modulo: "/administracao",
+  },
+  {
     to: "/administracao/notificacoes",
     label: "Notificações",
     icon: Mail,

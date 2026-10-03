@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import {
-  Building2,
   CalendarDays,
   ShieldCheck,
   Plus,
@@ -52,6 +51,7 @@ import type { Usuario } from "@/repositories/usuarios.repo";
 import { Paginacao, usePaginacao } from "@/views/paginacao";
 import { listarRecursosFn } from "@/services/recursos.functions";
 import { cn } from "@/lib/utils";
+import { SECOES_ADMINISTRACAO, type SecaoAdministracao } from "@/models/administracao-secoes";
 import { sessaoFn } from "@/services/sessao.functions";
 import { ConfirmarExclusao } from "@/views/confirmar-exclusao";
 import { DialogLink } from "@/views/dialog-link";
@@ -82,28 +82,6 @@ import {
   type SistemaUpdateInput,
   type AtivoInput,
 } from "@/services/cadastros.functions";
-
-/** Cada submenu de Administração é uma página com rota própria. */
-export type SecaoAdministracao = "usuarios" | "sistemas" | "calendario" | "notificacoes";
-
-const CABECALHO: Record<SecaoAdministracao, { titulo: string; subtitulo: string }> = {
-  usuarios: {
-    titulo: "Usuários",
-    subtitulo: "Quem acessa o sistema, perfil, equipe e administradores",
-  },
-  sistemas: {
-    titulo: "Sistemas",
-    subtitulo: "Inventário, responsáveis e atribuição automática de chamados",
-  },
-  calendario: {
-    titulo: "Calendário",
-    subtitulo: "Localidades e feriados usados nos prazos e cronogramas",
-  },
-  notificacoes: {
-    titulo: "Notificações",
-    subtitulo: "Fila de e-mails, rotinas agendadas e servidor de envio",
-  },
-};
 
 /** Radix não aceita SelectItem com value vazio. */
 const SEM = "__nenhum__";
@@ -205,7 +183,7 @@ function UserDialog({
     enabled: open,
   });
   const perfis = useQuery({ queryKey: ["perfis"], queryFn: () => listarPerfisFn(), enabled: open });
-  // O exemplo do login usa a empresa atual (ROSSET\usuario na Rosset).
+  // O exemplo do login usa o nome da empresa vinculada (ex.: Ypper Tech\usuario).
   const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn(), enabled: open });
 
   useEffect(() => {
@@ -349,7 +327,7 @@ function UserDialog({
               className={tentou && erroLogin ? classeErro : undefined}
               value={form.login}
               onChange={(e) => setForm({ ...form, login: e.target.value })}
-              placeholder={`${(sessao.data?.tenant?.slug ?? "empresa").toUpperCase()}\\usuario`}
+              placeholder={`${sessao.data?.tenant?.nome ?? "Empresa"}\\usuario`}
             />
             {tentou && erroLogin ? <p className="text-xs text-destructive">{erroLogin}</p> : null}
           </div>
@@ -842,6 +820,44 @@ function TabelaUsuarios({
   );
 }
 
+/**
+ * Bloco de usuários com título, paginação e tabela.
+ *
+ * A tela mostra dois grupos com o mesmo formato (quem já é recurso e
+ * quem não é); um componente só evita duas cópias do mesmo markup.
+ */
+function BlocoUsuarios({
+  titulo,
+  rotulo,
+  vazio,
+  pagina,
+  total,
+  ...tabela
+}: {
+  titulo: string;
+  rotulo: string;
+  vazio: string;
+  pagina: ReturnType<typeof usePaginacao<Usuario>>;
+  total: number;
+} & Omit<Parameters<typeof TabelaUsuarios>[0], "usuarios">) {
+  return (
+    <section className="space-y-2">
+      <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
+        {titulo} ({total})
+      </h2>
+      {total === 0 ? (
+        <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">{vazio}</p>
+      ) : (
+        <div className="panel overflow-hidden">
+          <Paginacao {...pagina.controles} rotulo={rotulo} posicao="topo" />
+          <TabelaUsuarios usuarios={pagina.visiveis} {...tabela} />
+          <Paginacao {...pagina.controles} rotulo={rotulo} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function Administracao({ secao }: { secao: SecaoAdministracao }) {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
@@ -1032,6 +1048,17 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
 
   const carregando = usuariosQuery.isPending || sistemasQuery.isPending;
 
+  // Mesmas ações nos dois blocos de usuários (com e sem recurso).
+  const propsTabela = {
+    isAdmin,
+    alternando: alternarUsuario.isPending,
+    nomeDoPerfil,
+    onEditar: abrirEdicao,
+    onAlternar: (id: string, ativo: boolean) => alternarUsuario.mutate({ id, ativo }),
+    onGerarLink: (id: string) => gerarLink.mutate(id),
+    gerandoLink: gerarLink.isPending,
+  };
+
   function abrirEdicao(u: Usuario) {
     setUsuarioEditando(u);
     setEdicaoAberta(true);
@@ -1044,8 +1071,8 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
   return (
     <AppShell
       trilha="Administração"
-      title={CABECALHO[secao].titulo}
-      subtitle={CABECALHO[secao].subtitulo}
+      title={SECOES_ADMINISTRACAO[secao].titulo}
+      subtitle={SECOES_ADMINISTRACAO[secao].subtitulo}
       actions={
         secao === "usuarios" || secao === "sistemas" ? (
           <Button
@@ -1098,29 +1125,7 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
           <Loader2 className="size-4 animate-spin" /> Carregando cadastros...
         </p>
       ) : (
-<<<<<<< HEAD:src/views/administracao.tsx
         <Tabs value={aba}>
-=======
-        <Tabs value={aba} onValueChange={setAba}>
-          <TabsList>
-            <TabsTrigger value="usuarios" className="gap-2">
-              <UserCog className="size-4" /> Usuários
-            </TabsTrigger>
-            <TabsTrigger value="sistemas" className="gap-2">
-              <Server className="size-4" /> Sistemas
-            </TabsTrigger>
-            <TabsTrigger value="calendario" className="gap-2">
-              <CalendarDays className="size-4" /> Calendário
-            </TabsTrigger>
-            <TabsTrigger value="fornecedores" className="gap-2">
-              <Building2 className="size-4" /> Fornecedores
-            </TabsTrigger>
-            <TabsTrigger value="emails" className="gap-2">
-              <Mail className="size-4" /> Notificações
-            </TabsTrigger>
-          </TabsList>
-
->>>>>>> origin/main:src/routes/administracao.tsx
           {/* -------------------------------------------------- usuários */}
           <TabsContent value="usuarios" className="mt-4 space-y-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -1164,58 +1169,22 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
               </p>
             ) : null}
 
-            <section className="space-y-2">
-              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
-                Cadastrados como recurso ({comRecurso.length})
-              </h2>
-              {comRecurso.length === 0 ? (
-                <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
-                  Ninguém aqui. Cadastre em Recursos e capacidade para que a pessoa possa receber
-                  tarefa de projeto.
-                </p>
-              ) : (
-                <div className="panel overflow-hidden">
-                  <Paginacao {...paginaComRecurso.controles} rotulo="com recurso" posicao="topo" />
-                  <TabelaUsuarios
-                    usuarios={paginaComRecurso.visiveis}
-                    isAdmin={isAdmin}
-                    alternando={alternarUsuario.isPending}
-                    nomeDoPerfil={nomeDoPerfil}
-                    onEditar={abrirEdicao}
-                    onAlternar={(id, ativo) => alternarUsuario.mutate({ id, ativo })}
-                    onGerarLink={(id) => gerarLink.mutate(id)}
-                    gerandoLink={gerarLink.isPending}
-                  />
-                  <Paginacao {...paginaComRecurso.controles} rotulo="com recurso" />
-                </div>
-              )}
-            </section>
-
-            <section className="space-y-2">
-              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
-                Demais usuários ({semRecurso.length})
-              </h2>
-              {semRecurso.length === 0 ? (
-                <p className="panel px-5 py-8 text-center text-sm text-muted-foreground">
-                  Nenhum usuário fora dos recursos com os filtros atuais.
-                </p>
-              ) : (
-                <div className="panel overflow-hidden">
-                  <Paginacao {...paginaSemRecurso.controles} rotulo="usuários" posicao="topo" />
-                  <TabelaUsuarios
-                    usuarios={paginaSemRecurso.visiveis}
-                    isAdmin={isAdmin}
-                    alternando={alternarUsuario.isPending}
-                    nomeDoPerfil={nomeDoPerfil}
-                    onEditar={abrirEdicao}
-                    onAlternar={(id, ativo) => alternarUsuario.mutate({ id, ativo })}
-                    onGerarLink={(id) => gerarLink.mutate(id)}
-                    gerandoLink={gerarLink.isPending}
-                  />
-                  <Paginacao {...paginaSemRecurso.controles} rotulo="usuários" />
-                </div>
-              )}
-            </section>
+            <BlocoUsuarios
+              titulo="Cadastrados como recurso"
+              rotulo="com recurso"
+              vazio="Ninguém aqui. Cadastre em Recursos e capacidade para que a pessoa possa receber tarefa de projeto."
+              pagina={paginaComRecurso}
+              total={comRecurso.length}
+              {...propsTabela}
+            />
+            <BlocoUsuarios
+              titulo="Demais usuários"
+              rotulo="usuários"
+              vazio="Nenhum usuário fora dos recursos com os filtros atuais."
+              pagina={paginaSemRecurso}
+              total={semRecurso.length}
+              {...propsTabela}
+            />
           </TabsContent>
 
           {/* -------------------------------------------------- sistemas */}
@@ -1344,7 +1313,7 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
           </TabsContent>
 
           {/* ----------------------------------------------- notificações */}
-          <TabsContent value="emails" className="mt-4 space-y-4">
+          <TabsContent value="notificacoes" className="mt-4 space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
               <Kpi label="Enviadas" value={String(notificacoes.data?.contagem["enviado"] ?? 0)} />
               <Kpi label="Pendentes" value={String(notificacoes.data?.contagem["pendente"] ?? 0)} />

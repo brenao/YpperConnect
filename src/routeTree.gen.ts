@@ -24,6 +24,7 @@ import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as RecursosRouteImport } from './routes/recursos'
 import { Route as AdministracaoIndexRouteImport } from './routes/administracao.index'
 import { Route as AdministracaoCalendarioRouteImport } from './routes/administracao.calendario'
+import { Route as AdministracaoFornecedoresRouteImport } from './routes/administracao.fornecedores'
 import { Route as AdministracaoNotificacoesRouteImport } from './routes/administracao.notificacoes'
 import { Route as AdministracaoSistemasRouteImport } from './routes/administracao.sistemas'
 import { Route as AdministracaoUsuariosRouteImport } from './routes/administracao.usuarios'
@@ -108,6 +109,12 @@ const AdministracaoCalendarioRoute = AdministracaoCalendarioRouteImport.update({
   path: '/administracao/calendario',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdministracaoFornecedoresRoute =
+  AdministracaoFornecedoresRouteImport.update({
+    id: '/administracao/fornecedores',
+    path: '/administracao/fornecedores',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AdministracaoNotificacoesRoute =
   AdministracaoNotificacoesRouteImport.update({
     id: '/administracao/notificacoes',
@@ -165,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
   '/administracao/calendario': typeof AdministracaoCalendarioRoute
+  '/administracao/fornecedores': typeof AdministracaoFornecedoresRoute
   '/administracao/notificacoes': typeof AdministracaoNotificacoesRoute
   '/administracao/sistemas': typeof AdministracaoSistemasRoute
   '/administracao/usuarios': typeof AdministracaoUsuariosRoute
@@ -190,6 +198,7 @@ export interface FileRoutesByTo {
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
   '/administracao/calendario': typeof AdministracaoCalendarioRoute
+  '/administracao/fornecedores': typeof AdministracaoFornecedoresRoute
   '/administracao/notificacoes': typeof AdministracaoNotificacoesRoute
   '/administracao/sistemas': typeof AdministracaoSistemasRoute
   '/administracao/usuarios': typeof AdministracaoUsuariosRoute
@@ -216,6 +225,7 @@ export interface FileRoutesById {
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
   '/administracao/calendario': typeof AdministracaoCalendarioRoute
+  '/administracao/fornecedores': typeof AdministracaoFornecedoresRoute
   '/administracao/notificacoes': typeof AdministracaoNotificacoesRoute
   '/administracao/sistemas': typeof AdministracaoSistemasRoute
   '/administracao/usuarios': typeof AdministracaoUsuariosRoute
@@ -243,6 +253,7 @@ export interface FileRouteTypes {
     | '/projetos'
     | '/recursos'
     | '/administracao/calendario'
+    | '/administracao/fornecedores'
     | '/administracao/notificacoes'
     | '/administracao/sistemas'
     | '/administracao/usuarios'
@@ -268,6 +279,7 @@ export interface FileRouteTypes {
     | '/projetos'
     | '/recursos'
     | '/administracao/calendario'
+    | '/administracao/fornecedores'
     | '/administracao/notificacoes'
     | '/administracao/sistemas'
     | '/administracao/usuarios'
@@ -293,6 +305,7 @@ export interface FileRouteTypes {
     | '/projetos'
     | '/recursos'
     | '/administracao/calendario'
+    | '/administracao/fornecedores'
     | '/administracao/notificacoes'
     | '/administracao/sistemas'
     | '/administracao/usuarios'
@@ -319,6 +332,7 @@ export interface RootRouteChildren {
   ProjetosRoute: typeof ProjetosRoute
   RecursosRoute: typeof RecursosRoute
   AdministracaoCalendarioRoute: typeof AdministracaoCalendarioRoute
+  AdministracaoFornecedoresRoute: typeof AdministracaoFornecedoresRoute
   AdministracaoNotificacoesRoute: typeof AdministracaoNotificacoesRoute
   AdministracaoSistemasRoute: typeof AdministracaoSistemasRoute
   AdministracaoUsuariosRoute: typeof AdministracaoUsuariosRoute
@@ -437,6 +451,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdministracaoCalendarioRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/administracao/fornecedores': {
+      id: '/administracao/fornecedores'
+      path: '/administracao/fornecedores'
+      fullPath: '/administracao/fornecedores'
+      preLoaderRoute: typeof AdministracaoFornecedoresRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/administracao/notificacoes': {
       id: '/administracao/notificacoes'
       path: '/administracao/notificacoes'
@@ -511,6 +532,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjetosRoute: ProjetosRoute,
   RecursosRoute: RecursosRoute,
   AdministracaoCalendarioRoute: AdministracaoCalendarioRoute,
+  AdministracaoFornecedoresRoute: AdministracaoFornecedoresRoute,
   AdministracaoNotificacoesRoute: AdministracaoNotificacoesRoute,
   AdministracaoSistemasRoute: AdministracaoSistemasRoute,
   AdministracaoUsuariosRoute: AdministracaoUsuariosRoute,
