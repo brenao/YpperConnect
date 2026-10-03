@@ -159,7 +159,22 @@ export interface ProjectTasksProps {
   recursos: { id: string; nome: string; papel: string | null }[];
   progressoEsperado: number;
   progressoReal: number;
+  /**
+   * Pode escrever alguma coisa: gerente, patrocinador ou responsável
+   * por tarefa. Governa o que é ANDAMENTO — progresso, datas da própria
+   * tarefa, nome.
+   */
   editavel: boolean;
+  /**
+   * Responde pelo plano: gerente, patrocinador ou admin.
+   *
+   * Governa o que é ESTRUTURA — criar, excluir, reordenar, endentar,
+   * mexer em dependência e em responsável. Sem esta separação, a tela
+   * oferecia botões que o servidor recusa desde que a governança por
+   * tarefa entrou, e erro que só aparece depois do clique é pior do que
+   * botão ausente.
+   */
+  gerencia: boolean;
   onDetalhe: (t: Tarefa) => void;
   /** Abre o diálogo de tarefa nova. Fica junto da grade, não no topo. */
   onNovaTarefa?: (() => void) | undefined;
@@ -175,6 +190,7 @@ export function ProjectTasks({
   progressoEsperado,
   progressoReal,
   editavel,
+  gerencia,
   onDetalhe,
   onNovaTarefa,
 }: ProjectTasksProps) {
@@ -328,7 +344,7 @@ export function ProjectTasks({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
           Clique em qualquer campo para editar. Linhas com subtarefas mostram o consolidado.
-          {editavel ? " Arraste pela alça à esquerda para reordenar." : ""}
+          {gerencia ? " Arraste pela alça à esquerda para reordenar." : ""}
           {criticas > 0 ? (
             <>
               {" "}
@@ -342,7 +358,7 @@ export function ProjectTasks({
           {/* Criar tarefa é ação da grade, e por isso mora nela. No
               cabeçalho da página ficava longe do que altera, e distante
               até de estar visível quando outra aba está aberta. */}
-          {editavel && onNovaTarefa ? (
+          {gerencia && onNovaTarefa ? (
             <Button size="sm" className="mr-1 gap-2" onClick={onNovaTarefa}>
               <Plus className="size-4" /> Nova tarefa
             </Button>
@@ -502,6 +518,7 @@ export function ProjectTasks({
                 totalLinhas={wbs.length}
                 opcoesRecurso={opcoesRecurso}
                 editavel={editavel}
+                gerencia={gerencia}
                 onDetalhe={() => onDetalhe(t)}
                 arrastando={arrastando === t.id}
                 marcaDeSolta={alvo?.alvoId === t.id ? alvo.posicao : null}
@@ -569,6 +586,7 @@ function LinhaTarefa({
   totalLinhas,
   opcoesRecurso,
   editavel,
+  gerencia,
   onDetalhe,
   arrastando,
   marcaDeSolta,
@@ -592,7 +610,10 @@ function LinhaTarefa({
   idPorIndice: Map<number, string>;
   totalLinhas: number;
   opcoesRecurso: OpcaoSeletor[];
+  /** Escreve andamento: progresso, datas e nome da própria tarefa. */
   editavel: boolean;
+  /** Responde pelo plano: estrutura, dependências e responsáveis. */
+  gerencia: boolean;
   onDetalhe: () => void;
   arrastando: boolean;
   marcaDeSolta: "antes" | "depois" | null;
@@ -715,7 +736,7 @@ function LinhaTarefa({
             <span className="flex h-7 items-center gap-0.5">
               {/* A alça é o único ponto que inicia o arrasto. A linha inteira
                 arrastável atrapalharia a seleção de texto dos campos. */}
-              {editavel ? (
+              {gerencia ? (
                 <span
                   draggable
                   onDragStart={onComecarArraste}
@@ -729,7 +750,10 @@ function LinhaTarefa({
 
               <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{indice}</span>
 
-              {editavel ? (
+              {/* Inserir, endentar e excluir mudam o PLANO: ficam com
+                  quem responde pelo projeto. Quem executa continua
+                  lançando progresso nas colunas da direita. */}
+              {gerencia ? (
                 <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
                   <Button
                     variant="ghost"
@@ -1008,7 +1032,7 @@ function LinhaTarefa({
                 idPorIndice={idPorIndice}
                 indiceProprio={indice}
                 totalLinhas={totalLinhas}
-                editavel={editavel}
+                editavel={gerencia}
                 onSalvar={(ids) => salvarVinculos.mutate({ id: t.id, predecessoras: ids })}
               />
             )}
@@ -1034,7 +1058,7 @@ function LinhaTarefa({
                   selecionados={responsaveis}
                   vazio="Sem responsável"
                   titulo="Responsáveis"
-                  editavel={editavel}
+                  editavel={gerencia}
                   onMudar={(ids) => salvarVinculos.mutate({ id: t.id, responsaveis: ids })}
                 />
               </span>
@@ -1051,13 +1075,13 @@ function LinhaTarefa({
       // Solta em cima da linha: o alvo é a linha inteira, e a metade em
       // que o ponteiro está decide se entra antes ou depois dela.
       onDragOver={(e) => {
-        if (!editavel) return;
+        if (!gerencia) return;
         e.preventDefault();
         const caixa = e.currentTarget.getBoundingClientRect();
         onPassarPor(e.clientY < caixa.top + caixa.height / 2 ? "antes" : "depois");
       }}
       onDrop={(e) => {
-        if (!editavel) return;
+        if (!gerencia) return;
         e.preventDefault();
         onSoltar();
       }}
@@ -1507,10 +1531,15 @@ function NomeInline({
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.currentTarget.blur();
-            onNovaLinha();
+            onNovaLinha?.();
             return;
           }
-          if (e.altKey && e.shiftKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+          if (
+            onAninhar &&
+            e.altKey &&
+            e.shiftKey &&
+            (e.key === "ArrowRight" || e.key === "ArrowLeft")
+          ) {
             e.preventDefault();
             const v = rascunho.trim();
             if (v && v !== valor) onSalvar(v);
