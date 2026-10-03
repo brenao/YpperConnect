@@ -61,6 +61,18 @@ export const listarProjetosFn = createServerFn({ method: "GET" }).handler(async 
   return listarProjetos(await ctx());
 });
 
+/**
+ * O que está priorizado e a pessoa não pode abrir.
+ *
+ * Alimenta a seção de pedido de acesso na lista de projetos. É a mesma
+ * visibilidade de nome que o backlog já usava — só que agora na tela
+ * onde se procura projeto priorizado, que é onde a porta faltava.
+ */
+export const listarProjetosSemAcessoFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { listarProjetosSemAcesso } = await import("@/repositories/projetos.repo");
+  return listarProjetosSemAcesso(await ctx());
+});
+
 /** Detalhe completo: tudo o que a tela do projeto precisa, numa ida só. */
 export const detalheProjetoFn = createServerFn({ method: "GET" })
   .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
@@ -84,7 +96,7 @@ export const detalheProjetoFn = createServerFn({ method: "GET" })
       baselines,
       planejado,
       planejadoAtual,
-      editavel,
+      papeis,
     ] = await Promise.all([
       r.listarTarefas(data.id),
       r.listarVinculosTarefas(data.id),
@@ -98,7 +110,7 @@ export const detalheProjetoFn = createServerFn({ method: "GET" })
       r.listarBaselines(data.id),
       r.baselineOriginal(data.id),
       r.baselineAtual(data.id),
-      r.podeEditarProjeto(usuario, data.id),
+      r.papeisNoProjeto(usuario, data.id),
     ]);
 
     // Rollup e CPM calculados no servidor: a tela recebe pronto e não
@@ -136,7 +148,17 @@ export const detalheProjetoFn = createServerFn({ method: "GET" })
        * como avaliar — e porque diretoria e portfólio enxergam o
        * projeto sem poder editá-lo.
        */
-      editavel,
+      /** Escreve andamento: inclui o responsável por tarefa. */
+      editavel: papeis.edita,
+      /**
+       * Responde pelo PLANO: gerente, patrocinador ou admin.
+       *
+       * A tela precisa dos dois porque os controles se dividem nessa
+       * linha — lançar progresso é de quem executa, reorganizar a WBS é
+       * de quem responde. Sem isto, o responsável veria botões que o
+       * servidor recusa.
+       */
+      gerencia: papeis.gere,
       /**
        * Instrutor de cronograma ligado para este perfil.
        *

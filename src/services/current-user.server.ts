@@ -74,10 +74,31 @@ export interface ContextoUsuario {
   adminPlataforma: boolean;
 }
 
+<<<<<<< HEAD
 export type Sessao =
   | { estado: "anonimo" }
   | { estado: "sem_tenant"; nome: string; email: string }
   | { estado: "ok"; ctx: ContextoUsuario };
+=======
+/**
+ * Identidade para desenvolvimento local, fora do proxy.
+ *
+ * Vem do ambiente e NUNCA do código. Já foi um login fixo aqui dentro,
+ * e isso trazia dois problemas: o nome de uma pessoa real virava
+ * credencial de quem rodasse o projeto, e o caminho ia junto para o
+ * build de produção — bastaria a porta do container ficar exposta para
+ * alguém entrar sem senha, com as permissões daquele login.
+ *
+ * Em produção a variável não é definida, e a ausência é a proteção: sem
+ * token e sem ela, a requisição é recusada. O mesmo erro de
+ * infraestrutura que antes abria a porta agora produz uma tela de erro —
+ * falha fechada, não aberta.
+ *
+ * Para desenvolver fora do proxy: `BEAGLEONE_LOGIN_DEV=seu.login` no
+ * `.env` local, que não é versionado.
+ */
+const LOGIN_DESENVOLVIMENTO = process.env["BEAGLEONE_LOGIN_DEV"] ?? null;
+>>>>>>> origin/main
 
 export class NaoAutenticadoError extends Error {
   constructor(mensagem = "Sessão expirada. Entre novamente.") {
@@ -97,9 +118,17 @@ export class NaoAutenticadoError extends Error {
 const sessaoPorRequisicao = new WeakMap<Request, Promise<Sessao>>();
 
 /**
+<<<<<<< HEAD
  * Lê a sessão sem lançar erro. Usada pelo guarda de rotas e pela tela
  * de login, que precisam distinguir "não logou" de "logou mas não tem
  * empresa".
+=======
+ * Compara logins ignorando o domínio.
+ *
+ * O token traz o login puro; a tabela pode ter `ROSSET\login`, herdado
+ * do cadastro manual. Normalizar aqui evita ter que higienizar a base
+ * inteira e continua funcionando quando o AD entrar com o formato dele.
+>>>>>>> origin/main
  */
 export function getSessao(): Promise<Sessao> {
   const requisicao = getRequest();
@@ -128,6 +157,7 @@ async function lerSessao(): Promise<Sessao> {
     supabase.rpc("sou_admin_plataforma"),
   ]);
 
+<<<<<<< HEAD
   if (tenantsRes.error) {
     throw new Error(`Falha ao carregar as empresas do usuário: ${tenantsRes.error.message}`);
   }
@@ -135,6 +165,95 @@ async function lerSessao(): Promise<Sessao> {
   const nome = (perfil.data?.nome as string | undefined) ?? user.email ?? "Usuário";
   const email = (perfil.data?.email as string | undefined) ?? user.email ?? "";
   const tenants = (tenantsRes.data ?? []) as TenantResumo[];
+=======
+  const lembrado = naoEncontradosAte.get(chave);
+  if (lembrado !== undefined && lembrado > Date.now()) return "nao_encontrado";
+
+  let pendente = autoCadastroEmAndamento.get(chave);
+  if (!pendente) {
+    pendente = (async () => {
+      const { cadastrarUsuarioGlpiPorLogin } = await import("@/integrations/glpi/usuarios.server");
+      const feito = await cadastrarUsuarioGlpiPorLogin(login);
+      if (feito === "nao_encontrado") {
+        naoEncontradosAte.set(chave, Date.now() + MEMORIA_NAO_ENCONTRADO_MS);
+        return "nao_encontrado";
+      }
+      naoEncontradosAte.delete(chave);
+      console.info(
+        `[beagleone] usuário '${login}' cadastrado no primeiro login via GLPI (${feito}).`,
+      );
+      return "cadastrado";
+    })().finally(() => autoCadastroEmAndamento.delete(chave));
+    autoCadastroEmAndamento.set(chave, pendente);
+  }
+  return pendente;
+}
+
+export async function getUsuarioAtual(): Promise<ContextoUsuario> {
+  const token = tokenDaRequisicao();
+  const username = token ? usuarioDoToken(token) : null;
+
+  /**
+   * Sem token, a identidade de desenvolvimento assume — e ela só existe
+   * onde alguém a definiu no ambiente.
+   *
+   * Em produção não há variável, então não há caminho alternativo: a
+   * requisição que chegar sem token é recusada, e isso só acontece se a
+   * aplicação estiver exposta fora do proxy.
+   */
+  const login = username ?? LOGIN_DESENVOLVIMENTO;
+
+  if (!login) {
+    throw new Error(
+      `Requisição sem token de autenticação. Em produção, verifique se a aplicação está ` +
+        `atrás do OpenResty. Em desenvolvimento, defina BEAGLEONE_LOGIN_DEV no .env.`,
+    );
+  }
+
+  let linha = await buscarLinha(login);
+
+  // Autenticou mas não está na tabela: antes de recusar, procura no
+  // GLPI e cadastra. É assim que ninguém precisa cadastrar a empresa
+  // inteira de uma vez — cada pessoa entra na primeira vez que loga.
+  //
+  // Só com token: sem token, quem está aqui é a identidade de
+  // desenvolvimento, e cadastrá-la pelo GLPI criaria usuário a partir de
+  // uma variável de ambiente.
+  if (!linha && username) {
+    let resultado: ResultadoAutoCadastro;
+    try {
+      resultado = await cadastrarPeloGlpi(username);
+    } catch (erro) {
+      const motivo = erro instanceof Error ? erro.message : String(erro);
+      throw new Error(
+        `Usuário '${username}' autenticou mas não está cadastrado no BeagleOne, ` +
+          `e o cadastro automático falhou porque o GLPI não respondeu: ${motivo}. ` +
+          `Tente de novo em instantes ou peça a um administrador para cadastrá-lo.`,
+      );
+    }
+    if (resultado === "nao_encontrado") {
+      throw new Error(
+        `Usuário '${username}' autenticou mas não está cadastrado no BeagleOne ` +
+          `nem consta na lista de usuários do GLPI. ` +
+          `Peça a um administrador para cadastrá-lo em Administração > Usuários.`,
+      );
+    }
+    // Cadastrado (ou reativado). Se ainda assim não vier linha, a pessoa
+    // existe mas está inativa por decisão local — o GLPI não reativa
+    // cadastro manual, de propósito.
+    linha = await buscarLinha(username);
+  }
+
+  if (!linha) {
+    throw new Error(
+      username
+        ? `Usuário '${username}' está cadastrado no BeagleOne, mas inativo. ` +
+            `Peça a um administrador para reativá-lo em Administração > Usuários.`
+        : `Login de desenvolvimento '${login}' não existe na tabela de usuários ou está ` +
+            `inativo. Confira o valor de BEAGLEONE_LOGIN_DEV no .env.`,
+    );
+  }
+>>>>>>> origin/main
 
   if (tenants.length === 0) return { estado: "sem_tenant", nome, email };
 

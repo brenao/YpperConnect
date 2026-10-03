@@ -69,6 +69,9 @@ const RecursoSchema = z.object({
   papel: z.string().max(120).nullable().optional(),
   equipeId: z.string().nullable().optional(),
   localidadeId: z.string().nullable().optional(),
+  /** Nulo é interno. Preenchido marca o recurso como terceiro. */
+  fornecedorId: z.string().nullable().optional(),
+  custoHora: z.number().min(0).max(99_999).nullable().optional(),
   horasDia: z.number().positive().max(24).optional(),
   disponibilidadeProjetos: z.number().int().min(0).max(100),
 });
@@ -265,3 +268,55 @@ export const listarLocalidadesFn = createServerFn({ method: "GET" }).handler(asy
   const { listarLocalidades } = await import("@/repositories/calendario.repo");
   return { localidades: await listarLocalidades(true) };
 });
+
+// ------------------------------------------------------- fornecedores
+
+/**
+ * Empresas que fornecem gente para os projetos.
+ *
+ * Ficam junto de recursos, e não num serviço próprio, porque só existem
+ * em função deles: fornecedor sem ninguém alocado é cadastro morto.
+ */
+export const listarFornecedoresFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { listarFornecedores } = await import("@/repositories/recursos.repo");
+  return { fornecedores: await listarFornecedores(false) };
+});
+
+const FornecedorSchema = z.object({
+  nome: z.string().min(2).max(160),
+  cnpj: z.string().max(18).nullable().optional(),
+  contatoNome: z.string().max(160).nullable().optional(),
+  contatoEmail: z.string().max(320).nullable().optional(),
+  contatoTelefone: z.string().max(40).nullable().optional(),
+  custoHoraPadrao: z.number().min(0).max(99_999).nullable().optional(),
+  observacao: z.string().max(1000).nullable().optional(),
+});
+
+export type FornecedorInput = z.infer<typeof FornecedorSchema>;
+
+export const criarFornecedorFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => FornecedorSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { criarFornecedor } = await import("@/repositories/recursos.repo");
+    return { id: await criarFornecedor(await ctx(), data) };
+  });
+
+const FornecedorUpdateSchema = FornecedorSchema.extend({ id: z.string() });
+export type FornecedorUpdateInput = z.infer<typeof FornecedorUpdateSchema>;
+
+export const atualizarFornecedorFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => FornecedorUpdateSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { atualizarFornecedor } = await import("@/repositories/recursos.repo");
+    const { id, ...dados } = data;
+    await atualizarFornecedor(await ctx(), id, dados);
+    return { ok: true };
+  });
+
+export const definirFornecedorAtivoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => z.object({ id: z.string(), ativo: z.boolean() }).parse(d))
+  .handler(async ({ data }) => {
+    const { definirFornecedorAtivo } = await import("@/repositories/recursos.repo");
+    await definirFornecedorAtivo(await ctx(), data.id, data.ativo);
+    return { ok: true };
+  });

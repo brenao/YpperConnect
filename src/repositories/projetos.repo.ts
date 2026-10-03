@@ -77,6 +77,15 @@ export interface Projeto {
 }
 
 export interface ProjetoComProgresso extends Projeto {
+  /**
+   * Departamento do gerente, para o filtro do portfólio.
+   *
+   * Vem do cadastro de usuários e responde "de qual área é quem toca
+   * este projeto" — pergunta diferente da área demandante, que diz de
+   * quem partiu o pedido. Numa TI que atende a empresa inteira, as duas
+   * quase nunca coincidem.
+   */
+  gerenteDepartamento: string | null;
   totalTarefas: number;
   tarefasConcluidas: number;
   /** Média do progresso das tarefas, 0–100. */
@@ -169,6 +178,23 @@ function novoId(): string {
 }
 
 /**
+ * Texto de cadastro livre, sem as variações que quebram agrupamento.
+ *
+ * Tira espaços das pontas e colapsa os repetidos do meio. É o mínimo
+ * para que "Comercial" e "Comercial " sejam a mesma área na hora de
+ * filtrar e de contar — o que já bastou para a migration 24 existir.
+ *
+ * A caixa não é tocada: forçar tudo para maiúscula ou para capitalizado
+ * estragaria siglas ("TI" viraria "Ti") e nomes próprios. O que resolve
+ * a divergência de caixa é o formulário sugerir o que já existe, e não
+ * o banco decidir a grafia de ninguém.
+ */
+function normalizarTexto(v: string | null | undefined): string | null {
+  const limpo = (v ?? "").trim().replace(/\s+/g, " ");
+  return limpo === "" ? null : limpo;
+}
+
+/**
  * Quem executa o projeto: gerente, patrocinador ou quem tem tarefa
  * atribuída nele.
  *
@@ -188,6 +214,22 @@ const SQL_EXECUTA_PROJETO = `
                JOIN tarefa_responsaveis tr ON tr.tarefa_id = t.id
                JOIN recursos r ON r.id = tr.recurso_id
               WHERE t.projeto_id = p.id AND t.ativo = 1 AND r.usuario_id = :usuarioId)`;
+
+/**
+ * Quem RESPONDE pelo projeto: gerente e patrocinador.
+ *
+ * Separado de `SQL_EXECUTA_PROJETO` porque os dois respondiam a
+ * perguntas diferentes que o código tratava como uma só. Executar é
+ * ter tarefa no projeto; responder é ter o plano no nome.
+ *
+ * A diferença importa para governança: quem executa precisa lançar o
+ * próprio progresso, e isso não deveria dar o direito de reorganizar a
+ * WBS inteira, cortar dependências ou excluir tarefa dos outros. Era o
+ * que acontecia — e num projeto com terceiro alocado, significava que
+ * o fornecedor podia refazer o cronograma do cliente.
+ */
+const SQL_GERE_PROJETO = `
+  p.gerente_id = :usuarioId OR p.sponsor_id = :usuarioId`;
 
 /**
  * Projetos do time do gestor de portfólio.
@@ -311,7 +353,61 @@ async function exigirAcessoProjeto(
   }
 }
 
+/**
+ * Ações estruturais: só quem responde pelo projeto.
+ *
+ * Criar e excluir tarefa, mudar nível, reordenar, mexer em dependência
+ * ou em responsável, salvar baseline, alterar o projeto. São as que
+ * mudam o PLANO, e plano é do gerente.
+ *
+ * Admin entra porque precisa destravar cadastro errado.
+ */
+async function exigirGestaoProjeto(
+  ctx: ContextoUsuario,
+  projetoId: string,
+  acao: string,
+): Promise<void> {
+  if (ctx.admin) return;
+
+  const p = await consultarUm<{ id: string; gere: boolean }>(
+    `SELECT p.id, (${SQL_GERE_PROJETO}) AS gere
+       FROM projetos p WHERE p.id = :projetoId`,
+    { projetoId, usuarioId: ctx.id },
+  );
+  if (!p) throw new ErroDominio(`Projeto ${projetoId} não encontrado`);
+
+  if (!p.gere) {
+    throw new ErroDominio(
+      `Somente o gerente ou o patrocinador podem ${acao}. ` +
+        `Como responsável por tarefa, você pode atualizar o andamento das suas.`,
+    );
+  }
+}
+
 /** Mesma regra, quando só se tem a tarefa em mãos. */
+async function exigirGestaoDaTarefa(
+  ctx: ContextoUsuario,
+  tarefaId: string,
+  acao: string,
+): Promise<void> {
+  if (ctx.admin) return;
+
+  const t = await consultarUm<{ projetoId: string }>(
+    `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
+    { id: tarefaId },
+  );
+  if (!t) throw new ErroDominio(`Tarefa ${tarefaId} não encontrada`);
+  await exigirGestaoProjeto(ctx, t.projetoId, acao);
+}
+
+/**
+ * Ação sobre UMA tarefa: gestor em qualquer uma, responsável só na dele.
+ *
+ * É o que separa executar de gerir no dia a dia. Lançar progresso,
+ * mover no kanban e ajustar a própria data continuam abertos a quem faz
+ * o trabalho — negar isso obrigaria o gerente a digitar o andamento do
+ * time inteiro, e cronograma que depende disso não é atualizado.
+ */
 async function exigirAcessoTarefa(
   ctx: ContextoUsuario,
   tarefaId: string,
@@ -324,7 +420,30 @@ async function exigirAcessoTarefa(
     { id: tarefaId },
   );
   if (!t) throw new ErroDominio(`Tarefa ${tarefaId} não encontrada`);
-  await exigirAcessoProjeto(ctx, t.projetoId, acao);
+
+  /**
+   * O vínculo passa por `recursos`, porque responsável de tarefa é
+   * recurso e não usuário: `recursos.usuario_id` é o que liga os dois.
+   * Terceiro sem conta simplesmente não casa — e é o comportamento
+   * certo, porque quem não entra no sistema não atualiza nada mesmo.
+   */
+  const meu = await consultarUm<{ gere: boolean; responsavel: boolean }>(
+    `SELECT (${SQL_GERE_PROJETO}) AS gere,
+            EXISTS (SELECT 1
+                      FROM tarefa_responsaveis tr
+                      JOIN recursos r ON r.id = tr.recurso_id
+                     WHERE tr.tarefa_id = :tarefaId
+                       AND r.usuario_id = :usuarioId) AS responsavel
+       FROM projetos p WHERE p.id = :projetoId`,
+    { projetoId: t.projetoId, tarefaId, usuarioId: ctx.id },
+  );
+
+  if (!meu?.gere && !meu?.responsavel) {
+    throw new ErroDominio(
+      `Você só pode ${acao} nas tarefas em que é responsável. ` +
+        `Peça ao gerente do projeto para atribuir a tarefa a você.`,
+    );
+  }
 }
 
 /**
@@ -380,6 +499,7 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
     `SELECT p.id, p.nome, p.objetivo,
             p.sponsor_id, us.nome AS sponsor_nome,
             p.gerente_id, ug.nome AS gerente_nome,
+            ug.departamento AS gerente_departamento,
             p.status, p.inicio, p.fim,
             (p.usa_dias_uteis = 1) AS usa_dias_uteis,
             (p.sigiloso = 1) AS sigiloso,
@@ -440,21 +560,52 @@ export async function buscarProjeto(ctx: ContextoUsuario, id: string): Promise<P
 }
 
 /**
- * Diz se o usuário pode editar este projeto, para a tela decidir o que
+ * Os dois papéis deste usuário no projeto, para a tela decidir o que
  * mostrar.
  *
- * A tela precisa saber antes de renderizar: diretoria e portfólio
- * enxergam o projeto, então sem isto veriam campos editáveis que o
- * servidor recusaria depois — pior experiência do que não ver o botão.
+ * Uma função só, e não duas quase idênticas: as duas perguntas são
+ * sempre feitas juntas — o detalhe do projeto precisa das duas a cada
+ * abertura —, e separá-las custaria uma ida ao banco a mais para
+ * responder dois booleanos que saem do mesmo registro.
+ *
+ * `edita` é quem escreve alguma coisa: gerente, patrocinador ou
+ * responsável por tarefa. `gere` é quem responde pelo PLANO: gerente e
+ * patrocinador. A tela precisa dos dois porque os controles se dividem
+ * nessa linha — lançar progresso é de quem executa, reorganizar a WBS é
+ * de quem responde.
+ *
+ * Calculado no servidor porque a regra depende de responsáveis por
+ * tarefa, que a tela não tem como avaliar, e porque diretoria e
+ * portfólio enxergam o projeto sem poder editá-lo.
  */
-export async function podeEditarProjeto(ctx: ContextoUsuario, projetoId: string): Promise<boolean> {
-  if (ctx.admin) return true;
+export interface PapeisNoProjeto {
+  edita: boolean;
+  gere: boolean;
+}
 
-  const p = await consultarUm<{ executa: boolean }>(
-    `SELECT (${SQL_EXECUTA_PROJETO}) AS executa FROM projetos p WHERE p.id = :projetoId`,
+export async function papeisNoProjeto(
+  ctx: ContextoUsuario,
+  projetoId: string,
+): Promise<PapeisNoProjeto> {
+  if (ctx.admin) return { edita: true, gere: true };
+
+  const p = await consultarUm<{ executa: boolean; gere: boolean }>(
+    `SELECT (${SQL_EXECUTA_PROJETO}) AS executa,
+            (${SQL_GERE_PROJETO}) AS gere
+       FROM projetos p WHERE p.id = :projetoId`,
     { projetoId, usuarioId: ctx.id },
   );
-  return p?.executa ?? false;
+  return { edita: p?.executa ?? false, gere: p?.gere ?? false };
+}
+
+/**
+ * Atalho para quem só precisa saber se há escrita.
+ *
+ * Mantido porque outras telas já o chamavam, e porque "pode escrever
+ * alguma coisa?" continua sendo uma pergunta legítima por si só.
+ */
+export async function podeEditarProjeto(ctx: ContextoUsuario, projetoId: string): Promise<boolean> {
+  return (await papeisNoProjeto(ctx, projetoId)).edita;
 }
 
 /** Linha crua da tarefa: `marco` é SMALLINT 0/1 no schema. */
@@ -832,7 +983,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
       // número e ninguém escolheu, que é o caso da esmagadora maioria.
       capex: d.capex ?? null,
       moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
-      area: d.areaDemandante?.trim() ?? null,
+      area: normalizarTexto(d.areaDemandante),
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,
       esforco: d.esforco ?? null,
@@ -848,7 +999,7 @@ export async function atualizarProjeto(
   id: string,
   d: DadosProjeto,
 ): Promise<void> {
-  await exigirAcessoProjeto(ctx, id, "alterar este projeto");
+  await exigirGestaoProjeto(ctx, id, "alterar este projeto");
   validarProjeto(d);
 
   const n = await executar(
@@ -877,7 +1028,7 @@ export async function atualizarProjeto(
       sigiloso: d.sigiloso === undefined ? null : deBool(d.sigiloso),
       capex: d.capex ?? null,
       moeda: d.capex === null || d.capex === undefined ? null : (d.moeda ?? "BRL"),
-      area: d.areaDemandante?.trim() ?? null,
+      area: normalizarTexto(d.areaDemandante),
       justificativa: d.justificativa?.trim() ?? null,
       valor: d.valor ?? null,
       esforco: d.esforco ?? null,
@@ -946,7 +1097,7 @@ export async function impedimentosDeExclusao(
  * que ninguém sabe por que estão ali.
  */
 export async function excluirProjeto(ctx: ContextoUsuario, id: string): Promise<void> {
-  await exigirAcessoProjeto(ctx, id, "excluir este projeto");
+  await exigirGestaoProjeto(ctx, id, "excluir este projeto");
 
   const imp = await impedimentosDeExclusao(ctx, id);
   const total = imp.tarefas + imp.riscos + imp.atencoes + imp.atualizacoes + imp.baselines;
@@ -995,7 +1146,7 @@ export async function definirStatusProjeto(
   id: string,
   status: ProjectStatus,
 ): Promise<void> {
-  await exigirAcessoProjeto(ctx, id, "alterar a situação deste projeto");
+  await exigirGestaoProjeto(ctx, id, "alterar a situação deste projeto");
 
   if (status === "backlog") {
     throw new ErroDominio(
@@ -1055,7 +1206,7 @@ export interface DadosTarefa {
  * por falha parcial desmonta o cálculo de capacidade.
  */
 export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise<string> {
-  await exigirAcessoProjeto(ctx, d.projetoId, "criar tarefas neste projeto");
+  await exigirGestaoProjeto(ctx, d.projetoId, "criar tarefas neste projeto");
   if (d.nome.trim().length < 3) throw new ErroDominio("Informe o nome da tarefa");
   if (d.fim && d.fim < d.inicio) throw new ErroDominio("Data de término anterior ao início");
   if (d.duracao !== undefined && (!Number.isFinite(d.duracao) || d.duracao <= 0)) {
@@ -1266,7 +1417,7 @@ export async function moverTarefa(
  * deixar as filhas visíveis produziria órfãs soltas na grade.
  */
 export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<void> {
-  await exigirAcessoTarefa(ctx, id, "excluir tarefas deste projeto");
+  await exigirGestaoDaTarefa(ctx, id, "excluir tarefas deste projeto");
 
   // O projeto precisa ser lido antes: depois da desativação a tarefa
   // continua existindo, mas propagar a partir dela vira busca inútil.
@@ -2067,7 +2218,7 @@ export async function atualizarCampoTarefa(
             duracao = :duracao,
             duracao_unidade = :unidade,
             restricao_inicio = CASE WHEN :limparRestricao = 1 THEN NULL
-                                    WHEN :fixarData = 1 THEN CAST(:inicio AS date)
+                                    WHEN :fixarData = 1 THEN :restricao
                                     ELSE restricao_inicio END,
             quadro = CASE WHEN :mexeuProgresso = 0 THEN quadro
                           WHEN :concluida = 1 THEN 'done'
@@ -2083,6 +2234,16 @@ export async function atualizarCampoTarefa(
       nome: d.nome?.trim() ?? null,
       progresso: d.progresso ?? null,
       inicio,
+      /**
+       * A mesma data, por um bind próprio.
+       *
+       * Reusar `:inicio` dentro do CASE fazia o Postgres deduzir dois
+       * tipos para o mesmo parâmetro — `date` na coluna `inicio` e
+       * outro dentro do CASE — e recusar a consulta com "inconsistent
+       * types deduced for parameter". Dois binds para o mesmo valor
+       * custam nada e tiram a ambiguidade.
+       */
+      restricao: fixarData ? inicio : null,
       fim,
       duracao,
       unidade,
@@ -2241,7 +2402,7 @@ export async function inserirAbaixo(
   referenciaId: string,
   comoFilha: boolean,
 ): Promise<string> {
-  await exigirAcessoTarefa(ctx, referenciaId, "criar tarefas neste projeto");
+  await exigirGestaoDaTarefa(ctx, referenciaId, "criar tarefas neste projeto");
 
   const ref = await consultarUm<{
     projetoId: string;
@@ -2336,7 +2497,7 @@ export async function salvarBaseline(
   projetoId: string,
   descricao?: string | null | undefined,
 ): Promise<string> {
-  await exigirAcessoProjeto(ctx, projetoId, "salvar baseline deste projeto");
+  await exigirGestaoProjeto(ctx, projetoId, "salvar baseline deste projeto");
 
   const id = novoId();
   await emTransacao(async (tx) => {
@@ -2592,7 +2753,7 @@ export async function atualizarVinculosTarefa(
   id: string,
   d: VinculosTarefa,
 ): Promise<void> {
-  await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
+  await exigirGestaoDaTarefa(ctx, id, "alterar tarefas deste projeto");
 
   const tarefa = await consultarUm<{ projetoId: string }>(
     `SELECT projeto_id FROM projeto_tarefas WHERE id = :id`,
@@ -2803,7 +2964,7 @@ export async function aninharTarefa(
   id: string,
   direcao: "dentro" | "fora",
 ): Promise<void> {
-  await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
+  await exigirGestaoDaTarefa(ctx, id, "alterar tarefas deste projeto");
 
   const t = await consultarUm<{
     projetoId: string;
@@ -3337,6 +3498,22 @@ export async function conflitoDeData(
 export interface ResumoPortfolio {
   /** Fila de decisão: registrado, ainda não priorizado. */
   backlog: number;
+  /**
+   * Priorizados e não encerrados: a carteira que consome gente hoje.
+   *
+   * É o número que responde "de quantos projetos eu cuido", e por isso
+   * abre a faixa. Concluído e cancelado ficam de fora — não pedem nada
+   * de ninguém, e somá-los faria a carteira crescer para sempre.
+   */
+  priorizados: number;
+  /**
+   * Priorizados sem nenhuma tarefa: projeto aprovado e sem plano.
+   *
+   * É o pior estado possível, e o mais silencioso: não aparece como
+   * atrasado, porque não há data de tarefa para vencer, nem como sem
+   * notícia, se alguém escreveu um acompanhamento.
+   */
+  semCronograma: number;
   /** Dias desde o cadastro da demanda mais antiga ainda na fila. */
   diasNaFila: number;
   /**
@@ -3387,6 +3564,14 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
        COALESCE(SUM(p.capex) FILTER (
                 WHERE p.status = 'backlog' AND p.moeda = 'BRL'), 0) AS investimento_na_fila,
 
+       COUNT(*) FILTER (
+         WHERE p.status IN ('planejamento','execucao','paralisado'))::int AS priorizados,
+
+       COUNT(*) FILTER (
+         WHERE p.status IN ('planejamento','execucao','paralisado')
+           AND NOT EXISTS (SELECT 1 FROM projeto_tarefas t
+                            WHERE t.projeto_id = p.id AND t.ativo = 1))::int AS sem_cronograma,
+
        COUNT(*) FILTER (WHERE p.status = 'planejamento')::int AS planejamento,
        COUNT(*) FILTER (WHERE p.status = 'execucao')::int     AS execucao,
        COUNT(*) FILTER (WHERE p.status = 'paralisado')::int   AS paralisado,
@@ -3417,6 +3602,8 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
   return (
     r ?? {
       backlog: 0,
+      priorizados: 0,
+      semCronograma: 0,
       diasNaFila: 0,
       investimentoNaFila: 0,
       planejamento: 0,
@@ -3503,7 +3690,7 @@ export async function moverOrdemTarefa(
   alvoId: string,
   posicao: PosicaoSolta,
 ): Promise<void> {
-  await exigirAcessoTarefa(ctx, id, "reordenar tarefas deste projeto");
+  await exigirGestaoDaTarefa(ctx, id, "reordenar tarefas deste projeto");
 
   if (id === alvoId) return;
 
@@ -3563,4 +3750,84 @@ export async function moverOrdemTarefa(
   });
 
   await renumerarTarefas(tarefa.projetoId);
+}
+
+// ------------------------------------------------- áreas demandantes
+
+/**
+ * Áreas já usadas, para o formulário sugerir em vez de deixar digitar
+ * de novo.
+ *
+ * É o que impede a divergência de grafia na origem: quem vê "Comercial"
+ * na lista escolhe "Comercial", em vez de escrever "comercial" e criar
+ * uma segunda área que nenhum agrupamento reconhece.
+ *
+ * Não é cadastro fechado de propósito. Área demandante tem cauda longa
+ * — aparece setor que não está em lista nenhuma —, e obrigar a escolher
+ * faria a pessoa marcar "Outros" e perder a informação. Sugerir resolve
+ * a maioria dos casos sem travar o caso novo.
+ *
+ * Sem filtro de visibilidade: nome de área não é informação sigilosa, e
+ * restringir faria o campo sugerir coisas diferentes para cada pessoa.
+ */
+export async function areasDemandantes(): Promise<string[]> {
+  const linhas = await consultar<{ area: string }>(
+    `SELECT DISTINCT area_demandante AS area
+       FROM projetos
+      WHERE area_demandante IS NOT NULL
+      ORDER BY area_demandante`,
+  );
+  return linhas.map((l) => l.area);
+}
+
+// --------------------------------------------- projetos sem acesso
+
+/**
+ * Projeto que a pessoa enxerga pelo nome, mas não pode abrir.
+ *
+ * Só o cabeçalho: nome, quem gerencia e de que área veio. É o suficiente
+ * para reconhecer o projeto e pedir acesso, e nada além disso — o
+ * conteúdo é justamente o que a restrição protege.
+ */
+export interface ProjetoSemAcesso {
+  id: string;
+  nome: string;
+  gerenteNome: string | null;
+  areaDemandante: string | null;
+  status: ProjectStatus;
+}
+
+/**
+ * O que está priorizado e a pessoa não pode abrir.
+ *
+ * Existe porque a porta de pedir acesso estava no lugar errado. Quem
+ * precisa de um projeto priorizado procura em Projetos — é onde projeto
+ * priorizado mora —, e só encontrava o pedido no Backlog, numa aba
+ * chamada "Já priorizados". O nome da tela diz que ali está o que ainda
+ * não foi decidido, então ninguém vai procurar lá.
+ *
+ * Sigiloso fica de fora. É a única exceção à regra de que todo mundo vê
+ * o nome de todo projeto, e o motivo dela é exatamente não revelar que
+ * o projeto existe.
+ *
+ * Encerrados também: pedir acesso a um projeto concluído é consulta a
+ * histórico, não trabalho — e encheria a lista com anos de carteira.
+ *
+ * Quem enxerga tudo recebe lista vazia, sem consulta: não há projeto
+ * fora do alcance dessas pessoas.
+ */
+export async function listarProjetosSemAcesso(ctx: ContextoUsuario): Promise<ProjetoSemAcesso[]> {
+  const f = filtroVisibilidadeProjetos(ctx);
+  if (f.clausula === "TRUE") return [];
+
+  return consultar<ProjetoSemAcesso>(
+    `SELECT p.id, p.nome, ug.nome AS gerente_nome, p.area_demandante, p.status
+       FROM projetos p
+       LEFT JOIN usuarios ug ON ug.id = p.gerente_id
+      WHERE p.status IN ('planejamento', 'execucao', 'paralisado')
+        AND p.sigiloso = 0
+        AND NOT (${f.clausula})
+      ORDER BY p.nome`,
+    f.binds,
+  );
 }

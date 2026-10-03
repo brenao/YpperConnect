@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Loader2, Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -108,6 +108,7 @@ function somenteIds(
 
 function DetalheProjeto() {
   const { projectId } = Route.useParams();
+  const router = useRouter();
   const qc = useQueryClient();
 
   const q = useQuery({
@@ -164,8 +165,8 @@ function DetalheProjeto() {
     enabled: q.data?.editavel ?? false,
   });
 
-  // A tela espelha a regra do repositório, mas não a recalcula: o
-  // `editavel` do detalhe já vem decidido pelo servidor.
+  // A tela espelha a regra do repositório, mas não a recalcula: os dois
+  // papéis do detalhe já vêm decididos pelo servidor.
   const recursos = useMemo(() => recursosQuery.data?.recursos ?? [], [recursosQuery.data]);
 
   const nomeRecurso = (id: string) => recursos.find((r) => r.id === id)?.nome ?? "—";
@@ -295,6 +296,7 @@ function DetalheProjeto() {
     planejado,
     planejadoAtual,
     editavel,
+    gerencia,
     mostrarCoach,
   } = q.data;
 
@@ -316,10 +318,18 @@ function DetalheProjeto() {
   const semAtualizar = diasSemAtualizar(atualizacoes, hoje);
   const estadoBaseline = compararComBaseline(tarefas, planejadoAtual);
 
-  // `editavel` vem do servidor: a regra inclui responsáveis por tarefa,
-  // que a tela não tem como avaliar, e diretoria e portfólio enxergam o
-  // projeto sem poder editá-lo. Repetir a regra aqui só criaria duas
-  // versões dela para divergir.
+  /**
+   * Dois papéis, e não um: `editavel` e `gerencia` vêm do servidor.
+   *
+   * `editavel` é quem escreve ANDAMENTO — inclui o responsável por
+   * tarefa, que lança o próprio progresso. `gerencia` é quem responde
+   * pelo PLANO — gerente, patrocinador e admin.
+   *
+   * A distinção existe porque um fornecedor com uma tarefa no projeto
+   * podia reorganizar a WBS inteira do cliente. Repetir a regra aqui
+   * criaria duas versões dela para divergir; a tela só distribui os
+   * controles entre os dois.
+   */
 
   const atencoesAbertas = atencoes.filter((a) => a.status === "aberto");
   const riscosAbertos = riscos.filter((r) => r.status !== "mitigado");
@@ -328,12 +338,14 @@ function DetalheProjeto() {
   const pendentesAcesso = (pedidos.data ?? []).filter((s) => s.projetoId === projectId).length;
 
   /**
-   * A aba de acesso só aparece para quem tem o que fazer nela.
+   * A aba de acesso aparece para todo participante.
    *
-   * Para quem só lê o projeto, uma aba que lista permissões alheias é
-   * ruído. Ela entra quando a pessoa pode decidir (editavel) ou quando
-   * o projeto é sigiloso — aí a lista de quem enxerga é informação
-   * relevante mesmo para quem não mexe.
+   * Decidir pedido continua sendo de quem responde pelo projeto — é o
+   * `editavel={gerencia}` do painel —, mas VER quem tem acesso é
+   * informação de quem está no projeto. A regra geral é que todo mundo
+   * enxerga a existência de todo projeto e pede acesso quando precisa;
+   * esconder a lista de participantes de quem já participa andaria na
+   * direção contrária.
    */
   const mostrarAcesso = editavel || projeto.sigiloso;
 
@@ -346,7 +358,9 @@ function DetalheProjeto() {
       title={projeto.nome}
       subtitle={`${projeto.gerenteNome ?? "Sem gerente"} · ${fmt(projeto.inicio)} — ${fmt(projeto.fim)}`}
       actions={
-        editavel ? (
+        // Editar o cadastro do projeto é do gerente: nome, objetivo,
+        // patrocinador e sigilo descrevem o projeto, não o trabalho.
+        gerencia ? (
           <ProjectDialog
             project={projeto}
             trigger={
@@ -359,24 +373,42 @@ function DetalheProjeto() {
       }
     >
       <div className="space-y-4">
-        <Link
-          to="/projetos"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        {/* Volta no histórico em vez de navegar para a rota.
+
+            Um link constrói uma URL nova e limpa, e os filtros do
+            portfólio vivem na barra de endereços: quem filtrou por área,
+            entrou num projeto e voltou perdia o recorte e tinha de
+            refazê-lo a cada consulta.
+
+            O `to` continua ali para quem chegou por link direto — sem
+            histórico para onde voltar, o botão precisa ter um destino. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-auto gap-1 px-1 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            if (window.history.length > 1) router.history.back();
+            else void router.navigate({ to: "/projetos" });
+          }}
         >
           <ArrowLeft className="size-3.5" /> Portfólio
-        </Link>
+        </Button>
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div className="panel p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Situação</p>
             {/* Trocar a situação aqui, e não só no card do portfólio:
                 quem está olhando o cronograma é justamente quem sabe
-                que o projeto paralisou. É o mesmo componente da lista. */}
+                que o projeto paralisou. É o mesmo componente da lista.
+
+                Segue `gerencia`: paralisar ou encerrar um projeto é
+                decisão de quem responde por ele, não de quem executa
+                uma tarefa dentro dele. */}
             <div className="mt-2">
               <SeletorStatusProjeto
                 projetoId={projectId}
                 status={projeto.status}
-                editavel={editavel}
+                editavel={gerencia}
               />
             </div>
             {/* O sigilo fica ao lado da situação porque é da mesma
@@ -499,7 +531,7 @@ function DetalheProjeto() {
 
         <Tabs defaultValue="tarefas">
           <TabsList>
-            <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
+            <TabsTrigger value="tarefas">Cronograma</TabsTrigger>
             <TabsTrigger value="gantt">Gantt</TabsTrigger>
             <TabsTrigger value="kanban">Kanban</TabsTrigger>
             {mostrarAcesso ? (
@@ -516,11 +548,13 @@ function DetalheProjeto() {
 
           {/* ----------------------------------------------------- tarefas */}
           <TabsContent value="tarefas" className="mt-4 space-y-4">
+            {/* Baseline é foto do plano: tirá-la é ato de quem responde
+                pelo plano. */}
             <ProjectBaseline
               projetoId={projectId}
               baselines={baselines}
               estado={estadoBaseline}
-              editavel={editavel}
+              editavel={gerencia}
               onSalvo={invalidar}
             />
 
@@ -534,6 +568,7 @@ function DetalheProjeto() {
               progressoEsperado={esperado}
               progressoReal={progresso}
               editavel={editavel}
+              gerencia={gerencia}
               onDetalhe={(t) => {
                 setEditando(t);
                 setTarefaAberta(true);
@@ -545,6 +580,10 @@ function DetalheProjeto() {
             />
 
             <div className="grid gap-4 lg:grid-cols-3">
+              {/* Risco, decisão pendente e acompanhamento seguem
+                  `editavel`: registrar o que está acontecendo é trabalho
+                  de quem executa, e exigir o gerente para isso faria o
+                  registro simplesmente não acontecer. */}
               <PainelRiscos
                 projetoId={projectId}
                 riscos={riscos}
@@ -657,7 +696,7 @@ function DetalheProjeto() {
               <PainelAcessos
                 projetoId={projectId}
                 sigiloso={projeto.sigiloso}
-                editavel={editavel}
+                editavel={gerencia}
               />
             </TabsContent>
           ) : null}

@@ -35,7 +35,10 @@ export const QUADROS: { key: QuadroTarefa; label: string }[] = [
 ];
 
 function fmt(v: Date | string): string {
-  return new Date(v).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  return new Date(v).toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+  });
 }
 
 function meiaNoite(v: Date | string): Date {
@@ -168,12 +171,22 @@ export function ProjectKanban({
               }}
               onDragLeave={() => setSobre(null)}
               onDrop={() => editavel && soltar(col.key)}
+              /* Altura travada, com rolagem dentro da coluna.
+
+                 Sem isto, a coluna mais cheia estica o quadro inteiro e
+                 as outras três viram um rodapé vazio de dois metros — e
+                 o cabeçalho das colunas sai da tela, que é justamente o
+                 que faz alguém perder de vista onde está soltando o
+                 cartão. */
               className={cn(
-                "rounded-xl border border-border bg-surface p-3 transition-colors",
+                "flex max-h-[calc(100vh-20rem)] min-h-56 flex-col rounded-xl border border-border bg-surface p-3 transition-colors",
                 sobre === col.key ? "border-primary/50 bg-primary/5" : "",
               )}
             >
-              <header className="mb-3 flex items-center justify-between">
+              {/* Cabeçalho e legenda ficam fora da área que rola: o nome
+                  da coluna e a contagem precisam continuar visíveis
+                  enquanto se percorre a lista. */}
+              <header className="mb-3 flex shrink-0 items-center justify-between">
                 <span className="text-sm font-medium">{col.label}</span>
                 <span className="font-mono text-[11px] text-muted-foreground">{itens.length}</span>
               </header>
@@ -182,12 +195,14 @@ export function ProjectKanban({
                   encontrar no meio de "Esta semana" uma tarefa que
                   ninguém moveu para lá parece defeito. */}
               {col.key === "todo" ? (
-                <p className="mb-2 text-[10px] leading-tight text-muted-foreground">
+                <p className="mb-2 shrink-0 text-[10px] leading-tight text-muted-foreground">
                   Inclui o que está planejado até {fmt(corte)}.
                 </p>
               ) : null}
 
-              <ul className="space-y-2">
+              {/* `-mr-1 pr-1` encosta a barra de rolagem na borda sem
+                  comer o espaço dos cartões. */}
+              <ul className="-mr-1 flex-1 space-y-2 overflow-y-auto pr-1">
                 {itens.map((t) => {
                   const done = t.quadro === "done";
                   const atrasada = !done && meiaNoite(t.fim) < hoje;

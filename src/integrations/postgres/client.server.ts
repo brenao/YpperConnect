@@ -134,6 +134,70 @@ function mapearLinha<T>(linha: Record<string, unknown>): T {
 }
 
 /**
+ * Violação de regra do banco que o usuário consegue entender e resolver.
+ *
+ * São poucas, e todas têm a mesma natureza: o dado que a pessoa digitou
+ * esbarrou numa restrição declarada no schema. Dizer "já existe" ou
+ * "este registro está em uso" resolve; dizer
+ * "duplicate key value violates unique constraint ux_fornecedores_nome"
+ * manda a pessoa procurar a TI para traduzir o próprio erro dela.
+ *
+ * O código vem do Postgres e é estável entre versões.
+ */
+const ERROS_CONHECIDOS: Record<string, string> = {
+  // unique_violation
+  "23505": "Já existe um registro com esses dados. Confira e tente de novo.",
+  // foreign_key_violation
+  "23503":
+    "Este registro está ligado a outro e não pode ser alterado ou removido enquanto o vínculo existir.",
+  // not_null_violation
+  "23502": "Falta preencher um campo obrigatório.",
+  // check_violation
+  "23514": "Um dos valores informados não é aceito neste campo.",
+  // string_data_right_truncation
+  "22001": "Um dos textos informados é longo demais para o campo.",
+};
+
+/**
+ * Falha do banco vira mensagem em português.
+ *
+ * O driver devolve o texto do Postgres cru e em inglês. O usuário já
+ * viu "inconsistent types deduced for parameter $2" numa caixa de
+ * erro — frase que não diz nada a quem está trabalhando e ainda expõe
+ * a estrutura interna do banco para quem souber ler.
+ *
+ * O detalhe não se perde: vai inteiro para o log do servidor, com o SQL
+ * que o provocou, que é onde ele serve para diagnóstico. Na tela fica a
+ * parte acionável.
+ *
+ * `ErroDominio`, lançado pelos repositórios, não passa por aqui: aquelas
+ * mensagens foram escritas para serem lidas.
+ */
+function traduzirErro(erro: unknown, sql: string): never {
+  const detalhe = erro instanceof Error ? erro.message : String(erro);
+  const codigo =
+    typeof erro === "object" && erro !== null && "code" in erro
+      ? String((erro as { code: unknown }).code)
+      : "";
+
+  console.error(
+    `[postgres] falha ao executar consulta${codigo ? ` (${codigo})` : ""}: ${detalhe}\nSQL: ${sql}`,
+  );
+
+  const conhecido = ERROS_CONHECIDOS[codigo];
+  if (conhecido) throw new Error(conhecido);
+
+  // O resto é defeito nosso — SQL mal formado, tipo divergente, coluna
+  // que não existe. A pessoa não tem o que fazer com o texto técnico, e
+  // esconder a culpa seria pior: a mensagem diz que é problema do
+  // sistema e aponta para quem resolve.
+  throw new Error(
+    "Não foi possível concluir a operação no banco de dados. " +
+      "Isso é uma falha do sistema, não do que você digitou — avise a TI.",
+  );
+}
+
+/**
  * Traducao dos binds nomeados (:nome, estilo Oracle) para posicionais
  * ($1, $2..., estilo Postgres).
  *
@@ -148,7 +212,11 @@ function mapearLinha<T>(linha: Record<string, unknown>): T {
  *   - em comentario -- de linha e comentario de bloco;
  *   - no cast do Postgres (numero::text), que sao dois ':' seguidos.
  *
- * O mesmo :nome usado duas vezes reaproveita o mesmo $n.
+ * O mesmo :nome usado duas vezes reaproveita o mesmo $n — o que é
+ * cômodo, mas exige cuidado: se os dois usos ficarem em posições onde o
+ * Postgres deduz tipos diferentes, ele recusa a consulta inteira com
+ * "inconsistent types deduced for parameter". Nesse caso, use dois
+ * binds distintos para o mesmo valor.
  */
 interface SqlAnalisado {
   texto: string;
@@ -257,8 +325,12 @@ export async function consultar<T = Record<string, unknown>>(
   binds: Record<string, unknown> = {},
 ): Promise<T[]> {
   const { texto, valores } = preparar(sql, binds);
-  const r = await getPool().query<Record<string, unknown>>(texto, valores);
-  return r.rows.map((l) => mapearLinha<T>(l));
+  try {
+    const r = await getPool().query<Record<string, unknown>>(texto, valores);
+    return r.rows.map((l) => mapearLinha<T>(l));
+  } catch (erro) {
+    traduzirErro(erro, sql);
+  }
 }
 
 /** SELECT de uma linha só. Devolve null se não achar. */
@@ -276,8 +348,12 @@ export async function consultarUm<T = Record<string, unknown>>(
  */
 export async function executar(sql: string, binds: Record<string, unknown> = {}): Promise<number> {
   const { texto, valores } = preparar(sql, binds);
-  const r = await getPool().query(texto, valores);
-  return r.rowCount ?? 0;
+  try {
+    const r = await getPool().query(texto, valores);
+    return r.rowCount ?? 0;
+  } catch (erro) {
+    traduzirErro(erro, sql);
+  }
 }
 
 export interface Transacao {
@@ -302,13 +378,21 @@ export async function emTransacao<T>(fn: (tx: Transacao) => Promise<T>): Promise
   const tx: Transacao = {
     async consultar<R>(sql: string, binds: Record<string, unknown> = {}) {
       const { texto, valores } = preparar(sql, binds);
-      const r = await conn.query<Record<string, unknown>>(texto, valores);
-      return r.rows.map((l) => mapearLinha<R>(l));
+      try {
+        const r = await conn.query<Record<string, unknown>>(texto, valores);
+        return r.rows.map((l) => mapearLinha<R>(l));
+      } catch (erro) {
+        traduzirErro(erro, sql);
+      }
     },
     async executar(sql: string, binds: Record<string, unknown> = {}) {
       const { texto, valores } = preparar(sql, binds);
-      const r = await conn.query(texto, valores);
-      return r.rowCount ?? 0;
+      try {
+        const r = await conn.query(texto, valores);
+        return r.rowCount ?? 0;
+      } catch (erro) {
+        traduzirErro(erro, sql);
+      }
     },
   };
 

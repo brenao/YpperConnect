@@ -316,7 +316,7 @@ function Backlog() {
             varredura. Ele aparece na matriz, que é onde a pontuação de
             fato é usada. */}
         <KpisPortfolio
-          cards={["backlog", "execucao", "planejamento"]}
+          cards={["backlog", "priorizados"]}
           ativo={kpi}
           onAlternar={(c) => {
             setKpi(c);
