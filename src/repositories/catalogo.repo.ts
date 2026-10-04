@@ -15,6 +15,8 @@ import type { ContextoUsuario } from "@/services/current-user.server";
  */
 
 export type Criticidade = "alta" | "media" | "baixa";
+/** Aplicação de negócio (ERP, portal) ou infraestrutura que a sustenta (AD, rede). */
+export type TipoSistema = "aplicacao" | "infraestrutura";
 export type EscopoCategoria = "chamado" | "servico" | "artigo" | "sistema";
 
 export interface Servico {
@@ -35,6 +37,7 @@ export interface Servico {
 export interface Sistema {
   id: string;
   nome: string;
+  tipo: TipoSistema;
   descricao: string | null;
   categoriaId: string | null;
   categoriaNome: string | null;
@@ -279,7 +282,7 @@ export async function listarSistemas(apenasAtivos = true): Promise<Sistema[]> {
   let q = getSupabaseServerClient()
     .from("sistemas")
     .select(
-      "id, nome, descricao, categoria_id, criticidade, equipe_id, responsavel_id, atribuicao_id, ativo",
+      "id, nome, tipo, descricao, categoria_id, criticidade, equipe_id, responsavel_id, atribuicao_id, ativo",
     )
     .eq("tenant_id", tenantId)
     .is("excluido_em", null);
@@ -299,6 +302,7 @@ export async function listarSistemas(apenasAtivos = true): Promise<Sistema[]> {
   return linhas.map((s) => ({
     id: s.id as string,
     nome: s.nome as string,
+    tipo: s.tipo as TipoSistema,
     descricao: (s.descricao as string | null) ?? null,
     categoriaId: (s.categoria_id as string | null) ?? null,
     categoriaNome: nomeDe(nomes.categoria, s.categoria_id),
@@ -315,6 +319,7 @@ export async function listarSistemas(apenasAtivos = true): Promise<Sistema[]> {
 
 export interface DadosSistema {
   nome: string;
+  tipo?: TipoSistema | undefined;
   descricao?: string | null | undefined;
   categoriaId?: string | null | undefined;
   criticidade: Criticidade;
@@ -326,6 +331,7 @@ export interface DadosSistema {
 function linhaSistema(d: DadosSistema) {
   return {
     nome: d.nome.trim(),
+    tipo: d.tipo ?? "aplicacao",
     descricao: d.descricao?.trim() ?? null,
     categoria_id: d.categoriaId ?? null,
     responsavel_id: d.responsavelId ?? null,

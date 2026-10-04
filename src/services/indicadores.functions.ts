@@ -25,24 +25,56 @@ export const painelFn = createServerFn({ method: "GET" }).handler(async () => {
   return { resumo, prioridades, tipos, volume, fila, recorrencias };
 });
 
-/** Expediente e feriados vigentes, para a página de governança. */
+/**
+ * Expediente e feriados vigentes da empresa, para a página de governança.
+ * Expediente da localidade padrão; feriados ativos da empresa.
+ */
 export const calendarioFn = createServerFn({ method: "GET" }).handler(async () => {
-  const { consultar } = await import("@/integrations/postgres/client.server");
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  const { getSupabaseServerClient } = await import("@/integrations/supabase/server");
+  const { tenantId } = await getUsuarioAtual();
+  const sb = getSupabaseServerClient();
 
-  const [expediente, feriados] = await Promise.all([
-    consultar<{ diaSemana: number; minutoIni: number; minutoFim: number }>(
-      `SELECT dia_semana, minuto_ini, minuto_fim
-         FROM expediente WHERE ativo = 1
-        ORDER BY dia_semana, minuto_ini`,
-    ),
-    consultar<{ dataFeriado: Date; descricao: string; recorrente: number }>(
-      `SELECT data_feriado, descricao, recorrente
-         FROM feriados WHERE ativo = 1
-        ORDER BY EXTRACT(MONTH FROM data_feriado), EXTRACT(DAY FROM data_feriado)`,
-    ),
+  const padrao = await sb
+    .from("localidades")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("padrao", true)
+    .maybeSingle();
+
+  const [exp, fer] = await Promise.all([
+    sb
+      .from("expediente")
+      .select("dia_semana, minuto_ini, minuto_fim")
+      .eq("tenant_id", tenantId)
+      .eq("localidade_id", padrao.data?.id ?? "")
+      .eq("ativo", true)
+      .order("dia_semana")
+      .order("minuto_ini"),
+    sb
+      .from("feriados")
+      .select("data, descricao, recorrente, mes, dia")
+      .eq("tenant_id", tenantId)
+      .eq("ativo", true)
+      .is("excluido_em", null)
+      .order("mes")
+      .order("dia"),
   ]);
+  if (exp.error) throw new Error(exp.error.message);
+  if (fer.error) throw new Error(fer.error.message);
 
-  return { expediente, feriados };
+  return {
+    expediente: (exp.data ?? []).map((e) => ({
+      diaSemana: e.dia_semana as number,
+      minutoIni: e.minuto_ini as number,
+      minutoFim: e.minuto_fim as number,
+    })),
+    feriados: (fer.data ?? []).map((f) => ({
+      dataFeriado: new Date(`${f.data as string}T00:00:00`),
+      descricao: f.descricao as string,
+      recorrente: f.recorrente ? 1 : 0,
+    })),
+  };
 });
 
 const Periodo = z.object({

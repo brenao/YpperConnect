@@ -24,8 +24,8 @@ select is((select count(*) from public.servicos s, t where s.tenant_id = t.alfa)
           'Empresa nasce com os 6 servicos do legado');
 
 -- 2
-select is((select count(*) from public.sistemas s, t where s.tenant_id = t.alfa and s.equipe_id is not null)::int, 6,
-          'Empresa nasce com os 6 sistemas do legado, ja com equipe');
+select is((select count(*) from public.sistemas s, t where s.tenant_id = t.alfa and s.equipe_id is not null)::int, 5,
+          'Empresa nasce com os 5 sistemas iniciais, ja com equipe');
 
 -- 3
 select throws_ok(

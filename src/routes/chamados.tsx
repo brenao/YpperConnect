@@ -37,6 +37,7 @@ import {
   listarChamadosFn,
   criarChamadoFn,
   atualizarChamadoFn,
+  confirmarSolucaoFn,
   buscarChamadoFn,
   type NovoChamadoInput,
   type AlteracaoChamadoInput,
@@ -88,6 +89,11 @@ const CAMPO_LABEL: Record<string, string> = {
   sistemaId: "Sistema",
   problemaVinculadoId: "Problema vinculado",
   descricaoEncerramento: "Descrição de encerramento",
+  // A atribuição automática na abertura é gravada com o nome da coluna.
+  responsavel_id: "Responsável",
+  confirmacao: "Confirmação do solicitante",
+  reabertura: "Reaberto pelo solicitante",
+  fechamento_automatico: "Fechamento automático",
 };
 
 function textoBusca(c: Chamado) {
@@ -188,6 +194,22 @@ function Chamados() {
       qc.invalidateQueries({ queryKey: ["chamado", selectedId] });
     },
     onError: (e: Error) => toast.error("Não foi possível atualizar", { description: e.message }),
+  });
+
+  // Confirmação do solicitante: fecha o chamado ou reabre com motivo.
+  const [reabrindo, setReabrindo] = useState(false);
+  const [motivoReabertura, setMotivoReabertura] = useState("");
+  const confirmar = useMutation({
+    mutationFn: (v: { id: string; aceita: boolean; motivo?: string }) =>
+      confirmarSolucaoFn({ data: v }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["chamados"] });
+      qc.invalidateQueries({ queryKey: ["chamado", selectedId] });
+      setReabrindo(false);
+      setMotivoReabertura("");
+      toast.success(v.aceita ? "Chamado fechado. Obrigado pela confirmação!" : "Chamado reaberto");
+    },
+    onError: (e: Error) => toast.error("Não foi possível concluir", { description: e.message }),
   });
 
   const criar = useMutation({
@@ -761,6 +783,67 @@ function Chamados() {
                   </div>
                 ) : null}
 
+                {/* Encerramento: a TI resolve, quem fecha é o solicitante. Sem
+                    resposta em 3 dias úteis, o chamado fecha sozinho. */}
+                {atual.status === "resolvido" && usuario.data?.id === atual.solicitanteId ? (
+                  <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+                    <div>
+                      <p className="font-medium">O problema foi resolvido?</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Confirme para fechar o chamado ou reabra se ainda precisar de ajuda. Sem
+                        resposta em 3 dias úteis, ele é fechado automaticamente.
+                      </p>
+                    </div>
+                    {reabrindo ? (
+                      <div className="space-y-2">
+                        <Textarea
+                          rows={3}
+                          maxLength={1000}
+                          value={motivoReabertura}
+                          onChange={(e) => setMotivoReabertura(e.target.value)}
+                          placeholder="Conte o que ainda não está funcionando"
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            disabled={confirmar.isPending || !motivoReabertura.trim()}
+                            onClick={() =>
+                              confirmar.mutate({
+                                id: atual.id,
+                                aceita: false,
+                                motivo: motivoReabertura,
+                              })
+                            }
+                          >
+                            Reabrir chamado
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setReabrindo(false)}>
+                            Voltar
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          disabled={confirmar.isPending}
+                          onClick={() => confirmar.mutate({ id: atual.id, aceita: true })}
+                        >
+                          Confirmar e fechar
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setReabrindo(true)}>
+                          Não foi resolvido
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ) : atual.status === "resolvido" ? (
+                  <p className="rounded-lg border border-border bg-surface p-3 text-xs text-muted-foreground">
+                    Aguardando a confirmação do solicitante. Sem resposta em 3 dias úteis, o chamado
+                    é fechado automaticamente.
+                  </p>
+                ) : null}
+
                 {isTi ? (
                   <>
                     <div className="space-y-2">
@@ -813,11 +896,14 @@ function Chamados() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {(Object.keys(STATUS_LABEL) as TicketStatus[]).map((s) => (
-                            <SelectItem key={s} value={s}>
-                              {STATUS_LABEL[s]}
-                            </SelectItem>
-                          ))}
+                          {/* "Fechado" é do solicitante (ou automático): a TI resolve. */}
+                          {(Object.keys(STATUS_LABEL) as TicketStatus[])
+                            .filter((s) => s !== "fechado" || atual.status === "fechado")
+                            .map((s) => (
+                              <SelectItem key={s} value={s} disabled={s === "fechado"}>
+                                {STATUS_LABEL[s]}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
                     </div>

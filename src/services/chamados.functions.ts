@@ -79,22 +79,10 @@ export const criarChamadoFn = createServerFn({ method: "POST" })
     const ctx = await getUsuarioAtual();
     const r = await criarChamado(ctx, data);
 
-    // Fora da transação do chamado: um relay indisponível não pode
-    // impedir a abertura. Falha aqui só deixa o chamado sem aviso.
-    try {
-      await avisar({
-        tipo: "chamado_criado",
-        destinatarios: [ctx.id, r.responsavelId],
-        autorId: ctx.id,
-        assunto: `[${r.codigo}] ${data.titulo}`,
-        corpo:
-          `O chamado ${r.codigo} — ${data.titulo} — foi registrado.\n\n${data.descricao}` +
-          (r.responsavelId ? `\n\nAtribuído automaticamente pelo cadastro do sistema.` : ""),
-        referenciaId: r.id,
-      });
-    } catch (e) {
-      console.error("Falha ao enfileirar notificação de abertura", e);
-    }
+    // Depois da gravação: um relay indisponível não pode impedir a
+    // abertura. Falha aqui só deixa o chamado sem aviso.
+    const { avisarChamado } = await import("@/services/chamados-avisos.server");
+    await avisarChamado("aberto", r.id, ctx.id);
 
     return r;
   });
@@ -120,32 +108,20 @@ export const atualizarChamadoFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { atualizarChamado, buscarChamado } = await import("@/repositories/chamados.repo");
     const { getUsuarioAtual } = await import("@/services/current-user.server");
+    const { avisarChamado } = await import("@/services/chamados-avisos.server");
     const { id, ...mudancas } = data;
     const ctx = await getUsuarioAtual();
+
+    const antes = await buscarChamado(id);
     await atualizarChamado(ctx, id, mudancas);
 
-    // Só mudança de status vira e-mail. Reatribuição interna não
-    // interessa ao solicitante e geraria ruído.
-    if (mudancas.status) {
-      try {
-        const chamado = await buscarChamado(id);
-        if (chamado) {
-          await avisar({
-            tipo: "chamado_status",
-            destinatarios: [chamado.solicitanteId, chamado.responsavelId],
-            autorId: ctx.id,
-            assunto: `[${chamado.codigo}] Status atualizado: ${mudancas.status}`,
-            corpo:
-              `O chamado ${chamado.codigo} — ${chamado.titulo} — passou para "${mudancas.status}".` +
-              (chamado.descricaoEncerramento
-                ? `\n\nEncerramento: ${chamado.descricaoEncerramento}`
-                : ""),
-            referenciaId: id,
-          });
-        }
-      } catch (e) {
-        console.error("Falha ao enfileirar notificação de status", e);
-      }
+    // Atribuição avisa o novo responsável; resolução avisa o solicitante
+    // e o atendimento. As demais mudanças ficam só no histórico.
+    if (mudancas.responsavelId && antes && mudancas.responsavelId !== antes.responsavelId) {
+      await avisarChamado("atribuido", id, ctx.id);
+    }
+    if (mudancas.status === "resolvido" && antes?.status !== "resolvido") {
+      await avisarChamado("resolvido", id, ctx.id);
     }
 
     return { ok: true };
@@ -166,51 +142,38 @@ export const adicionarInteracaoFn = createServerFn({ method: "POST" })
     const { getUsuarioAtual } = await import("@/services/current-user.server");
     const ctx = await getUsuarioAtual();
     await adicionarInteracao(ctx, data.chamadoId, data.tipo, data.corpo);
+
+    const { avisarChamado } = await import("@/services/chamados-avisos.server");
+    await avisarChamado("atividade", data.chamadoId, ctx.id, {
+      texto: data.corpo,
+      autorNome: ctx.nome,
+    });
     return { ok: true };
   });
 
+const Confirmacao = z.object({
+  id: z.string(),
+  aceita: z.boolean(),
+  motivo: z.string().max(1000).optional(),
+});
+
+export type ConfirmacaoInput = z.infer<typeof Confirmacao>;
+
 /**
- * Enfileira o mesmo aviso para solicitante e responsável.
- *
- * Quem provocou a mudança fica de fora: receber e-mail da própria ação
- * é ruído, e é o caminho mais curto para o time criar regra de caixa de
- * entrada que descarta tudo do sistema.
+ * O solicitante confirma a solução (fecha o chamado) ou o reabre, com
+ * motivo. Reabrir avisa o atendimento; fechar fica só no histórico.
  */
-async function avisar(a: {
-  tipo: "chamado_criado" | "chamado_status";
-  destinatarios: (string | null | undefined)[];
-  autorId: string;
-  assunto: string;
-  corpo: string;
-  referenciaId: string;
-}): Promise<void> {
-  const ids = [...new Set(a.destinatarios.filter((d): d is string => !!d && d !== a.autorId))];
-  if (ids.length === 0) return;
+export const confirmarSolucaoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => Confirmacao.parse(d))
+  .handler(async ({ data }) => {
+    const { confirmarSolucao } = await import("@/repositories/chamados.repo");
+    const { getUsuarioAtual } = await import("@/services/current-user.server");
+    const ctx = await getUsuarioAtual();
+    await confirmarSolucao(ctx, data.id, data.aceita, data.motivo ?? null);
 
-  const { enfileirar } = await import("@/repositories/notificacoes.repo");
-  const { consultar } = await import("@/integrations/postgres/client.server");
-
-  const binds: Record<string, unknown> = {};
-  const chaves = ids.map((id, i) => {
-    binds[`u${i}`] = id;
-    return `:u${i}`;
+    if (!data.aceita) {
+      const { avisarChamado } = await import("@/services/chamados-avisos.server");
+      await avisarChamado("reaberto", data.id, ctx.id, { texto: data.motivo });
+    }
+    return { ok: true };
   });
-
-  const pessoas = await consultar<{ id: string; email: string }>(
-    `SELECT id, email FROM usuarios WHERE ativo = 1 AND email IS NOT NULL
-      AND id IN (${chaves.join(",")})`,
-    binds,
-  );
-
-  for (const p of pessoas) {
-    await enfileirar({
-      tipo: a.tipo,
-      destinatarioId: p.id,
-      destinatarioEmail: p.email,
-      assunto: a.assunto,
-      corpo: a.corpo,
-      referenciaTipo: "chamado",
-      referenciaId: a.referenciaId,
-    });
-  }
-}

@@ -39,8 +39,6 @@ export interface VolumeDia {
   outros: number;
 }
 
-const ABERTOS = `c.status NOT IN ('resolvido','fechado')`;
-
 /**
  * Projeto que já foi decidido.
  *
@@ -51,91 +49,78 @@ const ABERTOS = `c.status NOT IN ('resolvido','fechado')`;
  */
 const DECIDIDO = `status <> 'backlog'`;
 
-export async function resumoPainel(): Promise<ResumoPainel> {
-  const [chamados, conhecimento, projetos] = await Promise.all([
-    consultarUm<{
-      total: number;
-      abertos: number;
-      criticos: number;
-      vencidos: number;
-      comProblema: number;
-    }>(
-      `SELECT COUNT(*) AS total,
-              COUNT(CASE WHEN ${ABERTOS} THEN 1 END) AS abertos,
-              COUNT(CASE WHEN ${ABERTOS} AND c.prioridade = 'P1' THEN 1 END) AS criticos,
-              COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < LOCALTIMESTAMP THEN 1 END) AS vencidos,
-              COUNT(CASE WHEN c.problema_vinculado_id IS NOT NULL THEN 1 END) AS com_problema
-         FROM chamados c`,
-    ),
-    consultarUm<{ total: number; pendentes: number }>(
-      `SELECT COUNT(*) AS total,
-              COUNT(CASE WHEN status <> 'publicado' THEN 1 END) AS pendentes
-         FROM artigos`,
-    ),
-    consultarUm<{ emExecucao: number }>(
-      `SELECT COUNT(CASE WHEN status = 'execucao' THEN 1 END) AS em_execucao FROM projetos`,
-    ),
-  ]);
+// ---------------------------------------------------------------------
+// Chamados: no Supabase, por empresa. As contas são as mesmas do legado
+// e moram em funções do banco (ind_*), que respeitam o RLS.
+// ---------------------------------------------------------------------
 
-  const abertos = chamados?.abertos ?? 0;
-  const vencidos = chamados?.vencidos ?? 0;
+async function tenantAtual(): Promise<string> {
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  return (await getUsuarioAtual()).tenantId;
+}
+
+async function rpc<T>(nome: string, args: Record<string, unknown>): Promise<T> {
+  const { getSupabaseServerClient } = await import("@/integrations/supabase/server");
+  const { data, error } = await getSupabaseServerClient().rpc(nome, args);
+  if (error) throw new Error(`Falha ao calcular indicador (${nome}): ${error.message}`);
+  return data as T;
+}
+
+const n = (v: unknown): number => Number(v ?? 0);
+
+export async function resumoPainel(): Promise<ResumoPainel> {
+  const r = await rpc<Record<string, unknown>>("ind_resumo_chamados", {
+    p_tenant: await tenantAtual(),
+  });
+
+  const abertos = n(r["abertos"]);
+  const vencidos = n(r["vencidos"]);
 
   return {
-    totalChamados: chamados?.total ?? 0,
+    totalChamados: n(r["total"]),
     abertos,
-    criticos: chamados?.criticos ?? 0,
+    criticos: n(r["criticos"]),
     vencidos,
-    // Sem chamado aberto, a aderência é 100% por definição — não 0%.
     aderenciaSla: abertos === 0 ? 100 : Math.round(((abertos - vencidos) / abertos) * 100),
-    artigos: conhecimento?.total ?? 0,
-    artigosPendentes: conhecimento?.pendentes ?? 0,
-    projetosEmExecucao: projetos?.emExecucao ?? 0,
-    comProblemaVinculado: chamados?.comProblema ?? 0,
+    // Zero até a Base de conhecimento e Projetos migrarem para o Supabase.
+    artigos: 0,
+    artigosPendentes: 0,
+    projetosEmExecucao: 0,
+    comProblemaVinculado: n(r["com_problema"]),
   };
 }
 
 /** Chamados abertos por prioridade. Prioridade sem nenhum não some. */
 export async function abertosPorPrioridade(): Promise<ContagemPrioridade[]> {
-  const linhas = await consultar<ContagemPrioridade>(
-    `SELECT c.prioridade, COUNT(*) AS total
-       FROM chamados c
-      WHERE ${ABERTOS}
-      GROUP BY c.prioridade`,
-  );
-  const mapa = new Map(linhas.map((l) => [l.prioridade, l.total]));
+  const linhas = await rpc<{ prioridade: string; total: number }[]>("ind_abertos_por_prioridade", {
+    p_tenant: await tenantAtual(),
+  });
+  const mapa = new Map((linhas ?? []).map((l) => [l.prioridade, n(l.total)]));
   return ["P1", "P2", "P3", "P4"].map((p) => ({ prioridade: p, total: mapa.get(p) ?? 0 }));
 }
 
 export async function totalPorTipo(): Promise<ContagemTipo[]> {
-  return consultar<ContagemTipo>(
-    `SELECT c.tipo, COUNT(*) AS total FROM chamados c GROUP BY c.tipo ORDER BY COUNT(*) DESC`,
-  );
+  const linhas = await rpc<{ tipo: string; total: number }[]>("ind_total_por_tipo", {
+    p_tenant: await tenantAtual(),
+  });
+  return (linhas ?? []).map((l) => ({ tipo: l.tipo, total: n(l.total) }));
 }
 
 /**
- * Volume dos últimos 7 dias. A série de datas é gerada em SQL para que
- * dias sem chamado apareçam como zero — sem isso o gráfico "pula" dias e
- * dá impressão errada de continuidade.
- *
- * generate_series faz aqui o papel do CONNECT BY LEVEL do Oracle:
- * devolve uma linha por dia. CURRENT_DATE respeita o fuso da sessão
- * (America/Sao_Paulo), então "hoje" é hoje no Brasil.
+ * Volume dos últimos 7 dias. Dias sem chamado aparecem como zero — sem
+ * isso o gráfico "pula" dias e dá impressão errada de continuidade.
+ * "Hoje" é hoje no fuso da empresa.
  */
 export async function volumeUltimos7Dias(): Promise<VolumeDia[]> {
-  return consultar<VolumeDia>(
-    `WITH dias AS (
-       SELECT CURRENT_DATE - 6 + g AS d
-         FROM generate_series(0, 6) AS g
-     )
-     SELECT TO_CHAR(dias.d, 'DD/MM') AS dia,
-            COUNT(CASE WHEN c.tipo = 'incidente' THEN 1 END) AS incidentes,
-            COUNT(CASE WHEN c.tipo = 'requisicao' THEN 1 END) AS requisicoes,
-            COUNT(CASE WHEN c.tipo NOT IN ('incidente','requisicao') THEN 1 END) AS outros
-       FROM dias
-       LEFT JOIN chamados c ON c.criado_em::date = dias.d
-      GROUP BY dias.d
-      ORDER BY dias.d`,
-  );
+  const linhas = await rpc<Record<string, unknown>[]>("ind_volume_7_dias", {
+    p_tenant: await tenantAtual(),
+  });
+  return (linhas ?? []).map((l) => ({
+    dia: l["dia"] as string,
+    incidentes: n(l["incidentes"]),
+    requisicoes: n(l["requisicoes"]),
+    outros: n(l["outros"]),
+  }));
 }
 
 export interface ChamadoResumido {
@@ -152,16 +137,28 @@ export interface ChamadoResumido {
 
 /** Fila prioritária: os mais críticos e mais antigos primeiro. */
 export async function filaPrioritaria(limite = 5): Promise<ChamadoResumido[]> {
-  return consultar<ChamadoResumido>(
-    `SELECT c.id, c.codigo, c.titulo, c.tipo, c.prioridade, c.status,
-            c.prazo_sla, c.criado_em, u.nome AS responsavel_nome
-       FROM chamados c
-       LEFT JOIN usuarios u ON u.id = c.responsavel_id
-      WHERE ${ABERTOS}
-      ORDER BY c.prioridade, c.prazo_sla
-      FETCH FIRST :limite ROWS ONLY`,
-    { limite },
-  );
+  const { getSupabaseServerClient } = await import("@/integrations/supabase/server");
+  const { data, error } = await getSupabaseServerClient()
+    .from("chamados_v")
+    .select("id, codigo, titulo, tipo, prioridade, status, prazo_sla, criado_em, responsavel_nome")
+    .eq("tenant_id", await tenantAtual())
+    .not("status", "in", "(resolvido,fechado)")
+    .order("prioridade")
+    .order("prazo_sla")
+    .limit(limite);
+  if (error) throw new Error(`Falha ao carregar a fila prioritária: ${error.message}`);
+
+  return (data ?? []).map((c) => ({
+    id: c.id as string,
+    codigo: c.codigo as string,
+    titulo: c.titulo as string,
+    tipo: c.tipo as string,
+    prioridade: c.prioridade as string,
+    status: c.status as string,
+    prazoSla: new Date(c.prazo_sla as string),
+    criadoEm: new Date(c.criado_em as string),
+    responsavelNome: (c.responsavel_nome as string | null) ?? null,
+  }));
 }
 
 export interface Recorrencia {
@@ -169,23 +166,13 @@ export interface Recorrencia {
   total: number;
 }
 
-/**
- * Sistemas com 3+ incidentes abertos — candidatos a análise de causa
- * raiz. Substituiu o texto fixo que citava um "PRB-018" inexistente.
- */
+/** Sistemas com 3+ incidentes abertos — candidatos a análise de causa raiz. */
 export async function sistemasRecorrentes(): Promise<Recorrencia[]> {
-  return consultar<Recorrencia>(
-    `SELECT s.nome AS sistema_nome, COUNT(*) AS total
-       FROM chamados c
-       JOIN sistemas s ON s.id = c.sistema_id
-      WHERE c.tipo = 'incidente' AND ${ABERTOS}
-      GROUP BY s.nome
-     HAVING COUNT(*) >= 3
-      ORDER BY COUNT(*) DESC`,
-  );
+  const linhas = await rpc<{ sistema_nome: string; total: number }[]>("ind_sistemas_recorrentes", {
+    p_tenant: await tenantAtual(),
+  });
+  return (linhas ?? []).map((l) => ({ sistemaNome: l.sistema_nome, total: n(l.total) }));
 }
-
-// ------------------------------------------------------------- diretoria
 
 export interface PeriodoFiltro {
   de?: Date | undefined;
@@ -224,65 +211,28 @@ export interface ContagemChave {
  * abertos no período, não encerrados nele. Misturar os dois critérios
  * produz indicador que ninguém consegue reconciliar.
  */
-function condPeriodo(p: PeriodoFiltro): { sql: string; binds: Record<string, unknown> } {
-  const binds: Record<string, unknown> = {};
-  const partes: string[] = [];
-  if (p.de) {
-    partes.push(`c.criado_em >= :de`);
-    binds["de"] = p.de;
-  }
-  if (p.ate) {
-    partes.push(`c.criado_em <= :ate`);
-    binds["ate"] = p.ate;
-  }
-  return { sql: partes.length ? `AND ${partes.join(" AND ")}` : "", binds };
+function argsPeriodo(p: PeriodoFiltro) {
+  return { p_de: p.de?.toISOString() ?? null, p_ate: p.ate?.toISOString() ?? null };
 }
 
 export async function metricasChamados(p: PeriodoFiltro = {}): Promise<MetricasChamados> {
-  const { sql, binds } = condPeriodo(p);
+  const r = await rpc<Record<string, unknown>>("ind_metricas_chamados", {
+    p_tenant: await tenantAtual(),
+    ...argsPeriodo(p),
+  });
 
-  const r = await consultarUm<{
-    criados: number;
-    atendidos: number;
-    backlog: number;
-    vencidos: number;
-    comRetorno: number;
-    dentroSla: number;
-    mediaHoras: number | null;
-  }>(
-    `SELECT COUNT(*) AS criados,
-            COUNT(CASE WHEN c.status IN ('resolvido','fechado') THEN 1 END) AS atendidos,
-            COUNT(CASE WHEN ${ABERTOS} THEN 1 END) AS backlog,
-            COUNT(CASE WHEN ${ABERTOS} AND c.prazo_sla < LOCALTIMESTAMP THEN 1 END) AS vencidos,
-            COUNT(CASE WHEN c.respondido_em IS NOT NULL THEN 1 END) AS com_retorno,
-            COUNT(CASE WHEN c.resolvido_em IS NOT NULL
-                        AND c.resolvido_em <= c.prazo_sla THEN 1 END) AS dentro_sla,
-            -- No Oracle, DATE menos DATE dava dias com fracao, e o *24
-            -- virava horas. No Postgres, date menos date da dias
-            -- INTEIROS: todo chamado resolvido no mesmo dia entraria
-            -- como 0 hora e a media desabaria, sem erro.
-            -- timestamp menos timestamp da um interval; EXTRACT(EPOCH)
-            -- transforma em segundos, e /3600 em horas com fracao.
-            AVG(CASE WHEN c.resolvido_em IS NOT NULL
-                     THEN EXTRACT(EPOCH FROM (c.resolvido_em - c.criado_em)) / 3600 END)
-              AS media_horas
-       FROM chamados c
-      WHERE 1 = 1 ${sql}`,
-    binds,
-  );
-
-  const atendidos = r?.atendidos ?? 0;
-  const dentroSla = r?.dentroSla ?? 0;
+  const atendidos = n(r["atendidos"]);
+  const dentroSla = n(r["dentro_sla"]);
 
   return {
-    criados: r?.criados ?? 0,
+    criados: n(r["criados"]),
     atendidos,
-    backlog: r?.backlog ?? 0,
-    vencidos: r?.vencidos ?? 0,
-    comPrimeiroRetorno: r?.comRetorno ?? 0,
+    backlog: n(r["backlog"]),
+    vencidos: n(r["vencidos"]),
+    comPrimeiroRetorno: n(r["com_retorno"]),
     dentroSla,
     aderencia: atendidos === 0 ? 100 : Math.round((dentroSla / atendidos) * 100),
-    tempoMedioSolucaoH: Math.round((r?.mediaHoras ?? 0) * 10) / 10,
+    tempoMedioSolucaoH: Math.round(n(r["media_horas"]) * 10) / 10,
   };
 }
 
@@ -295,44 +245,43 @@ export async function serieCriadosAtendidos(p: PeriodoFiltro = {}): Promise<Seri
     Math.max(1, Math.ceil((ate.getTime() - de.getTime()) / 86_400_000) + 1),
   );
 
-  return consultar<SerieDia>(
-    `WITH dias AS (
-       SELECT :de::date + g AS d
-         FROM generate_series(0, :qtd::int - 1) AS g
-     )
-     SELECT TO_CHAR(dias.d, 'DD/MM') AS dia,
-            COUNT(cr.id) AS criados,
-            COUNT(at.id) AS atendidos
-       FROM dias
-       LEFT JOIN chamados cr ON cr.criado_em::date = dias.d
-       LEFT JOIN chamados at ON at.resolvido_em::date = dias.d
-      GROUP BY dias.d
-      ORDER BY dias.d`,
-    { de, qtd: dias },
-  );
+  const linhas = await rpc<Record<string, unknown>[]>("ind_serie_criados_atendidos", {
+    p_tenant: await tenantAtual(),
+    p_de: de.toISOString().slice(0, 10),
+    p_qtd: dias,
+  });
+  return (linhas ?? []).map((l) => ({
+    dia: l["dia"] as string,
+    criados: n(l["criados"]),
+    atendidos: n(l["atendidos"]),
+  }));
 }
 
-/** Agrupa por uma coluna do chamado, com criados e atendidos. */
-async function agrupar(colunaSql: string, p: PeriodoFiltro): Promise<ContagemChave[]> {
-  const { sql, binds } = condPeriodo(p);
-  return consultar<ContagemChave>(
-    `SELECT ${colunaSql} AS chave,
-            COUNT(*) AS total,
-            COUNT(CASE WHEN c.status IN ('resolvido','fechado') THEN 1 END) AS atendidos
-       FROM chamados c
-       LEFT JOIN equipes eq ON eq.id = c.equipe_id
-      WHERE 1 = 1 ${sql}
-      GROUP BY ${colunaSql}
-      ORDER BY COUNT(*) DESC`,
-    binds,
-  );
+/** Agrupa por prioridade, tipo, status ou equipe, com criados e atendidos. */
+async function agrupar(
+  por: "prioridade" | "tipo" | "status" | "equipe",
+  p: PeriodoFiltro,
+): Promise<ContagemChave[]> {
+  const linhas = await rpc<Record<string, unknown>[]>("ind_agrupar_chamados", {
+    p_tenant: await tenantAtual(),
+    p_por: por,
+    ...argsPeriodo(p),
+  });
+  return (linhas ?? []).map((l) => ({
+    chave: l["chave"] as string,
+    total: n(l["total"]),
+    atendidos: n(l["atendidos"]),
+  }));
 }
 
-export const chamadosPorPrioridade = (p: PeriodoFiltro = {}) => agrupar("c.prioridade", p);
-export const chamadosPorTipo = (p: PeriodoFiltro = {}) => agrupar("c.tipo", p);
-export const chamadosPorStatus = (p: PeriodoFiltro = {}) => agrupar("c.status", p);
-export const chamadosPorEquipe = (p: PeriodoFiltro = {}) =>
-  agrupar("COALESCE(eq.nome, 'Sem equipe')", p);
+export const chamadosPorPrioridade = (p: PeriodoFiltro = {}) => agrupar("prioridade", p);
+export const chamadosPorTipo = (p: PeriodoFiltro = {}) => agrupar("tipo", p);
+export const chamadosPorStatus = (p: PeriodoFiltro = {}) => agrupar("status", p);
+export const chamadosPorEquipe = (p: PeriodoFiltro = {}) => agrupar("equipe", p);
+
+// ---------------------------------------------------------------------
+// Projetos: ainda no banco legado; migram com o módulo de Projetos.
+// ---------------------------------------------------------------------
 
 export interface MetricasProjetos {
   /** Projetos decididos: não inclui o backlog. */

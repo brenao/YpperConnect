@@ -1,4 +1,4 @@
-import { consultar, consultarUm, emTransacao } from "@/integrations/postgres/client.server";
+import { getSupabaseServerClient } from "@/integrations/supabase/server";
 import { calcularPrazo } from "@/integrations/postgres/sla.server";
 import { resolvePriority, slaFor } from "@/models/itsm-types";
 import type { Impact, Priority, RecordType, TicketStatus, Urgency } from "@/models/itsm-types";
@@ -63,30 +63,61 @@ export interface EventoHistorico {
   criadoEm: Date;
 }
 
-const SELECT_BASE = `
-  SELECT c.id, c.numero, c.codigo, c.titulo, c.descricao, c.tipo, c.categoria_id,
-         c.servico_id, sv.nome AS servico_nome,
-         c.sistema_id, si.nome AS sistema_nome,
-         c.impacto, c.urgencia, c.prioridade, c.status,
-         c.solicitante_id, us.nome AS solicitante_nome,
-         c.responsavel_id, ur.nome AS responsavel_nome,
-         c.equipe_id, eq.nome AS equipe_nome,
-         c.origem, c.problema_vinculado_id, c.descricao_encerramento,
-         c.criado_em, c.prazo_resposta, c.prazo_sla,
-         c.respondido_em, c.resolvido_em, c.fechado_em
-    FROM chamados c
-    LEFT JOIN servicos sv ON sv.id = c.servico_id
-    LEFT JOIN sistemas si ON si.id = c.sistema_id
-    LEFT JOIN usuarios us ON us.id = c.solicitante_id
-    LEFT JOIN usuarios ur ON ur.id = c.responsavel_id
-    LEFT JOIN equipes  eq ON eq.id = c.equipe_id`;
-
 /** Status a partir dos quais o chamado é considerado encerrado. */
 const STATUS_ENCERRADOS: TicketStatus[] = ["resolvido", "fechado"];
 
-/** UUID puro: 36 caracteres, exatamente o tamanho da coluna. */
-function novoId(): string {
-  return crypto.randomUUID();
+// ---------------------------------------------------------------- apoio
+
+async function tenantAtual(): Promise<string> {
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  return (await getUsuarioAtual()).tenantId;
+}
+
+function falha(erro: { code?: string; message: string }): never {
+  if (erro.code === "P0002") throw new ErroDominio("Chamado não encontrado");
+  if (erro.code === "23503") {
+    throw new ErroDominio("Um dos itens selecionados não pertence a esta empresa.");
+  }
+  if (erro.code === "42501") throw new ErroDominio("Você não tem permissão para esta ação.");
+  throw new Error(erro.message);
+}
+
+const data = (v: unknown): Date | null => (v ? new Date(v as string) : null);
+
+/** Linha de `chamados_v` (snake_case do banco) no formato do legado. */
+function paraChamado(r: Record<string, unknown>): Chamado {
+  return {
+    id: r["id"] as string,
+    numero: Number(r["numero"]),
+    codigo: r["codigo"] as string,
+    titulo: r["titulo"] as string,
+    descricao: r["descricao"] as string,
+    tipo: r["tipo"] as RecordType,
+    categoriaId: (r["categoria_id"] as string | null) ?? null,
+    servicoId: (r["servico_id"] as string | null) ?? null,
+    servicoNome: (r["servico_nome"] as string | null) ?? null,
+    sistemaId: (r["sistema_id"] as string | null) ?? null,
+    sistemaNome: (r["sistema_nome"] as string | null) ?? null,
+    impacto: r["impacto"] as Impact,
+    urgencia: r["urgencia"] as Urgency,
+    prioridade: r["prioridade"] as Priority,
+    status: r["status"] as TicketStatus,
+    solicitanteId: r["solicitante_id"] as string,
+    solicitanteNome: (r["solicitante_nome"] as string | null) ?? "",
+    responsavelId: (r["responsavel_id"] as string | null) ?? null,
+    responsavelNome: (r["responsavel_nome"] as string | null) ?? null,
+    equipeId: (r["equipe_id"] as string | null) ?? null,
+    equipeNome: (r["equipe_nome"] as string | null) ?? null,
+    origem: r["origem"] as OrigemChamado,
+    problemaVinculadoId: (r["problema_vinculado_id"] as string | null) ?? null,
+    descricaoEncerramento: (r["descricao_encerramento"] as string | null) ?? null,
+    criadoEm: new Date(r["criado_em"] as string),
+    prazoResposta: data(r["prazo_resposta"]),
+    prazoSla: new Date(r["prazo_sla"] as string),
+    respondidoEm: data(r["respondido_em"]),
+    resolvidoEm: data(r["resolvido_em"]),
+    fechadoEm: data(r["fechado_em"]),
+  };
 }
 
 // ---------------------------------------------------------------- leitura
@@ -108,53 +139,49 @@ export interface FiltroChamados {
 }
 
 export async function listarChamados(f: FiltroChamados = {}): Promise<Chamado[]> {
-  const cond: string[] = [];
-  const binds: Record<string, unknown> = {};
+  let q = getSupabaseServerClient()
+    .from("chamados_v")
+    .select("*")
+    .eq("tenant_id", await tenantAtual());
 
-  // Listas viram :s0, :s1... porque não dá para passar array num bind.
-  if (f.status?.length) {
-    const chaves = f.status.map((s, i) => {
-      binds[`s${i}`] = s;
-      return `:s${i}`;
-    });
-    cond.push(`c.status IN (${chaves.join(",")})`);
-  }
-  if (f.prioridade?.length) {
-    const chaves = f.prioridade.map((p, i) => {
-      binds[`p${i}`] = p;
-      return `:p${i}`;
-    });
-    cond.push(`c.prioridade IN (${chaves.join(",")})`);
-  }
-  if (f.responsavelId) {
-    cond.push(`c.responsavel_id = :responsavelId`);
-    binds["responsavelId"] = f.responsavelId;
-  }
-  if (f.solicitanteId) {
-    cond.push(`c.solicitante_id = :solicitanteId`);
-    binds["solicitanteId"] = f.solicitanteId;
-  }
-  if (f.equipeId) {
-    cond.push(`c.equipe_id = :equipeId`);
-    binds["equipeId"] = f.equipeId;
-  }
+  if (f.status?.length) q = q.in("status", f.status);
+  if (f.prioridade?.length) q = q.in("prioridade", f.prioridade);
+  if (f.responsavelId) q = q.eq("responsavel_id", f.responsavelId);
+  if (f.solicitanteId) q = q.eq("solicitante_id", f.solicitanteId);
+  if (f.equipeId) q = q.eq("equipe_id", f.equipeId);
   if (f.vencidos) {
-    cond.push(`c.prazo_sla < LOCALTIMESTAMP AND c.status NOT IN ('resolvido','fechado')`);
+    q = q.lt("prazo_sla", new Date().toISOString()).not("status", "in", "(resolvido,fechado)");
   }
 
-  const where = cond.length ? `WHERE ${cond.join(" AND ")}` : "";
-  const limite = f.limite ? `FETCH FIRST :limite ROWS ONLY` : "";
-  if (f.limite) binds["limite"] = f.limite;
+  q = q.order("criado_em", { ascending: false });
+  if (f.limite) q = q.limit(f.limite);
 
-  return consultar<Chamado>(`${SELECT_BASE} ${where} ORDER BY c.criado_em DESC ${limite}`, binds);
+  const { data: linhas, error } = await q;
+  if (error) falha(error);
+  return (linhas ?? []).map(paraChamado);
 }
 
 export async function buscarChamado(id: string): Promise<Chamado | null> {
-  return consultarUm<Chamado>(`${SELECT_BASE} WHERE c.id = :id`, { id });
+  const { data: linha, error } = await getSupabaseServerClient()
+    .from("chamados_v")
+    .select("*")
+    .eq("tenant_id", await tenantAtual())
+    .eq("id", id)
+    .maybeSingle();
+  if (error) falha(error);
+  return linha ? paraChamado(linha) : null;
 }
 
+/** Código é único por empresa (INC-1000 existe em cada uma). */
 export async function buscarChamadoPorCodigo(codigo: string): Promise<Chamado | null> {
-  return consultarUm<Chamado>(`${SELECT_BASE} WHERE c.codigo = :codigo`, { codigo });
+  const { data: linha, error } = await getSupabaseServerClient()
+    .from("chamados_v")
+    .select("*")
+    .eq("tenant_id", await tenantAtual())
+    .eq("codigo", codigo)
+    .maybeSingle();
+  if (error) falha(error);
+  return linha ? paraChamado(linha) : null;
 }
 
 /**
@@ -167,29 +194,44 @@ export async function listarInteracoes(
   chamadoId: string,
 ): Promise<Interacao[]> {
   const podeVerInterna = ctx.admin || ctx.equipeId !== null;
-  const filtroTipo = podeVerInterna ? "" : `AND i.tipo <> 'nota_interna'`;
 
-  return consultar<Interacao>(
-    `SELECT i.id, i.chamado_id, i.autor_id, u.nome AS autor_nome,
-            i.tipo, i.corpo, i.criado_em
-       FROM chamado_interacoes i
-       LEFT JOIN usuarios u ON u.id = i.autor_id
-      WHERE i.chamado_id = :chamadoId ${filtroTipo}
-      ORDER BY i.criado_em`,
-    { chamadoId },
-  );
+  let q = getSupabaseServerClient()
+    .from("chamado_interacoes_v")
+    .select("id, chamado_id, autor_id, autor_nome, tipo, corpo, criado_em")
+    .eq("tenant_id", ctx.tenantId)
+    .eq("chamado_id", chamadoId);
+  if (!podeVerInterna) q = q.neq("tipo", "nota_interna");
+
+  const { data: linhas, error } = await q.order("criado_em");
+  if (error) falha(error);
+  return (linhas ?? []).map((i) => ({
+    id: i.id as string,
+    chamadoId: i.chamado_id as string,
+    autorId: (i.autor_id as string | null) ?? null,
+    autorNome: (i.autor_nome as string | null) ?? null,
+    tipo: i.tipo as TipoInteracao,
+    corpo: i.corpo as string,
+    criadoEm: new Date(i.criado_em as string),
+  }));
 }
 
 export async function listarHistorico(chamadoId: string): Promise<EventoHistorico[]> {
-  return consultar<EventoHistorico>(
-    `SELECT h.id, h.autor_id, u.nome AS autor_nome,
-            h.campo, h.valor_anterior, h.valor_novo, h.criado_em
-       FROM chamado_historico h
-       LEFT JOIN usuarios u ON u.id = h.autor_id
-      WHERE h.chamado_id = :chamadoId
-      ORDER BY h.criado_em`,
-    { chamadoId },
-  );
+  const { data: linhas, error } = await getSupabaseServerClient()
+    .from("chamado_historico_v")
+    .select("id, autor_id, autor_nome, campo, valor_anterior, valor_novo, criado_em")
+    .eq("tenant_id", await tenantAtual())
+    .eq("chamado_id", chamadoId)
+    .order("criado_em");
+  if (error) falha(error);
+  return (linhas ?? []).map((h) => ({
+    id: h.id as string,
+    autorId: (h.autor_id as string | null) ?? null,
+    autorNome: (h.autor_nome as string | null) ?? null,
+    campo: h.campo as string,
+    valorAnterior: (h.valor_anterior as string | null) ?? null,
+    valorNovo: (h.valor_novo as string | null) ?? null,
+    criadoEm: new Date(h.criado_em as string),
+  }));
 }
 
 // ------------------------------------------------------------------ escrita
@@ -210,12 +252,14 @@ export interface NovoChamado {
 
 /**
  * Abre um chamado. A prioridade NÃO vem da tela: é derivada da matriz
- * impacto × urgência, e o prazo sai de slaFor + calendário comercial.
+ * impacto × urgência, e o prazo sai de slaFor + calendário da empresa.
  * Deixar a tela escolher permitiria burlar a política de SLA.
  *
  * O prefixo é gravado aqui e nunca mais alterado: o código já circulou
  * por e-mail e foi citado pelo solicitante. Reclassificar o tipo depois
  * não muda INC-1000 para REQ-1000.
+ *
+ * Chamado e histórico são gravados juntos (função `abrir_chamado`).
  */
 export async function criarChamado(
   ctx: ContextoUsuario,
@@ -239,90 +283,41 @@ export async function criarChamado(
     calcularPrazo(criadoEm, meta.solucao, regime),
   ]);
 
-  const id = novoId();
-  const solicitanteId = dados.solicitanteId ?? ctx.id;
-
   // Roteamento automático. O cadastro do sistema diz quem atende, e é
   // essa a razão de existir o campo: chamado que nasce sem dono espera
   // alguém garimpar a fila. Serviço entra como segunda opção porque
   // define a equipe, não a pessoa.
-  const roteamento = await resolverRoteamento(dados.sistemaId, dados.servicoId);
+  const roteamento = await resolverRoteamento(ctx.tenantId, dados.sistemaId, dados.servicoId);
   const responsavelId = roteamento.responsavelId;
   const equipeId = dados.equipeId ?? roteamento.equipeId;
 
-  const resultado = await emTransacao(async (tx) => {
-    await tx.executar(
-      `INSERT INTO chamados
-         (id, prefixo, titulo, descricao, tipo, categoria_id, servico_id, sistema_id,
-          impacto, urgencia, prioridade, status, solicitante_id, responsavel_id, equipe_id,
-          origem, criado_em, atualizado_em, prazo_resposta, prazo_sla)
-       VALUES
-         (:id, :prefixo, :titulo, :descricao, :tipo, :categoriaId, :servicoId, :sistemaId,
-          :impacto, :urgencia, :prioridade, 'novo', :solicitanteId, :responsavelId, :equipeId,
-          :origem, :criadoEm, :criadoEm2, :prazoResposta, :prazoSla)`,
-      {
-        id,
-        prefixo: PREFIXO_TIPO[dados.tipo],
-        titulo: dados.titulo.trim(),
-        descricao: dados.descricao.trim(),
-        tipo: dados.tipo,
-        categoriaId: dados.categoriaId ?? null,
-        servicoId: dados.servicoId ?? null,
-        sistemaId: dados.sistemaId ?? null,
-        impacto: dados.impacto,
-        urgencia: dados.urgencia,
-        prioridade,
-        solicitanteId,
-        responsavelId,
-        equipeId,
-        origem: dados.origem ?? "portal",
-        criadoEm,
-        criadoEm2: criadoEm,
-        prazoResposta,
-        prazoSla,
-      },
-    );
-
-    await tx.executar(
-      `INSERT INTO chamado_historico
-         (id, chamado_id, autor_id, campo, valor_anterior, valor_novo, criado_em)
-       VALUES (:id, :chamadoId, :autorId, 'criacao', NULL, :valorNovo, :criadoEm)`,
-      {
-        id: novoId(),
-        chamadoId: id,
-        autorId: ctx.id,
-        valorNovo: `${dados.tipo} · ${prioridade}${regime.vinteQuatroSete ? " · 24x7" : ""}`,
-        criadoEm,
-      },
-    );
-
-    // A atribuição automática entra no histórico como qualquer outra:
-    // quem abrir o chamado depois precisa ver por que já tinha dono.
-    if (responsavelId) {
-      await tx.executar(
-        `INSERT INTO chamado_historico
-           (id, chamado_id, autor_id, campo, valor_anterior, valor_novo, criado_em)
-         VALUES (:id, :chamadoId, :autorId, 'responsavel_id', NULL, :valorNovo, :criadoEm)`,
-        {
-          id: novoId(),
-          chamadoId: id,
-          autorId: ctx.id,
-          valorNovo: responsavelId,
-          criadoEm,
-        },
-      );
-    }
-
-    // numero é IDENTITY e codigo é coluna gerada: ambos só existem
-    // depois do INSERT.
-    const r = await tx.consultar<{ numero: number; codigo: string }>(
-      `SELECT numero, codigo FROM chamados WHERE id = :id`,
-      { id },
-    );
-    return r[0]!;
+  const { data: r, error } = await getSupabaseServerClient().rpc("abrir_chamado", {
+    p: {
+      tenant_id: ctx.tenantId,
+      prefixo: PREFIXO_TIPO[dados.tipo],
+      titulo: dados.titulo.trim(),
+      descricao: dados.descricao.trim(),
+      tipo: dados.tipo,
+      categoria_id: dados.categoriaId ?? null,
+      servico_id: dados.servicoId ?? null,
+      sistema_id: dados.sistemaId ?? null,
+      impacto: dados.impacto,
+      urgencia: dados.urgencia,
+      prioridade,
+      solicitante_id: dados.solicitanteId ?? ctx.id,
+      responsavel_id: responsavelId,
+      equipe_id: equipeId,
+      origem: dados.origem ?? "portal",
+      criado_em: criadoEm.toISOString(),
+      prazo_resposta: prazoResposta.toISOString(),
+      prazo_sla: prazoSla.toISOString(),
+      resumo_criacao: `${dados.tipo} · ${prioridade}${regime.vinteQuatroSete ? " · 24x7" : ""}`,
+    },
   });
+  if (error) falha(error);
 
-  return { id, numero: resultado.numero, codigo: resultado.codigo, responsavelId };
+  const criado = r as { id: string; numero: number; codigo: string };
+  return { id: criado.id, numero: Number(criado.numero), codigo: criado.codigo, responsavelId };
 }
 
 /**
@@ -333,27 +328,35 @@ export async function criarChamado(
  * aqui — ele responde pelo sistema, não pela fila de atendimento.
  */
 async function resolverRoteamento(
+  tenantId: string,
   sistemaId: string | null | undefined,
   servicoId: string | null | undefined,
 ): Promise<{ responsavelId: string | null; equipeId: string | null }> {
+  const sb = getSupabaseServerClient();
   let responsavelId: string | null = null;
   let equipeId: string | null = null;
 
   if (sistemaId) {
-    const s = await consultarUm<{ atribuicaoId: string | null; equipeId: string | null }>(
-      `SELECT atribuicao_id, equipe_id FROM sistemas WHERE id = :id AND ativo = 1`,
-      { id: sistemaId },
-    );
-    responsavelId = s?.atribuicaoId ?? null;
-    equipeId = s?.equipeId ?? null;
+    const { data: s } = await sb
+      .from("sistemas")
+      .select("atribuicao_id, equipe_id")
+      .eq("tenant_id", tenantId)
+      .eq("id", sistemaId)
+      .eq("ativo", true)
+      .maybeSingle();
+    responsavelId = (s?.atribuicao_id as string | null) ?? null;
+    equipeId = (s?.equipe_id as string | null) ?? null;
   }
 
   if (!equipeId && servicoId) {
-    const sv = await consultarUm<{ equipeId: string | null }>(
-      `SELECT equipe_id FROM servicos WHERE id = :id AND ativo = 1`,
-      { id: servicoId },
-    );
-    equipeId = sv?.equipeId ?? null;
+    const { data: sv } = await sb
+      .from("servicos")
+      .select("equipe_id")
+      .eq("tenant_id", tenantId)
+      .eq("id", servicoId)
+      .eq("ativo", true)
+      .maybeSingle();
+    equipeId = (sv?.equipe_id as string | null) ?? null;
   }
 
   return { responsavelId, equipeId };
@@ -378,6 +381,8 @@ export interface AlteracaoChamado {
  * a subida para P1: um chamado que vira crítico depois mantém o prazo
  * calculado em horário comercial. Recalcular retroativamente
  * inviabilizaria qualquer indicador de SLA.
+ *
+ * Campos e histórico são gravados juntos (função `alterar_chamado`).
  */
 export async function atualizarChamado(
   ctx: ContextoUsuario,
@@ -391,6 +396,14 @@ export async function atualizarChamado(
   const atual = await buscarChamado(id);
   if (!atual) throw new ErroDominio(`Chamado ${id} não encontrado`);
 
+  // A TI resolve; quem fecha é o solicitante (ou o fechamento automático
+  // em 3 dias úteis). Fechar direto pularia a confirmação de quem pediu.
+  if (mudancas.status === "fechado" && atual.status !== "fechado") {
+    throw new ErroDominio(
+      "O fechamento é feito pelo solicitante, ao confirmar a solução, ou automaticamente após 3 dias úteis. Marque como Resolvido.",
+    );
+  }
+
   const encerrando = mudancas.status !== undefined && STATUS_ENCERRADOS.includes(mudancas.status);
   if (encerrando) {
     const texto = mudancas.descricaoEncerramento ?? atual.descricaoEncerramento;
@@ -399,18 +412,18 @@ export async function atualizarChamado(
     }
   }
 
-  const agora = new Date();
-  const sets: string[] = ["atualizado_em = :agoraUpd"];
-  const binds: Record<string, unknown> = { id, agoraUpd: agora };
+  const agora = new Date().toISOString();
+  const campos: Record<string, unknown> = {};
   const eventos: Array<{ campo: string; de: string | null; para: string | null }> = [];
 
+  // O nome do evento no histórico é o do legado (camelCase), para a tela
+  // de histórico continuar mostrando os rótulos certos.
   function aplicar(campo: string, coluna: string, valorNovo: unknown, valorAtual: unknown) {
     if (valorNovo === undefined) return;
     const de = valorAtual == null ? null : String(valorAtual);
     const para = valorNovo == null ? null : String(valorNovo);
     if (de === para) return;
-    sets.push(`${coluna} = :${campo}`);
-    binds[campo] = valorNovo;
+    campos[coluna] = valorNovo;
     eventos.push({ campo, de, para });
   }
 
@@ -438,51 +451,26 @@ export async function atualizarChamado(
   // Prioridade é derivada: recalcula se impacto ou urgência mudaram.
   const novoImpacto = mudancas.impacto ?? atual.impacto;
   const novaUrgencia = mudancas.urgencia ?? atual.urgencia;
-  const novaPrioridade = resolvePriority(novoImpacto, novaUrgencia);
-  aplicar("prioridade", "prioridade", novaPrioridade, atual.prioridade);
-
-  // Marcos de tempo derivados da transição de status.
-  if (mudancas.status && mudancas.status !== atual.status) {
-    if (!atual.respondidoEm && mudancas.status !== "novo") {
-      sets.push(`respondido_em = :respondidoEm`);
-      binds["respondidoEm"] = agora;
-    }
-    if (mudancas.status === "resolvido" && !atual.resolvidoEm) {
-      sets.push(`resolvido_em = :resolvidoEm`);
-      binds["resolvidoEm"] = agora;
-    }
-    if (mudancas.status === "fechado") {
-      sets.push(`fechado_em = :fechadoEm`);
-      binds["fechadoEm"] = agora;
-      if (!atual.resolvidoEm) {
-        sets.push(`resolvido_em = :resolvidoEm2`);
-        binds["resolvidoEm2"] = agora;
-      }
-    }
-  }
+  aplicar("prioridade", "prioridade", resolvePriority(novoImpacto, novaUrgencia), atual.prioridade);
 
   if (eventos.length === 0) return;
 
-  await emTransacao(async (tx) => {
-    await tx.executar(`UPDATE chamados SET ${sets.join(", ")} WHERE id = :id`, binds);
-
-    for (const ev of eventos) {
-      await tx.executar(
-        `INSERT INTO chamado_historico
-           (id, chamado_id, autor_id, campo, valor_anterior, valor_novo, criado_em)
-         VALUES (:id, :chamadoId, :autorId, :campo, :de, :para, :criadoEm)`,
-        {
-          id: novoId(),
-          chamadoId: id,
-          autorId: ctx.id,
-          campo: ev.campo,
-          de: ev.de,
-          para: ev.para,
-          criadoEm: agora,
-        },
-      );
+  // Marcos de tempo derivados da transição de status.
+  if (mudancas.status && mudancas.status !== atual.status) {
+    if (!atual.respondidoEm && mudancas.status !== "novo") campos["respondido_em"] = agora;
+    if (mudancas.status === "resolvido" && !atual.resolvidoEm) campos["resolvido_em"] = agora;
+    if (mudancas.status === "fechado") {
+      campos["fechado_em"] = agora;
+      if (!atual.resolvidoEm) campos["resolvido_em"] = agora;
     }
+  }
+
+  const { error } = await getSupabaseServerClient().rpc("alterar_chamado", {
+    p_id: id,
+    p_campos: campos,
+    p_eventos: eventos,
   });
+  if (error) falha(error);
 }
 
 export async function adicionarInteracao(
@@ -496,24 +484,39 @@ export async function adicionarInteracao(
     throw new ErroDominio("Somente a equipe de TI pode registrar notas internas");
   }
 
-  const existe = await consultarUm(`SELECT id FROM chamados WHERE id = :id`, { id: chamadoId });
-  if (!existe) throw new ErroDominio(`Chamado ${chamadoId} não encontrado`);
-
-  await emTransacao(async (tx) => {
-    const agora = new Date();
-    await tx.executar(
-      `INSERT INTO chamado_interacoes (id, chamado_id, autor_id, tipo, corpo, criado_em)
-       VALUES (:id, :chamadoId, :autorId, :tipo, :corpo, :criadoEm)`,
-      { id: novoId(), chamadoId, autorId: ctx.id, tipo, corpo: corpo.trim(), criadoEm: agora },
-    );
-
-    // Primeira resposta pública marca o cumprimento do SLA de resposta.
-    if (tipo === "comentario") {
-      await tx.executar(
-        `UPDATE chamados SET respondido_em = :agora
-          WHERE id = :id AND respondido_em IS NULL`,
-        { id: chamadoId, agora },
-      );
-    }
+  // Interação e marco de resposta gravados juntos (função `registrar_interacao`).
+  const { error } = await getSupabaseServerClient().rpc("registrar_interacao", {
+    p_chamado: chamadoId,
+    p_tipo: tipo,
+    p_corpo: corpo.trim(),
   });
+  if (error) falha(error);
+}
+
+/**
+ * O solicitante confirma a solução (fecha) ou reabre o chamado (com
+ * motivo). Só quem abriu, e só com o chamado resolvido — o banco confere.
+ */
+export async function confirmarSolucao(
+  _ctx: ContextoUsuario,
+  id: string,
+  aceita: boolean,
+  motivo: string | null,
+): Promise<void> {
+  if (!aceita && !motivo?.trim()) throw new ErroDominio("Informe o motivo da reabertura.");
+  const { error } = await getSupabaseServerClient().rpc("confirmar_solucao", {
+    p_id: id,
+    p_aceita: aceita,
+    p_motivo: motivo,
+  });
+  if (error) {
+    if (error.message.includes("Somente quem abriu")) {
+      throw new ErroDominio("Somente quem abriu o chamado pode confirmar a solução.");
+    }
+    if (error.message.includes("aguardando confirmacao")) {
+      throw new ErroDominio("O chamado não está aguardando confirmação.");
+    }
+    if (error.message.includes("motivo")) throw new ErroDominio("Informe o motivo da reabertura.");
+    falha(error);
+  }
 }

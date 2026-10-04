@@ -46,7 +46,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { CRITICALITY_LABEL, type SystemCriticality } from "@/models/itsm-types";
-import type { Sistema } from "@/repositories/catalogo.repo";
+import type { Sistema, TipoSistema } from "@/repositories/catalogo.repo";
 import type { Usuario } from "@/repositories/usuarios.repo";
 import { Paginacao, usePaginacao } from "@/views/paginacao";
 import { listarRecursosFn } from "@/services/recursos.functions";
@@ -400,8 +400,21 @@ function UserDialog({
 
 // ------------------------------------------------------------ diálogo sistema
 
+/** Régua da criticidade para o negócio, mostrada no próprio campo. */
+const CRITICIDADE_AJUDA: Record<SystemCriticality, string> = {
+  alta: "para a operação",
+  media: "degrada o trabalho",
+  baixa: "conveniência",
+};
+
+const TIPO_SISTEMA_LABEL: Record<TipoSistema, string> = {
+  aplicacao: "Aplicação",
+  infraestrutura: "Infraestrutura",
+};
+
 interface FormSistema {
   nome: string;
+  tipo: TipoSistema;
   descricao: string;
   categoriaId: string;
   responsavelId: string;
@@ -412,6 +425,7 @@ interface FormSistema {
 
 const sistemaVazio: FormSistema = {
   nome: "",
+  tipo: "aplicacao",
   descricao: "",
   categoriaId: SEM,
   responsavelId: SEM,
@@ -447,6 +461,7 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
       system
         ? {
             nome: texto(system.nome),
+            tipo: system.tipo,
             descricao: texto(system.descricao),
             categoriaId: system.categoriaId ?? SEM,
             responsavelId: system.responsavelId ?? SEM,
@@ -488,6 +503,7 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
 
     const payload = {
       nome,
+      tipo: form.tipo,
       descricao: texto(form.descricao).trim() || null,
       categoriaId: form.categoriaId === SEM ? null : form.categoriaId,
       responsavelId: form.responsavelId === SEM ? null : form.responsavelId,
@@ -511,7 +527,8 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
         <DialogHeader>
           <DialogTitle>{system ? "Editar sistema" : "Novo sistema"}</DialogTitle>
           <DialogDescription>
-            O responsável responde pelo sistema; a atribuição define quem recebe os chamados dele.
+            O dono decide sobre o sistema; o suporte recebe os chamados dele. A criticidade para o
+            negócio sugere o impacto quando alguém abre um chamado.
           </DialogDescription>
         </DialogHeader>
 
@@ -524,6 +541,43 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
               onChange={(e) => setForm({ ...form, nome: e.target.value })}
               placeholder="Ex.: ERP"
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Tipo</Label>
+            <Select
+              value={form.tipo}
+              onValueChange={(v) => setForm({ ...form, tipo: v as TipoSistema })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="aplicacao">
+                  Aplicação · ERP, portal, sistemas de negócio
+                </SelectItem>
+                <SelectItem value="infraestrutura">
+                  Infraestrutura · rede, diretório, e-mail
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Criticidade para o negócio</Label>
+            <Select
+              value={form.criticidade}
+              onValueChange={(v) => setForm({ ...form, criticidade: v as SystemCriticality })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(["alta", "media", "baixa"] as const).map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {CRITICALITY_LABEL[c]} · {CRITICIDADE_AJUDA[c]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label>Descrição</Label>
@@ -554,25 +608,7 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Criticidade</Label>
-            <Select
-              value={form.criticidade}
-              onValueChange={(v) => setForm({ ...form, criticidade: v as SystemCriticality })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(["alta", "media", "baixa"] as const).map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {CRITICALITY_LABEL[c]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Responsável pelo sistema</Label>
+            <Label>Dono do sistema</Label>
             <Select
               value={form.responsavelId}
               onValueChange={(v) => setForm({ ...form, responsavelId: v })}
@@ -591,7 +627,7 @@ function SystemDialog({ system, trigger }: { system?: Sistema; trigger: ReactNod
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Chamados atribuídos a</Label>
+            <Label>Suporte (recebe os chamados)</Label>
             <Select
               value={form.atribuicaoId}
               onValueChange={(v) => setForm({ ...form, atribuicaoId: v })}
@@ -1204,9 +1240,10 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
                 <thead>
                   <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-4 py-2 font-medium">Sistema</th>
+                    <th className="px-4 py-2 font-medium">Tipo</th>
                     <th className="px-4 py-2 font-medium">Categoria</th>
-                    <th className="px-4 py-2 font-medium">Responsável</th>
-                    <th className="px-4 py-2 font-medium">Atribuir a</th>
+                    <th className="px-4 py-2 font-medium">Dono</th>
+                    <th className="px-4 py-2 font-medium">Suporte</th>
                     <th className="px-4 py-2 font-medium">Criticidade</th>
                     <th className="px-4 py-2" />
                   </tr>
@@ -1222,6 +1259,9 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
                         <span className="block text-[11px] text-muted-foreground">
                           {s.equipeNome ?? "Sem equipe"}
                         </span>
+                      </td>
+                      <td className="px-4 py-2 text-muted-foreground">
+                        {TIPO_SISTEMA_LABEL[s.tipo]}
                       </td>
                       <td className="px-4 py-2 text-muted-foreground">{s.categoriaNome ?? "—"}</td>
                       <td className="px-4 py-2 text-muted-foreground">
@@ -1289,7 +1329,7 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
                   ))}
                   {sistemasFiltrados.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                      <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                         Nenhum sistema cadastrado. Chamados de incidente exigem um sistema.
                       </td>
                     </tr>

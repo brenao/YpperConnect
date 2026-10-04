@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SeletorBusca } from "@/views/seletor-busca";
 import {
   Select,
   SelectContent,
@@ -138,6 +139,18 @@ function DialogoNovoChamado() {
       toast.error("Não foi possível registrar o chamado", { description: e.message }),
   });
 
+  /**
+   * A criticidade do sistema para o negócio sugere o impacto: incidente
+   * no ERP crítico começa como impacto alto. É sugestão — quem abre pode
+   * ajustar, porque nem toda falha num sistema crítico para a empresa.
+   */
+  function escolherSistema(id: string) {
+    setSistemaId(id);
+    const s = sistemas.data?.find((x) => x.id === id);
+    if (s)
+      setImpacto(s.criticidade === "alta" ? "alto" : s.criticidade === "media" ? "medio" : "baixo");
+  }
+
   function limpar() {
     setTitulo("");
     setDescricao("");
@@ -218,19 +231,19 @@ function DialogoNovoChamado() {
                 <Label>
                   Sistema afetado <span className="text-destructive">*</span>
                 </Label>
-                <Select value={sistemaId} onValueChange={setSistemaId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione o sistema" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={SEM_SELECAO}>Selecione o sistema</SelectItem>
-                    {(sistemas.data ?? []).map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.nome}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* Digitável: a lista de sistemas pode ser longa. */}
+                <SeletorBusca
+                  opcoes={(sistemas.data ?? []).map((s) => ({
+                    value: s.id,
+                    label: s.nome,
+                    detalhe: s.equipeNome,
+                  }))}
+                  value={sistemaId === SEM_SELECAO ? "" : sistemaId}
+                  onChange={escolherSistema}
+                  placeholder="Selecione o sistema"
+                  placeholderBusca="Digite o nome do sistema..."
+                  vazio="Nenhum sistema com esse nome."
+                />
                 {sistemas.data?.length === 0 ? (
                   <p className="text-xs text-warning">
                     Nenhum sistema cadastrado. Cadastre em Administração antes de abrir este tipo de

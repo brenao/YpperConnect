@@ -118,6 +118,7 @@ export const definirServicoAtivoFn = createServerFn({ method: "POST" })
 
 const SistemaSchema = z.object({
   nome: z.string().min(2).max(200),
+  tipo: z.enum(["aplicacao", "infraestrutura"]).optional(),
   descricao: z.string().max(1000).nullable().optional(),
   categoriaId: z.string().nullable().optional(),
   criticidade: z.enum(CRITICIDADES),
