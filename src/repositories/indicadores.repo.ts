@@ -69,9 +69,11 @@ async function rpc<T>(nome: string, args: Record<string, unknown>): Promise<T> {
 const n = (v: unknown): number => Number(v ?? 0);
 
 export async function resumoPainel(): Promise<ResumoPainel> {
-  const r = await rpc<Record<string, unknown>>("ind_resumo_chamados", {
-    p_tenant: await tenantAtual(),
-  });
+  const tenant = await tenantAtual();
+  const [r, a] = await Promise.all([
+    rpc<Record<string, unknown>>("ind_resumo_chamados", { p_tenant: tenant }),
+    rpc<Record<string, unknown>>("ind_resumo_artigos", { p_tenant: tenant }),
+  ]);
 
   const abertos = n(r["abertos"]);
   const vencidos = n(r["vencidos"]);
@@ -82,9 +84,9 @@ export async function resumoPainel(): Promise<ResumoPainel> {
     criticos: n(r["criticos"]),
     vencidos,
     aderenciaSla: abertos === 0 ? 100 : Math.round(((abertos - vencidos) / abertos) * 100),
-    // Zero até a Base de conhecimento e Projetos migrarem para o Supabase.
-    artigos: 0,
-    artigosPendentes: 0,
+    artigos: n(a["total"]),
+    artigosPendentes: n(a["pendentes"]),
+    // Zero até Projetos migrar para o Supabase.
     projetosEmExecucao: 0,
     comProblemaVinculado: n(r["com_problema"]),
   };
