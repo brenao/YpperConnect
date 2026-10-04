@@ -1,13 +1,21 @@
-import { consultar, consultarUm, executar } from "@/integrations/postgres/client.server";
-import { ErroDominio, deBool, paraBool } from "./tipos";
+import { consultar, consultarUm } from "@/integrations/postgres/client.server";
+import { getSupabaseServerClient } from "@/integrations/supabase/server";
+import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
 
 /**
  * Recursos de projeto: quem executa tarefa e com quanta capacidade.
  *
- * Separado de `usuarios` de propósito: nem todo recurso tem conta no AD
+ * Separado de `usuarios` de propósito: nem todo recurso tem conta
  * (terceirizado, consultoria), e nem todo usuário participa de projeto.
  * O vínculo é opcional, via usuario_id.
+ *
+ * Cadastro, ausências e fornecedores: Supabase, por empresa, com a
+ * sessão de quem chamou (o RLS confere de novo).
+ *
+ * Cálculo sobre projetos (carga, capacidade por tarefa, responsáveis e
+ * ausências do cronograma): ainda no banco legado, porque lê as tabelas
+ * de projetos. Migra junto com o módulo de Projetos.
  */
 
 export interface Recurso {
@@ -50,36 +58,12 @@ export interface Recurso {
 
 // capacidadeProjeto vive em @/services/resource-utils: a tela de recursos
 // precisa dela no navegador, e importar valor deste arquivo levaria o
-// client.server.ts (credenciais do banco) para o bundle do cliente.
-
-interface Linha extends Omit<Recurso, "ativo"> {
-  ativo: number;
-}
-
-const SELECT_BASE = `
-  SELECT r.id, r.usuario_id, u.nome AS usuario_nome, r.nome, r.papel,
-         r.equipe_id, e.nome AS equipe_nome,
-         r.localidade_id, l.nome AS localidade_nome,
-         r.fornecedor_id, f.nome AS fornecedor_nome, r.custo_hora,
-         r.horas_dia, r.disponibilidade_projetos, r.ativo
-    FROM recursos r
-    LEFT JOIN usuarios u ON u.id = r.usuario_id
-    LEFT JOIN equipes e ON e.id = r.equipe_id
-    LEFT JOIN localidades l ON l.id = r.localidade_id
-    LEFT JOIN fornecedores f ON f.id = r.fornecedor_id`;
-
-const mapear = (l: Linha): Recurso => ({ ...l, ativo: paraBool(l.ativo) });
+// cliente do banco para o bundle do navegador.
 
 /**
- * Quem administra o cadastro de recursos.
- *
- * Antes bastava ter equipe — a mesma regra que dava à TI inteira poder
- * sobre projeto alheio, e que já saiu de `projetos.repo`. Pertencer a
- * uma equipe diz respeito a chamado; capacidade de projeto é outra
- * conversa.
- *
- * A permissão passa a ser a mesma que governa a tela: quem tem
- * `recurso.editar` no perfil, mais o administrador.
+ * Quem administra o cadastro de recursos: quem tem `recurso.editar` no
+ * perfil, mais o administrador. Pertencer a uma equipe diz respeito a
+ * chamado; capacidade de projeto é outra conversa.
  */
 const FEATURE_RECURSO_EDITAR = "recurso.editar";
 
@@ -89,16 +73,72 @@ function exigirGestaoRecursos(ctx: ContextoUsuario, acao: string): void {
   throw new ErroDominio(`Seu perfil não permite ${acao}`);
 }
 
+async function tenantAtual(): Promise<string> {
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  return (await getUsuarioAtual()).tenantId;
+}
+
+function falha(erro: { code?: string; message: string }): never {
+  if (erro.code === "42501") throw new ErroDominio("Seu perfil não permite esta ação");
+  if (erro.code === "23503") {
+    throw new ErroDominio("Um dos itens selecionados não pertence a esta empresa.");
+  }
+  if (erro.code === "23505") {
+    if (erro.message.includes("ux_fornecedores_nome")) {
+      throw new ErroDominio("Já existe um fornecedor com esse nome.");
+    }
+    if (erro.message.includes("ux_fornecedores_cnpj")) {
+      throw new ErroDominio("Já existe um fornecedor com esse CNPJ.");
+    }
+    if (erro.message.includes("uq_recursos_usuario")) {
+      throw new ErroDominio("Este usuário já é um recurso.");
+    }
+  }
+  throw new Error(erro.message);
+}
+
+const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+
+function paraRecurso(r: Record<string, unknown>): Recurso {
+  return {
+    id: r["id"] as string,
+    usuarioId: (r["usuario_id"] as string | null) ?? null,
+    usuarioNome: (r["usuario_nome"] as string | null) ?? null,
+    nome: r["nome"] as string,
+    papel: (r["papel"] as string | null) ?? null,
+    equipeId: (r["equipe_id"] as string | null) ?? null,
+    equipeNome: (r["equipe_nome"] as string | null) ?? null,
+    localidadeId: (r["localidade_id"] as string | null) ?? null,
+    localidadeNome: (r["localidade_nome"] as string | null) ?? null,
+    fornecedorId: (r["fornecedor_id"] as string | null) ?? null,
+    fornecedorNome: (r["fornecedor_nome"] as string | null) ?? null,
+    custoHora: num(r["custo_hora"]),
+    horasDia: Number(r["horas_dia"]),
+    disponibilidadeProjetos: Number(r["disponibilidade_projetos"]),
+    ativo: r["ativo"] as boolean,
+  };
+}
+
 export async function listarRecursos(apenasAtivos = true): Promise<Recurso[]> {
-  const linhas = await consultar<Linha>(
-    `${SELECT_BASE} ${apenasAtivos ? "WHERE r.ativo = 1" : ""} ORDER BY r.nome`,
-  );
-  return linhas.map(mapear);
+  let q = getSupabaseServerClient()
+    .from("recursos_v")
+    .select("*")
+    .eq("tenant_id", await tenantAtual());
+  if (apenasAtivos) q = q.eq("ativo", true);
+  const { data, error } = await q.order("nome");
+  if (error) falha(error);
+  return (data ?? []).map(paraRecurso);
 }
 
 export async function buscarRecurso(id: string): Promise<Recurso | null> {
-  const l = await consultarUm<Linha>(`${SELECT_BASE} WHERE r.id = :id`, { id });
-  return l ? mapear(l) : null;
+  const { data, error } = await getSupabaseServerClient()
+    .from("recursos_v")
+    .select("*")
+    .eq("tenant_id", await tenantAtual())
+    .eq("id", id)
+    .maybeSingle();
+  if (error) falha(error);
+  return data ? paraRecurso(data) : null;
 }
 
 /** Usuário ativo que ainda não é recurso, para a criação em lote. */
@@ -116,19 +156,30 @@ export interface UsuarioSemRecurso {
  *
  * Existe para acabar com o cadastro em dois lugares: em vez de
  * redigitar nome e equipe de quem já está no sistema, a tela oferece a
- * lista e cria em lote. Nome, equipe e vínculo vêm do usuário; só a
- * disponibilidade é decisão de quem cadastra.
+ * lista e cria em lote.
  */
 export async function usuariosSemRecurso(): Promise<UsuarioSemRecurso[]> {
-  return consultar<UsuarioSemRecurso>(
-    `SELECT u.id, u.nome, u.email, u.departamento,
-            u.equipe_id, e.nome AS equipe_nome
-       FROM usuarios u
-       LEFT JOIN equipes e ON e.id = u.equipe_id
-      WHERE u.ativo = 1
-        AND NOT EXISTS (SELECT 1 FROM recursos r WHERE r.usuario_id = u.id)
-      ORDER BY u.nome`,
-  );
+  const { listarUsuarios } = await import("./usuarios.repo");
+  const [usuarios, recursos] = await Promise.all([
+    listarUsuarios(true),
+    getSupabaseServerClient()
+      .from("recursos")
+      .select("usuario_id")
+      .eq("tenant_id", await tenantAtual())
+      .not("usuario_id", "is", null),
+  ]);
+  if (recursos.error) falha(recursos.error);
+  const jaSao = new Set((recursos.data ?? []).map((r) => r.usuario_id as string));
+  return usuarios
+    .filter((u) => !jaSao.has(u.id))
+    .map((u) => ({
+      id: u.id,
+      nome: u.nome,
+      email: u.email,
+      departamento: u.departamento,
+      equipeId: u.equipeId,
+      equipeNome: u.equipeNome,
+    }));
 }
 
 /** Jornada padrão. Todo mundo tem 8h; a coluna existe para a exceção. */
@@ -138,11 +189,9 @@ export const HORAS_DIA_PADRAO = 8;
 export const DISPONIBILIDADE_PADRAO = 50;
 
 /**
- * Cria recursos a partir de usuários já cadastrados.
- *
- * Herda nome e equipe do usuário: redigitar o que o sistema já sabe é
- * onde nasce a divergência entre os dois cadastros — a pessoa muda de
- * equipe no AD e o recurso continua na antiga.
+ * Cria recursos a partir de usuários já cadastrados. Herda nome,
+ * departamento e equipe; quem já é recurso é ignorado (clique duplo não
+ * duplica). A localidade fica nula: herda a padrão.
  */
 export async function criarRecursosDeUsuarios(
   ctx: ContextoUsuario,
@@ -150,40 +199,19 @@ export async function criarRecursosDeUsuarios(
   disponibilidadeProjetos = DISPONIBILIDADE_PADRAO,
 ): Promise<number> {
   exigirGestaoRecursos(ctx, "cadastrar recursos");
-
   const unicos = [...new Set(usuarioIds)];
   if (unicos.length === 0) return 0;
   if (disponibilidadeProjetos < 0 || disponibilidadeProjetos > 100) {
     throw new ErroDominio("Disponibilidade deve estar entre 0 e 100%");
   }
-
-  const binds: Record<string, unknown> = {
-    disponibilidade: disponibilidadeProjetos,
-    horasDia: HORAS_DIA_PADRAO,
-  };
-  const chaves = unicos.map((id, i) => {
-    binds[`u${i}`] = id;
-    return `:u${i}`;
+  const { data, error } = await getSupabaseServerClient().rpc("criar_recursos_de_usuarios", {
+    p_tenant: ctx.tenantId,
+    p_usuarios: unicos,
+    p_disponibilidade: disponibilidadeProjetos,
+    p_horas_dia: HORAS_DIA_PADRAO,
   });
-
-  // INSERT SELECT com gen_random_uuid(): um comando só, e o
-  // NOT EXISTS protege contra clique duplo criando duplicata.
-  //
-  // A localidade fica nula: herda a padrão. Perguntar de onde cada uma
-  // das cinquenta pessoas trabalha antes de cadastrar em lote é o
-  // caminho mais curto para ninguém cadastrar nada.
-  return executar(
-    `INSERT INTO recursos
-       (id, usuario_id, nome, papel, equipe_id, horas_dia,
-        disponibilidade_projetos, ativo)
-     SELECT gen_random_uuid()::text, u.id, u.nome, u.departamento, u.equipe_id,
-            :horasDia, :disponibilidade, 1
-       FROM usuarios u
-      WHERE u.id IN (${chaves.join(",")})
-        AND u.ativo = 1
-        AND NOT EXISTS (SELECT 1 FROM recursos r WHERE r.usuario_id = u.id)`,
-    binds,
-  );
+  if (error) falha(error);
+  return Number(data ?? 0);
 }
 
 export interface DadosRecurso {
@@ -191,15 +219,12 @@ export interface DadosRecurso {
   usuarioId?: string | null | undefined;
   papel?: string | null | undefined;
   equipeId?: string | null | undefined;
-  /** Nulo herda a localidade padrão da instalação. */
+  /** Nulo herda a localidade padrão da empresa. */
   localidadeId?: string | null | undefined;
   /**
-   * Fornecedor do terceiro. Nulo é interno, que é o padrão.
-   *
-   * Um recurso pertence a um fornecedor só. Pessoa que troca de empresa
-   * vira outro recurso: as tarefas antigas continuam apontando para o
-   * vínculo que existia quando foram feitas, e é isso que o histórico
-   * precisa.
+   * Fornecedor do terceiro. Nulo é interno, que é o padrão. Pessoa que
+   * troca de empresa vira outro recurso: o histórico precisa do vínculo
+   * de quando as tarefas foram feitas.
    */
   fornecedorId?: string | null | undefined;
   custoHora?: number | null | undefined;
@@ -222,39 +247,34 @@ function validar(d: DadosRecurso): void {
   }
 }
 
+function linhaRecurso(d: DadosRecurso) {
+  return {
+    usuario_id: d.usuarioId ?? null,
+    nome: d.nome.trim(),
+    papel: d.papel?.trim() ?? null,
+    equipe_id: d.equipeId ?? null,
+    localidade_id: d.localidadeId ?? null,
+    fornecedor_id: d.fornecedorId ?? null,
+    custo_hora: d.custoHora ?? null,
+    horas_dia: d.horasDia ?? HORAS_DIA_PADRAO,
+    disponibilidade_projetos: d.disponibilidadeProjetos,
+  };
+}
+
 /**
- * Cadastro avulso. Depois da criação em lote a partir de usuários, este
- * caminho serve ao recurso externo — consultoria, terceiro — que não
- * tem conta e por isso não aparece naquela lista.
+ * Cadastro avulso. Serve ao recurso externo — consultoria, terceiro —
+ * que não tem conta e por isso não aparece na criação em lote.
  */
 export async function criarRecurso(ctx: ContextoUsuario, d: DadosRecurso): Promise<string> {
   exigirGestaoRecursos(ctx, "cadastrar recursos");
   validar(d);
-
-  const id = crypto.randomUUID();
-  await executar(
-    `INSERT INTO recursos
-       (id, usuario_id, nome, papel, equipe_id, localidade_id,
-        fornecedor_id, custo_hora, horas_dia,
-        disponibilidade_projetos, ativo)
-     VALUES
-       (:id, :usuarioId, :nome, :papel, :equipeId, :localidadeId,
-        :fornecedorId, :custoHora, :horasDia,
-        :disponibilidade, 1)`,
-    {
-      id,
-      usuarioId: d.usuarioId ?? null,
-      nome: d.nome.trim(),
-      papel: d.papel?.trim() ?? null,
-      equipeId: d.equipeId ?? null,
-      localidadeId: d.localidadeId ?? null,
-      fornecedorId: d.fornecedorId ?? null,
-      custoHora: d.custoHora ?? null,
-      horasDia: d.horasDia ?? HORAS_DIA_PADRAO,
-      disponibilidade: d.disponibilidadeProjetos,
-    },
-  );
-  return id;
+  const { data, error } = await getSupabaseServerClient()
+    .from("recursos")
+    .insert({ tenant_id: ctx.tenantId, ...linhaRecurso(d) })
+    .select("id")
+    .single();
+  if (error) falha(error);
+  return data.id as string;
 }
 
 export async function atualizarRecurso(
@@ -264,41 +284,19 @@ export async function atualizarRecurso(
 ): Promise<void> {
   exigirGestaoRecursos(ctx, "alterar recursos");
   validar(d);
-
-  const n = await executar(
-    `UPDATE recursos
-        SET usuario_id = :usuarioId,
-            nome = :nome,
-            papel = :papel,
-            equipe_id = :equipeId,
-            localidade_id = :localidadeId,
-            fornecedor_id = :fornecedorId,
-            custo_hora = :custoHora,
-            horas_dia = :horasDia,
-            disponibilidade_projetos = :disponibilidade
-      WHERE id = :id`,
-    {
-      id,
-      usuarioId: d.usuarioId ?? null,
-      nome: d.nome.trim(),
-      papel: d.papel?.trim() ?? null,
-      equipeId: d.equipeId ?? null,
-      localidadeId: d.localidadeId ?? null,
-      fornecedorId: d.fornecedorId ?? null,
-      custoHora: d.custoHora ?? null,
-      horasDia: d.horasDia ?? HORAS_DIA_PADRAO,
-      disponibilidade: d.disponibilidadeProjetos,
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Recurso ${id} não encontrado`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("recursos")
+    .update(linhaRecurso(d))
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Recurso ${id} não encontrado`);
 }
 
 /**
- * Altera só a disponibilidade.
- *
- * É a edição que a tela oferece no dia a dia: nome, equipe e vínculo
- * vêm do usuário, e reescrever a linha inteira para mexer num
- * percentual sobrescreveria o que o cadastro de usuários mantém.
+ * Altera só a disponibilidade: é a edição do dia a dia, e reescrever a
+ * linha inteira sobrescreveria o que o cadastro de usuários mantém.
  */
 export async function definirDisponibilidade(
   ctx: ContextoUsuario,
@@ -309,18 +307,19 @@ export async function definirDisponibilidade(
   if (disponibilidadeProjetos < 0 || disponibilidadeProjetos > 100) {
     throw new ErroDominio("Disponibilidade deve estar entre 0 e 100%");
   }
-
-  const n = await executar(
-    `UPDATE recursos SET disponibilidade_projetos = :disponibilidade WHERE id = :id`,
-    { id, disponibilidade: disponibilidadeProjetos },
-  );
-  if (n === 0) throw new ErroDominio(`Recurso ${id} não encontrado`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("recursos")
+    .update({ disponibilidade_projetos: disponibilidadeProjetos })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Recurso ${id} não encontrado`);
 }
 
 /**
- * Desativa em vez de excluir: tarefas de projeto apontam para o recurso
- * por FK em tarefa_responsaveis. DELETE apagaria o histórico de quem
- * executou o quê.
+ * Desativa em vez de excluir: tarefas de projeto apontam para o recurso,
+ * e apagar perderia o histórico de quem executou o quê.
  */
 export async function definirRecursoAtivo(
   ctx: ContextoUsuario,
@@ -328,11 +327,16 @@ export async function definirRecursoAtivo(
   ativo: boolean,
 ): Promise<void> {
   exigirGestaoRecursos(ctx, "alterar recursos");
-  await executar(`UPDATE recursos SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
+  const { error } = await getSupabaseServerClient()
+    .from("recursos")
+    .update({ ativo })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id);
+  if (error) falha(error);
 }
+
+// ------------------------------------------------- cálculo sobre projetos
+// Ainda no banco legado: lê as tabelas de projetos. Migra com Projetos.
 
 export interface CargaRecurso {
   recursoId: string;
@@ -401,17 +405,6 @@ export async function capacidadeDiariaDaTarefa(tarefaId: string): Promise<number
 
 // --------------------------------------------------------- ausências
 
-/**
- * O tipo e os rótulos vivem em `@/services/resource-utils`.
- *
- * A tela precisa deles no navegador, e importar um VALOR deste arquivo
- * arrastaria o `client.server.ts` — com as credenciais do banco — para
- * o bundle do cliente. `import type` some na compilação; import comum,
- * não. É o mesmo motivo que levou `capacidadeProjeto` para lá.
- *
- * Reexportado porque as interfaces daqui o usam, e quem consome o
- * repositório espera encontrá-lo junto delas.
- */
 export type TipoAusencia =
   "ferias" | "licenca_medica" | "licenca" | "treinamento" | "folga" | "outro";
 
@@ -427,40 +420,41 @@ export interface Ausencia {
   criadoEm: Date;
 }
 
-const SELECT_AUSENCIA = `
-  SELECT a.id, a.recurso_id, r.nome AS recurso_nome, a.tipo,
-         a.inicio, a.fim, a.observacao,
-         u.nome AS criado_por_nome, a.criado_em
-    FROM recurso_ausencias a
-    JOIN recursos r ON r.id = a.recurso_id
-    LEFT JOIN usuarios u ON u.id = a.criado_por_id`;
+/** "YYYY-MM-DD" a partir dos componentes locais, sem passar pelo fuso. */
+function paraTextoData(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${dia}`;
+}
 
-/**
- * Ausências que tocam um período.
- *
- * O filtro é de sobreposição, não de contenção: férias que começaram
- * mês passado e terminam semana que vem interessam a quem está olhando
- * esta semana. `a.inicio <= :ate AND a.fim >= :de` é o teste clássico, e
- * pega os quatro casos (começa antes, termina depois, contida, contém).
- */
+const deTextoData = (s: string): Date => new Date(`${s.slice(0, 10)}T00:00:00`);
+
 export async function listarAusencias(filtro: {
   recursoId?: string | null | undefined;
   de?: Date | null | undefined;
   ate?: Date | null | undefined;
 }): Promise<Ausencia[]> {
-  return consultar<Ausencia>(
-    `${SELECT_AUSENCIA}
-      WHERE (CAST(:recursoId AS varchar) IS NULL
-             OR a.recurso_id = CAST(:recursoId AS varchar))
-        AND (CAST(:de AS date) IS NULL OR a.fim >= CAST(:de AS date))
-        AND (CAST(:ate AS date) IS NULL OR a.inicio <= CAST(:ate AS date))
-      ORDER BY a.inicio DESC, r.nome`,
-    {
-      recursoId: filtro.recursoId ?? null,
-      de: filtro.de ?? null,
-      ate: filtro.ate ?? null,
-    },
-  );
+  let q = getSupabaseServerClient()
+    .from("recurso_ausencias_v")
+    .select("*")
+    .eq("tenant_id", await tenantAtual());
+  if (filtro.recursoId) q = q.eq("recurso_id", filtro.recursoId);
+  if (filtro.de) q = q.gte("fim", paraTextoData(filtro.de));
+  if (filtro.ate) q = q.lte("inicio", paraTextoData(filtro.ate));
+
+  const { data, error } = await q.order("inicio", { ascending: false });
+  if (error) falha(error);
+  return (data ?? []).map((a) => ({
+    id: a.id as string,
+    recursoId: a.recurso_id as string,
+    recursoNome: a.recurso_nome as string,
+    tipo: a.tipo as TipoAusencia,
+    inicio: deTextoData(a.inicio as string),
+    fim: deTextoData(a.fim as string),
+    observacao: (a.observacao as string | null) ?? null,
+    criadoPorNome: (a.criado_por_nome as string | null) ?? null,
+    criadoEm: new Date(a.criado_em as string),
+  }));
 }
 
 export interface DadosAusencia {
@@ -471,57 +465,45 @@ export interface DadosAusencia {
   observacao?: string | null | undefined;
 }
 
-/**
- * Registra uma ausência.
- *
- * Sem aprovação e sem saldo de dias: quem decide férias é o RH, em
- * outro sistema. O que importa aqui é o cronograma saber que a pessoa
- * não vai trabalhar naquele período.
- *
- * Períodos sobrepostos do mesmo recurso são recusados. Não é
- * preciosismo: duas linhas cobrindo o mesmo dia não mudam o cálculo,
- * mas fazem o mapa de disponibilidade contar o dobro de dias de férias
- * e ninguém entende de onde saiu o número.
- */
-export async function criarAusencia(ctx: ContextoUsuario, d: DadosAusencia): Promise<string> {
-  exigirGestaoRecursos(ctx, "registrar ausências");
-
-  if (d.fim < d.inicio) throw new ErroDominio("Data final anterior à inicial");
-
-  const conflito = await consultarUm<{ id: string; inicio: Date; fim: Date }>(
-    `SELECT id, inicio, fim
-       FROM recurso_ausencias
-      WHERE recurso_id = :recursoId
-        AND inicio <= :fim
-        AND fim >= :inicio
-      LIMIT 1`,
-    { recursoId: d.recursoId, inicio: d.inicio, fim: d.fim },
-  );
-  if (conflito) {
+/** Duas ausências do mesmo recurso não se sobrepõem: edita-se a existente. */
+async function exigirSemConflito(recursoId: string, inicio: Date, fim: Date, ignorar?: string) {
+  let q = getSupabaseServerClient()
+    .from("recurso_ausencias_v")
+    .select("id")
+    .eq("tenant_id", await tenantAtual())
+    .eq("recurso_id", recursoId)
+    .lte("inicio", paraTextoData(fim))
+    .gte("fim", paraTextoData(inicio));
+  if (ignorar) q = q.neq("id", ignorar);
+  const { data, error } = await q.limit(1);
+  if (error) falha(error);
+  if (data?.length) {
     throw new ErroDominio(
       "Já existe uma ausência deste recurso no período. Edite a existente em vez de criar outra.",
     );
   }
+}
 
-  const id = crypto.randomUUID();
-  await executar(
-    `INSERT INTO recurso_ausencias
-       (id, recurso_id, tipo, inicio, fim, observacao, criado_por_id,
-        criado_em, atualizado_em)
-     VALUES
-       (:id, :recursoId, :tipo, :inicio, :fim, :observacao, :criadoPor,
-        LOCALTIMESTAMP, LOCALTIMESTAMP)`,
-    {
-      id,
-      recursoId: d.recursoId,
+export async function criarAusencia(ctx: ContextoUsuario, d: DadosAusencia): Promise<string> {
+  exigirGestaoRecursos(ctx, "registrar ausências");
+  if (d.fim < d.inicio) throw new ErroDominio("Data final anterior à inicial");
+  await exigirSemConflito(d.recursoId, d.inicio, d.fim);
+
+  const { data, error } = await getSupabaseServerClient()
+    .from("recurso_ausencias")
+    .insert({
+      tenant_id: ctx.tenantId,
+      recurso_id: d.recursoId,
       tipo: d.tipo,
-      inicio: d.inicio,
-      fim: d.fim,
+      inicio: paraTextoData(d.inicio),
+      fim: paraTextoData(d.fim),
       observacao: d.observacao?.trim() ?? null,
-      criadoPor: ctx.id,
-    },
-  );
-  return id;
+      criado_por_id: ctx.id,
+    })
+    .select("id")
+    .single();
+  if (error) falha(error);
+  return data.id as string;
 }
 
 export async function atualizarAusencia(
@@ -532,43 +514,45 @@ export async function atualizarAusencia(
   exigirGestaoRecursos(ctx, "alterar ausências");
   if (d.fim < d.inicio) throw new ErroDominio("Data final anterior à inicial");
 
-  const n = await executar(
-    `UPDATE recurso_ausencias
-        SET tipo = :tipo,
-            inicio = :inicio,
-            fim = :fim,
-            observacao = :observacao,
-            atualizado_em = LOCALTIMESTAMP
-      WHERE id = :id`,
-    {
-      id,
+  const atual = await getSupabaseServerClient()
+    .from("recurso_ausencias_v")
+    .select("recurso_id")
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .maybeSingle();
+  if (atual.error) falha(atual.error);
+  if (!atual.data) throw new ErroDominio(`Ausência ${id} não encontrada`);
+  await exigirSemConflito(atual.data.recurso_id as string, d.inicio, d.fim, id);
+
+  const { error } = await getSupabaseServerClient()
+    .from("recurso_ausencias")
+    .update({
       tipo: d.tipo,
-      inicio: d.inicio,
-      fim: d.fim,
+      inicio: paraTextoData(d.inicio),
+      fim: paraTextoData(d.fim),
       observacao: d.observacao?.trim() ?? null,
-    },
-  );
-  if (n === 0) throw new ErroDominio(`Ausência ${id} não encontrada`);
+    })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id);
+  if (error) falha(error);
 }
 
-/**
- * Apaga de verdade, diferente do resto do sistema.
- *
- * Ausência não é histórico de trabalho: é uma previsão de quem não
- * estará. Férias canceladas que continuassem no banco como "inativas"
- * seguiriam empurrando o cronograma ou exigiriam um filtro em toda
- * consulta — e o custo de errar é alguém aparecer como ausente no dia
- * em que está trabalhando.
- */
+/** Exclusão lógica: a ausência sai da lista e do cronograma, e fica no histórico. */
 export async function excluirAusencia(ctx: ContextoUsuario, id: string): Promise<void> {
   exigirGestaoRecursos(ctx, "excluir ausências");
-  const n = await executar(`DELETE FROM recurso_ausencias WHERE id = :id`, {
-    id,
-  });
-  if (n === 0) throw new ErroDominio(`Ausência ${id} não encontrada`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("recurso_ausencias")
+    .update({ excluido_em: new Date().toISOString(), excluido_por: ctx.id })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .is("excluido_em", null)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Ausência ${id} não encontrada`);
 }
 
 // ------------------------------------------- calendário do cronograma
+// Ainda no banco legado: lê as tabelas de projetos. Migra com Projetos.
 
 /** Um responsável de tarefa, com a localidade que define o calendário dele. */
 export interface ResponsavelDeTarefa {
@@ -630,14 +614,6 @@ export async function ausenciasDoProjeto(projetoId: string): Promise<PeriodoAuse
 
 // ------------------------------------------------------- fornecedores
 
-/**
- * Empresa que fornece gente para os projetos.
- *
- * Cadastro próprio, e não texto livre no papel do recurso, porque sem
- * ele "Operacional", "OPERACIONAL" e "Operacional LTDA" viram três
- * empresas na primeira semana — e qualquer soma por fornecedor sai
- * errada sem ninguém perceber.
- */
 export interface Fornecedor {
   id: string;
   nome: string;
@@ -645,34 +621,33 @@ export interface Fornecedor {
   contatoNome: string | null;
   contatoEmail: string | null;
   contatoTelefone: string | null;
-  /** Sugestão de custo/hora para os recursos deste fornecedor. */
   custoHoraPadrao: number | null;
   observacao: string | null;
   ativo: boolean;
-  /** Quantos recursos ativos vêm dele — a tela avisa antes de desativar. */
+  /** Recursos ativos ligados ao fornecedor. */
   recursos: number;
 }
 
-interface LinhaFornecedor extends Omit<Fornecedor, "ativo"> {
-  ativo: number;
-}
-
-const mapearFornecedor = (l: LinhaFornecedor): Fornecedor => ({
-  ...l,
-  ativo: paraBool(l.ativo),
-});
-
 export async function listarFornecedores(apenasAtivos = false): Promise<Fornecedor[]> {
-  const linhas = await consultar<LinhaFornecedor>(
-    `SELECT f.id, f.nome, f.cnpj, f.contato_nome, f.contato_email, f.contato_telefone,
-            f.custo_hora_padrao, f.observacao, f.ativo,
-            (SELECT COUNT(*) FROM recursos r
-              WHERE r.fornecedor_id = f.id AND r.ativo = 1)::int AS recursos
-       FROM fornecedores f
-      ${apenasAtivos ? "WHERE f.ativo = 1" : ""}
-      ORDER BY f.nome`,
-  );
-  return linhas.map(mapearFornecedor);
+  let q = getSupabaseServerClient()
+    .from("fornecedores_v")
+    .select("*")
+    .eq("tenant_id", await tenantAtual());
+  if (apenasAtivos) q = q.eq("ativo", true);
+  const { data, error } = await q.order("nome");
+  if (error) falha(error);
+  return (data ?? []).map((f) => ({
+    id: f.id as string,
+    nome: f.nome as string,
+    cnpj: (f.cnpj as string | null) ?? null,
+    contatoNome: (f.contato_nome as string | null) ?? null,
+    contatoEmail: (f.contato_email as string | null) ?? null,
+    contatoTelefone: (f.contato_telefone as string | null) ?? null,
+    custoHoraPadrao: num(f.custo_hora_padrao),
+    observacao: (f.observacao as string | null) ?? null,
+    ativo: f.ativo as boolean,
+    recursos: Number(f.recursos ?? 0),
+  }));
 }
 
 export interface DadosFornecedor {
@@ -685,7 +660,7 @@ export interface DadosFornecedor {
   observacao?: string | null | undefined;
 }
 
-/** Só dígitos: máscara é assunto de tela, e o índice único compara o valor. */
+/** Só os dígitos; vazio vira nulo; precisa ter 14. */
 function limparCnpj(v: string | null | undefined): string | null {
   const digitos = (v ?? "").replace(/\D/g, "");
   if (digitos === "") return null;
@@ -700,46 +675,28 @@ function validarFornecedor(d: DadosFornecedor): void {
   }
 }
 
-/** Traduz a violação de unicidade, que é o erro mais provável aqui. */
-function traduzirFornecedorDuplicado(e: unknown): never {
-  const msg = e instanceof Error ? e.message : String(e);
-  if (msg.includes("ux_fornecedores_nome")) {
-    throw new ErroDominio("Já existe um fornecedor com esse nome.");
-  }
-  if (msg.includes("ux_fornecedores_cnpj")) {
-    throw new ErroDominio("Já existe um fornecedor com esse CNPJ.");
-  }
-  throw e;
+function linhaFornecedor(d: DadosFornecedor) {
+  return {
+    nome: d.nome.trim(),
+    cnpj: limparCnpj(d.cnpj),
+    contato_nome: d.contatoNome?.trim() ?? null,
+    contato_email: d.contatoEmail?.trim() ?? null,
+    contato_telefone: d.contatoTelefone?.trim() ?? null,
+    custo_hora_padrao: d.custoHoraPadrao ?? null,
+    observacao: d.observacao?.trim() ?? null,
+  };
 }
 
 export async function criarFornecedor(ctx: ContextoUsuario, d: DadosFornecedor): Promise<string> {
   exigirGestaoRecursos(ctx, "cadastrar fornecedores");
   validarFornecedor(d);
-
-  const id = crypto.randomUUID();
-  try {
-    await executar(
-      `INSERT INTO fornecedores
-         (id, nome, cnpj, contato_nome, contato_email, contato_telefone,
-          custo_hora_padrao, observacao, ativo, criado_em)
-       VALUES
-         (:id, :nome, :cnpj, :contatoNome, :contatoEmail, :contatoTelefone,
-          :custoHoraPadrao, :observacao, 1, LOCALTIMESTAMP)`,
-      {
-        id,
-        nome: d.nome.trim(),
-        cnpj: limparCnpj(d.cnpj),
-        contatoNome: d.contatoNome?.trim() ?? null,
-        contatoEmail: d.contatoEmail?.trim() ?? null,
-        contatoTelefone: d.contatoTelefone?.trim() ?? null,
-        custoHoraPadrao: d.custoHoraPadrao ?? null,
-        observacao: d.observacao?.trim() ?? null,
-      },
-    );
-  } catch (e) {
-    traduzirFornecedorDuplicado(e);
-  }
-  return id;
+  const { data, error } = await getSupabaseServerClient()
+    .from("fornecedores")
+    .insert({ tenant_id: ctx.tenantId, ...linhaFornecedor(d) })
+    .select("id")
+    .single();
+  if (error) falha(error);
+  return data.id as string;
 }
 
 export async function atualizarFornecedor(
@@ -749,53 +706,28 @@ export async function atualizarFornecedor(
 ): Promise<void> {
   exigirGestaoRecursos(ctx, "alterar fornecedores");
   validarFornecedor(d);
-
-  let n = 0;
-  try {
-    n = await executar(
-      `UPDATE fornecedores
-          SET nome = :nome, cnpj = :cnpj,
-              contato_nome = :contatoNome,
-              contato_email = :contatoEmail,
-              contato_telefone = :contatoTelefone,
-              custo_hora_padrao = :custoHoraPadrao,
-              observacao = :observacao
-        WHERE id = :id`,
-      {
-        id,
-        nome: d.nome.trim(),
-        cnpj: limparCnpj(d.cnpj),
-        contatoNome: d.contatoNome?.trim() ?? null,
-        contatoEmail: d.contatoEmail?.trim() ?? null,
-        contatoTelefone: d.contatoTelefone?.trim() ?? null,
-        custoHoraPadrao: d.custoHoraPadrao ?? null,
-        observacao: d.observacao?.trim() ?? null,
-      },
-    );
-  } catch (e) {
-    traduzirFornecedorDuplicado(e);
-  }
-  if (n === 0) throw new ErroDominio(`Fornecedor ${id} não encontrado`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("fornecedores")
+    .update(linhaFornecedor(d))
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Fornecedor ${id} não encontrado`);
 }
 
-/**
- * Desativa em vez de excluir: recursos apontam para ele por FK, e o
- * contrato que acabou continua explicando quem executou o quê.
- *
- * Os recursos dele NÃO são desativados junto. Contrato encerrado não
- * significa que a pessoa saiu do projeto no mesmo dia, e desativar o
- * recurso apagaria a alocação dele do cronograma sem aviso. A tela diz
- * quantos continuam ativos, e quem decide é quem está olhando.
- */
 export async function definirFornecedorAtivo(
   ctx: ContextoUsuario,
   id: string,
   ativo: boolean,
 ): Promise<void> {
   exigirGestaoRecursos(ctx, "alterar fornecedores");
-  const n = await executar(`UPDATE fornecedores SET ativo = :ativo WHERE id = :id`, {
-    id,
-    ativo: deBool(ativo),
-  });
-  if (n === 0) throw new ErroDominio(`Fornecedor ${id} não encontrado`);
+  const { data, error } = await getSupabaseServerClient()
+    .from("fornecedores")
+    .update({ ativo })
+    .eq("tenant_id", ctx.tenantId)
+    .eq("id", id)
+    .select("id");
+  if (error) falha(error);
+  if (!data?.length) throw new ErroDominio(`Fornecedor ${id} não encontrado`);
 }

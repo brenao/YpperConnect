@@ -19,7 +19,12 @@ async function ctx() {
 
 export const listarRecursosFn = createServerFn({ method: "GET" }).handler(async () => {
   const { listarRecursos, cargaPorRecurso } = await import("@/repositories/recursos.repo");
-  const [recursos, cargas] = await Promise.all([listarRecursos(false), cargaPorRecurso()]);
+  // A carga lê as tabelas de projetos, que ainda estão no banco legado:
+  // até Projetos migrar, a lista abre com a carga zerada em vez de falhar.
+  const [recursos, cargas] = await Promise.all([
+    listarRecursos(false),
+    cargaPorRecurso().catch(() => []),
+  ]);
   return { recursos, cargas };
 });
 
@@ -223,6 +228,16 @@ export interface EfeitoNoCronograma {
 }
 
 async function reagendarProjetosDoRecurso(recursoId: string): Promise<EfeitoNoCronograma> {
+  // Os cronogramas ainda estão no banco legado: até Projetos migrar, a
+  // ausência fica registrada e o efeito informado é "nenhum projeto".
+  try {
+    return await reagendarNoLegado(recursoId);
+  } catch {
+    return { projetos: 0, tarefas: 0 };
+  }
+}
+
+async function reagendarNoLegado(recursoId: string): Promise<EfeitoNoCronograma> {
   const { consultar } = await import("@/integrations/postgres/client.server");
   const { reagendarProjeto } = await import("@/repositories/projetos.repo");
 
