@@ -1372,6 +1372,26 @@ function CampoData({
     <Input
       type="date"
       autoFocus
+      /**
+       * Abre o calendário ao entrar em edição.
+       *
+       * O input nativo só mostra o seletor quando a pessoa acerta o
+       * ícone à direita — que numa coluna de 80px fica cortado. Quem
+       * clica no campo esperando o calendário encontra os segmentos de
+       * texto e acha que a grade não respondeu.
+       *
+       * `showPicker` não existe em todo navegador, e o try/catch cobre
+       * o caso em que ele recusa a chamada; digitar continua
+       * funcionando em qualquer um.
+       */
+      ref={(el) => {
+        if (!el) return;
+        try {
+          el.showPicker();
+        } catch {
+          /* navegador sem suporte: digitar ainda funciona */
+        }
+      }}
       value={rascunho}
       onChange={(e) => setRascunho(e.target.value)}
       onBlur={() => {

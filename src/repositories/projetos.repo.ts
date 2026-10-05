@@ -1233,10 +1233,20 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
           :quadro, :marco, :duracao, :unidade, :alocacaoPct,
           COALESCE(:ordem, (SELECT COALESCE(MAX(ordem), 0) + 1
                               FROM projeto_tarefas
-                             WHERE projeto_id = :projetoId)))`,
+                             WHERE projeto_id = :projetoDaOrdem)))`,
       {
         id,
         projetoId: d.projetoId,
+        /**
+         * O mesmo projeto, por um bind próprio.
+         *
+         * `:projetoId` aparecia nos dois lugares do SQL e virava o
+         * mesmo `$2`: na coluna do INSERT o Postgres deduz o tipo pela
+         * coluna, e na comparação do subselect deduz por outro caminho.
+         * As duas deduções conflitam e ele recusa a consulta inteira
+         * com "inconsistent types deduced for parameter $2".
+         */
+        projetoDaOrdem: d.projetoId,
         paiId: d.paiId ?? null,
         nome: d.nome.trim(),
         atividade: d.atividade?.trim() ?? null,
