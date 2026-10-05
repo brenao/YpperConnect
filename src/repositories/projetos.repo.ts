@@ -163,8 +163,8 @@ const SELECT_PROJETO = `
          p.sponsor_id, us.nome AS sponsor_nome,
          p.gerente_id, ug.nome AS gerente_nome,
          p.status, p.inicio, p.fim,
-         (p.usa_dias_uteis = 1) AS usa_dias_uteis,
-         (p.sigiloso = 1) AS sigiloso,
+         (p.usa_dias_uteis = true) AS usa_dias_uteis,
+         (p.sigiloso = true) AS sigiloso,
          p.capex, p.moeda,
          p.area_demandante, p.justificativa,
          p.valor, p.esforco, p.alcance, p.confianca,
@@ -213,7 +213,7 @@ const SQL_EXECUTA_PROJETO = `
                FROM projeto_tarefas t
                JOIN tarefa_responsaveis tr ON tr.tarefa_id = t.id
                JOIN recursos r ON r.id = tr.recurso_id
-              WHERE t.projeto_id = p.id AND t.ativo = 1 AND r.usuario_id = :usuarioId)`;
+              WHERE t.projeto_id = p.id AND t.ativo = true AND r.usuario_id = :usuarioId)`;
 
 /**
  * Quem RESPONDE pelo projeto: gerente e patrocinador.
@@ -240,15 +240,17 @@ const SQL_GERE_PROJETO = `
  * alocada — que é exatamente o que o gestor precisa acompanhar.
  */
 const SQL_TIME_DO_GESTOR = `
-  EXISTS (SELECT 1 FROM usuarios ue
-           WHERE ue.equipe_id = :equipeId
-             AND (ue.id = p.gerente_id OR ue.id = p.sponsor_id))
+  EXISTS (SELECT 1 FROM tenant_membros ue
+           WHERE ue.tenant_id = p.tenant_id
+             AND ue.equipe_id = :equipeId
+             AND (ue.usuario_id = p.gerente_id OR ue.usuario_id = p.sponsor_id))
   OR EXISTS (SELECT 1
                FROM projeto_tarefas te
                JOIN tarefa_responsaveis tre ON tre.tarefa_id = te.id
                JOIN recursos re ON re.id = tre.recurso_id
-               JOIN usuarios ur ON ur.id = re.usuario_id
-              WHERE te.projeto_id = p.id AND te.ativo = 1 AND ur.equipe_id = :equipeId)`;
+               JOIN tenant_membros ur
+                 ON ur.tenant_id = re.tenant_id AND ur.usuario_id = re.usuario_id
+              WHERE te.projeto_id = p.id AND te.ativo = true AND ur.equipe_id = :equipeId)`;
 
 export interface FiltroVisibilidade {
   /** Predicado SQL sobre o alias `p` de `projetos`. */
@@ -499,10 +501,10 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
     `SELECT p.id, p.nome, p.objetivo,
             p.sponsor_id, us.nome AS sponsor_nome,
             p.gerente_id, ug.nome AS gerente_nome,
-            ug.departamento AS gerente_departamento,
+            mg.departamento AS gerente_departamento,
             p.status, p.inicio, p.fim,
-            (p.usa_dias_uteis = 1) AS usa_dias_uteis,
-            (p.sigiloso = 1) AS sigiloso,
+            (p.usa_dias_uteis = true) AS usa_dias_uteis,
+            (p.sigiloso = true) AS sigiloso,
             p.capex, p.moeda,
             p.area_demandante, p.justificativa,
             p.valor, p.esforco, p.alcance, p.confianca,
@@ -516,11 +518,13 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
        FROM projetos p
        LEFT JOIN usuarios us ON us.id = p.sponsor_id
        LEFT JOIN usuarios ug ON ug.id = p.gerente_id
+       -- Departamento é da pessoa na empresa (v2), não do login.
+       LEFT JOIN tenant_membros mg ON mg.tenant_id = p.tenant_id AND mg.usuario_id = p.gerente_id
        LEFT JOIN (SELECT projeto_id,
                          COUNT(*) AS total,
                          COUNT(CASE WHEN quadro = 'done' THEN 1 END) AS concluidas,
                          AVG(progresso) AS media
-                    FROM projeto_tarefas WHERE ativo = 1
+                    FROM projeto_tarefas WHERE ativo = true
                    GROUP BY projeto_id) t
               ON t.projeto_id = p.id
        LEFT JOIN (SELECT projeto_id, COUNT(*) AS abertos
@@ -619,7 +623,7 @@ export async function listarTarefas(projetoId: string): Promise<Tarefa[]> {
             quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem,
             restricao_inicio, concluido_em
        FROM projeto_tarefas
-      WHERE projeto_id = :projetoId AND ativo = 1
+      WHERE projeto_id = :projetoId AND ativo = true
       ORDER BY ordem, inicio`,
     { projetoId },
   );
@@ -648,14 +652,14 @@ export async function listarVinculosTarefas(projetoId: string): Promise<{
       `SELECT tp.tarefa_id, tp.predecessora_id, tp.tipo, tp.defasagem
          FROM tarefa_predecessoras tp
          JOIN projeto_tarefas t ON t.id = tp.tarefa_id
-        WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
+        WHERE t.projeto_id = :projetoId AND t.ativo = true`,
       { projetoId },
     ),
     consultar<{ tarefaId: string; recursoId: string }>(
       `SELECT tr.tarefa_id, tr.recurso_id
          FROM tarefa_responsaveis tr
          JOIN projeto_tarefas t ON t.id = tr.tarefa_id
-        WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
+        WHERE t.projeto_id = :projetoId AND t.ativo = true`,
       { projetoId },
     ),
   ]);
@@ -826,7 +830,7 @@ async function recalcularPeriodo(projetoId: string): Promise<void> {
             atualizado_em = LOCALTIMESTAMP
        FROM (SELECT MIN(inicio) AS ini, MAX(fim) AS fim
                FROM projeto_tarefas
-              WHERE projeto_id = :projetoId AND ativo = 1) t
+              WHERE projeto_id = :projetoId AND ativo = true) t
       WHERE p.id = :projetoId`,
     { projetoId },
   );
@@ -874,7 +878,7 @@ async function sincronizarStatusPorProgresso(projetoId: string): Promise<void> {
                       ELSE NULL
                     END AS destino
                FROM projeto_tarefas
-              WHERE projeto_id = :projetoId AND ativo = 1) novo
+              WHERE projeto_id = :projetoId AND ativo = true) novo
       WHERE p.id = :projetoId
         AND p.status IN ('planejamento', 'execucao', 'paralisado')`,
     { projetoId, minimo: PROGRESSO_MINIMO_EXECUCAO },
@@ -961,7 +965,7 @@ export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promi
         CURRENT_DATE, CURRENT_DATE, :usaDiasUteis, :sigiloso, :capex, :moeda,
         :area, :justificativa,
         :valor, :esforco, :alcance, :confianca,
-        CASE WHEN CAST(:status AS varchar) = 'backlog'
+        CASE WHEN CAST(:status AS text) = 'backlog'
              THEN (SELECT COALESCE(MAX(ordem_backlog), 0) + 1
                      FROM projetos WHERE status = 'backlog')
              ELSE NULL END,
@@ -1050,7 +1054,7 @@ export async function atualizarProjeto(
  * baseline. Qualquer um desses é trabalho de alguém, e apagá-lo junto
  * seria destruir registro sem aviso.
  *
- * A tarefa entra mesmo desativada. `ativo = 0` significa que ela saiu do
+ * A tarefa entra mesmo desativada. `ativo = false` significa que ela saiu do
  * cronograma, não que nunca existiu — e a baseline pode estar apontando
  * para ela.
  */
@@ -1119,8 +1123,9 @@ export async function excluirProjeto(ctx: ContextoUsuario, id: string): Promise<
     );
   }
 
-  const n = await executar(`DELETE FROM projetos WHERE id = :id`, { id });
-  if (n === 0) throw new ErroDominio(`Projeto ${id} não encontrado`);
+  // Exclusão lógica (regra de produto): o projeto sai das telas e fica
+  // no banco, com data e autor. A função confere a empresa de quem pede.
+  await executar(`SELECT public.excluir_projeto(:id)`, { id });
 }
 
 /**
@@ -1433,7 +1438,7 @@ export async function excluirTarefa(ctx: ContextoUsuario, id: string): Promise<v
        UNION ALL
        SELECT t.id FROM projeto_tarefas t JOIN arvore a ON t.pai_id = a.id
      )
-     UPDATE projeto_tarefas SET ativo = 0
+     UPDATE projeto_tarefas SET ativo = false
       WHERE id IN (SELECT id FROM arvore)`,
     { id },
   );
@@ -2075,7 +2080,7 @@ export async function atualizarCampoTarefa(
   await exigirAcessoTarefa(ctx, id, "alterar tarefas deste projeto");
 
   const filhas = await consultarUm<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
+    `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = true`,
     { id },
   );
 
@@ -2115,7 +2120,7 @@ export async function atualizarCampoTarefa(
   // como ser lido.
   const atual = await consultarUm<LinhaCampoAtual>(
     `SELECT t.projeto_id, t.inicio, t.fim, t.duracao, t.duracao_unidade, t.alocacao_pct,
-            (p.usa_dias_uteis = 1) AS usa_dias_uteis
+            (p.usa_dias_uteis = true) AS usa_dias_uteis
        FROM projeto_tarefas t
        JOIN projetos p ON p.id = t.projeto_id
       WHERE t.id = :id`,
@@ -2298,8 +2303,8 @@ async function capacidadesDoProjeto(projetoId: string): Promise<Map<string, numb
             MIN(r.horas_dia * r.disponibilidade_projetos::numeric / 100) AS horas
        FROM tarefa_responsaveis tr
        JOIN projeto_tarefas t ON t.id = tr.tarefa_id
-       JOIN recursos r ON r.id = tr.recurso_id AND r.ativo = 1
-      WHERE t.projeto_id = :projetoId AND t.ativo = 1
+       JOIN recursos r ON r.id = tr.recurso_id AND r.ativo = true
+      WHERE t.projeto_id = :projetoId AND t.ativo = true
       GROUP BY tr.tarefa_id`,
     { projetoId },
   );
@@ -2351,12 +2356,12 @@ async function avisosDeAlocacao(
               ON tro.recurso_id = tr.recurso_id AND tro.tarefa_id <> tr.tarefa_id
        LEFT JOIN projeto_tarefas o
               ON o.id = tro.tarefa_id
-             AND o.ativo = 1
+             AND o.ativo = true
              AND o.quadro <> 'done'
              AND o.inicio <= :fim
              AND o.fim >= :inicio
              AND NOT EXISTS (SELECT 1 FROM projeto_tarefas f
-                              WHERE f.pai_id = o.id AND f.ativo = 1)
+                              WHERE f.pai_id = o.id AND f.ativo = true)
       WHERE tr.tarefa_id = :id
       GROUP BY r.id, r.nome, r.disponibilidade_projetos`,
     { id: tarefaId, inicio, fim },
@@ -2431,7 +2436,7 @@ export async function inserirAbaixo(
       `INSERT INTO projeto_tarefas
          (id, projeto_id, pai_id, nome, inicio, fim, progresso, quadro, marco,
           duracao, duracao_unidade, ordem)
-       VALUES (:id, :projetoId, :paiId, 'Nova tarefa', :inicio, :fim, 0, 'backlog', 0,
+       VALUES (:id, :projetoId, :paiId, 'Nova tarefa', :inicio, :fim, 0, 'backlog', false,
                :duracao, 'horas', :ordem)`,
       {
         id,
@@ -2523,7 +2528,7 @@ export async function salvarBaseline(
     await tx.executar(
       `INSERT INTO baseline_tarefas (baseline_id, tarefa_id, nome, inicio, fim)
        SELECT :id, id, nome, inicio, fim
-         FROM projeto_tarefas WHERE projeto_id = :projetoId AND ativo = 1`,
+         FROM projeto_tarefas WHERE projeto_id = :projetoId AND ativo = true`,
       { id, projetoId },
     );
   });
@@ -2763,7 +2768,7 @@ export async function atualizarVinculosTarefa(
 
   if (d.responsaveis && d.responsaveis.length > 0) {
     const filhas = await consultarUm<{ total: number }>(
-      `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = 1`,
+      `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE pai_id = :id AND ativo = true`,
       { id },
     );
     if ((filhas?.total ?? 0) > 0) {
@@ -2831,7 +2836,7 @@ async function validarRecursos(ids: string[]): Promise<void> {
   });
 
   const achados = await consultar<{ id: string }>(
-    `SELECT id FROM recursos WHERE ativo = 1 AND id IN (${chaves.join(",")})`,
+    `SELECT id FROM recursos WHERE ativo = true AND id IN (${chaves.join(",")})`,
     binds,
   );
   if (achados.length !== unicos.length) {
@@ -2863,7 +2868,7 @@ async function validarPredecessoras(id: string, projetoId: string, novas: string
 
   const mesmas = await consultar<{ id: string }>(
     `SELECT id FROM projeto_tarefas
-      WHERE projeto_id = :projetoId AND ativo = 1 AND id IN (${chaves.join(",")})`,
+      WHERE projeto_id = :projetoId AND ativo = true AND id IN (${chaves.join(",")})`,
     binds,
   );
   if (mesmas.length !== unicas.length) {
@@ -2895,7 +2900,7 @@ async function validarPredecessoras(id: string, projetoId: string, novas: string
     `SELECT tp.tarefa_id, tp.predecessora_id
        FROM tarefa_predecessoras tp
        JOIN projeto_tarefas t ON t.id = tp.tarefa_id
-      WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
+      WHERE t.projeto_id = :projetoId AND t.ativo = true`,
     { projetoId },
   );
 
@@ -2984,7 +2989,7 @@ export async function aninharTarefa(
     const anterior = await consultarUm<{ id: string }>(
       `SELECT id FROM projeto_tarefas
         WHERE projeto_id = :projetoId
-          AND ativo = 1
+          AND ativo = true
           AND pai_id IS NOT DISTINCT FROM :paiId
           AND ordem < :ordem
         ORDER BY ordem DESC
@@ -3151,9 +3156,9 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
       `SELECT t.id, t.pai_id, t.inicio, t.fim, t.duracao, t.duracao_unidade, t.alocacao_pct,
               t.restricao_inicio,
               (SELECT COUNT(*) FROM projeto_tarefas f
-                WHERE f.pai_id = t.id AND f.ativo = 1)::int AS tem_filhas
+                WHERE f.pai_id = t.id AND f.ativo = true)::int AS tem_filhas
          FROM projeto_tarefas t
-        WHERE t.projeto_id = :projetoId AND t.ativo = 1
+        WHERE t.projeto_id = :projetoId AND t.ativo = true
         ORDER BY t.ordem`,
       { projetoId },
     ),
@@ -3166,11 +3171,11 @@ export async function reagendarProjeto(projetoId: string): Promise<void> {
       `SELECT tp.tarefa_id, tp.predecessora_id, tp.tipo, tp.defasagem
          FROM tarefa_predecessoras tp
          JOIN projeto_tarefas t ON t.id = tp.tarefa_id
-        WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
+        WHERE t.projeto_id = :projetoId AND t.ativo = true`,
       { projetoId },
     ),
     consultarUm<{ usaDiasUteis: boolean }>(
-      `SELECT (usa_dias_uteis = 1) AS usa_dias_uteis FROM projetos WHERE id = :id`,
+      `SELECT (usa_dias_uteis = true) AS usa_dias_uteis FROM projetos WHERE id = :id`,
       { id: projetoId },
     ),
   ]);
@@ -3418,12 +3423,12 @@ export async function conflitoDeData(
        SELECT pr.id AS raiz_id, pr.nome AS raiz_nome,
               tp.tipo, tp.defasagem, pr.id AS no_id
          FROM tarefa_predecessoras tp
-         JOIN projeto_tarefas pr ON pr.id = tp.predecessora_id AND pr.ativo = 1
+         JOIN projeto_tarefas pr ON pr.id = tp.predecessora_id AND pr.ativo = true
         WHERE tp.tarefa_id = :id AND tp.tipo IN ('TI', 'II')
        UNION ALL
        SELECT d.raiz_id, d.raiz_nome, d.tipo, d.defasagem, f.id
          FROM descendencia d
-         JOIN projeto_tarefas f ON f.pai_id = d.no_id AND f.ativo = 1
+         JOIN projeto_tarefas f ON f.pai_id = d.no_id AND f.ativo = true
      )
      SELECT d.raiz_id AS id, d.raiz_nome AS nome, d.tipo, d.defasagem,
             MAX(t.fim) AS fim, MIN(t.inicio) AS inicio
@@ -3435,7 +3440,7 @@ export async function conflitoDeData(
   if (linhas.length === 0) return null;
 
   const projeto = await consultarUm<{ usaDiasUteis: boolean }>(
-    `SELECT (p.usa_dias_uteis = 1) AS usa_dias_uteis
+    `SELECT (p.usa_dias_uteis = true) AS usa_dias_uteis
        FROM projeto_tarefas t
        JOIN projetos p ON p.id = t.projeto_id
       WHERE t.id = :id`,
@@ -3570,7 +3575,7 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
        COUNT(*) FILTER (
          WHERE p.status IN ('planejamento','execucao','paralisado')
            AND NOT EXISTS (SELECT 1 FROM projeto_tarefas t
-                            WHERE t.projeto_id = p.id AND t.ativo = 1))::int AS sem_cronograma,
+                            WHERE t.projeto_id = p.id AND t.ativo = true))::int AS sem_cronograma,
 
        COUNT(*) FILTER (WHERE p.status = 'planejamento')::int AS planejamento,
        COUNT(*) FILTER (WHERE p.status = 'execucao')::int     AS execucao,
@@ -3825,7 +3830,7 @@ export async function listarProjetosSemAcesso(ctx: ContextoUsuario): Promise<Pro
        FROM projetos p
        LEFT JOIN usuarios ug ON ug.id = p.gerente_id
       WHERE p.status IN ('planejamento', 'execucao', 'paralisado')
-        AND p.sigiloso = 0
+        AND p.sigiloso = false
         AND NOT (${f.clausula})
       ORDER BY p.nome`,
     f.binds,

@@ -69,8 +69,8 @@ const SELECT_BACKLOG = `
   SELECT p.id, p.nome, p.objetivo, p.area_demandante, p.justificativa,
          p.gerente_id, ug.nome AS gerente_nome,
          p.sponsor_id, us.nome AS sponsor_nome,
-         (p.usa_dias_uteis = 1) AS usa_dias_uteis,
-         (p.sigiloso = 1) AS sigiloso,
+         (p.usa_dias_uteis = true) AS usa_dias_uteis,
+         (p.sigiloso = true) AS sigiloso,
          p.capex, p.moeda,
          p.valor, p.esforco, p.alcance, p.confianca, p.ordem_backlog,
          p.status, p.inicio, p.fim,
@@ -80,7 +80,7 @@ const SELECT_BACKLOG = `
     LEFT JOIN usuarios ug ON ug.id = p.gerente_id
     LEFT JOIN usuarios us ON us.id = p.sponsor_id
     LEFT JOIN (SELECT projeto_id, AVG(progresso) AS media
-                 FROM projeto_tarefas WHERE ativo = 1
+                 FROM projeto_tarefas WHERE ativo = true
                 GROUP BY projeto_id) t
            ON t.projeto_id = p.id`;
 
@@ -112,7 +112,7 @@ export async function definirModeloPriorizacao(
      VALUES ('priorizacao_modelo', :valor,
              'Modelo de pontuacao do backlog: simples (valor/esforco) ou rice.',
              LOCALTIMESTAMP)
-     ON CONFLICT (chave) DO UPDATE
+     ON CONFLICT (tenant_id, chave) DO UPDATE
         SET valor = EXCLUDED.valor, atualizado_em = LOCALTIMESTAMP`,
     { valor: modelo },
   );
@@ -261,7 +261,7 @@ export async function devolverAoBacklog(ctx: ContextoUsuario, id: string): Promi
   await exigirAcessoDemanda(ctx, id);
 
   const t = await consultarUm<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE projeto_id = :id AND ativo = 1`,
+    `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE projeto_id = :id AND ativo = true`,
     { id },
   );
   if ((t?.total ?? 0) > 0) {

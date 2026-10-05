@@ -515,7 +515,7 @@ export async function portfolio(f: FiltroPortfolio = {}): Promise<ProjetoPortfol
        FROM projetos p
        LEFT JOIN usuarios u ON u.id = p.gerente_id
        LEFT JOIN (SELECT projeto_id, AVG(progresso) AS media
-                    FROM projeto_tarefas WHERE ativo = 1
+                    FROM projeto_tarefas WHERE ativo = true
                    GROUP BY projeto_id) t
               ON t.projeto_id = p.id
        LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima

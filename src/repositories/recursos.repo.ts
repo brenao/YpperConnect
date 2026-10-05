@@ -14,8 +14,8 @@ import type { ContextoUsuario } from "@/services/current-user.server";
  * sessão de quem chamou (o RLS confere de novo).
  *
  * Cálculo sobre projetos (carga, capacidade por tarefa, responsáveis e
- * ausências do cronograma): ainda no banco legado, porque lê as tabelas
- * de projetos. Migra junto com o módulo de Projetos.
+ * ausências do cronograma): SQL do legado, executado no Supabase pelo
+ * adaptador (client.server), com o RLS da sessão.
  */
 
 export interface Recurso {
@@ -336,7 +336,7 @@ export async function definirRecursoAtivo(
 }
 
 // ------------------------------------------------- cálculo sobre projetos
-// Ainda no banco legado: lê as tabelas de projetos. Migra com Projetos.
+// SQL do legado, executado no Supabase pelo adaptador (client.server).
 
 export interface CargaRecurso {
   recursoId: string;
@@ -366,7 +366,7 @@ export async function cargaPorRecurso(): Promise<CargaRecurso[]> {
        JOIN projetos p ON p.id = t.projeto_id
        JOIN recursos r ON r.id = tr.recurso_id
       WHERE t.quadro <> 'done'
-        AND t.ativo = 1
+        AND t.ativo = true
         AND p.status IN ('planejamento','execucao')
         AND CURRENT_DATE BETWEEN t.inicio AND t.fim
       GROUP BY tr.recurso_id`,
@@ -394,7 +394,7 @@ export async function capacidadeDiariaDaTarefa(tarefaId: string): Promise<number
     `SELECT MIN(r.horas_dia * r.disponibilidade_projetos::numeric / 100) AS horas
        FROM tarefa_responsaveis tr
        JOIN recursos r ON r.id = tr.recurso_id
-      WHERE tr.tarefa_id = :id AND r.ativo = 1`,
+      WHERE tr.tarefa_id = :id AND r.ativo = true`,
     { id: tarefaId },
   );
   const horas = r?.horas ?? null;
@@ -552,7 +552,7 @@ export async function excluirAusencia(ctx: ContextoUsuario, id: string): Promise
 }
 
 // ------------------------------------------- calendário do cronograma
-// Ainda no banco legado: lê as tabelas de projetos. Migra com Projetos.
+// SQL do legado, executado no Supabase pelo adaptador (client.server).
 
 /** Um responsável de tarefa, com a localidade que define o calendário dele. */
 export interface ResponsavelDeTarefa {
@@ -574,8 +574,8 @@ export async function responsaveisDoProjeto(projetoId: string): Promise<Responsa
     `SELECT tr.tarefa_id, tr.recurso_id, r.localidade_id
        FROM tarefa_responsaveis tr
        JOIN projeto_tarefas t ON t.id = tr.tarefa_id
-       JOIN recursos r ON r.id = tr.recurso_id AND r.ativo = 1
-      WHERE t.projeto_id = :projetoId AND t.ativo = 1`,
+       JOIN recursos r ON r.id = tr.recurso_id AND r.ativo = true
+      WHERE t.projeto_id = :projetoId AND t.ativo = true`,
     { projetoId },
   );
 }
@@ -606,7 +606,8 @@ export async function ausenciasDoProjeto(projetoId: string): Promise<PeriodoAuse
                       JOIN projeto_tarefas t ON t.id = tr.tarefa_id
                      WHERE tr.recurso_id = a.recurso_id
                        AND t.projeto_id = :projetoId
-                       AND t.ativo = 1)
+                       AND t.ativo = true)
+        AND a.excluido_em IS NULL
       ORDER BY a.inicio`,
     { projetoId },
   );

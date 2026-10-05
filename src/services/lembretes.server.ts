@@ -104,3 +104,56 @@ export async function gerarLembretesProjeto(): Promise<ResultadoLembretes> {
 
   return r;
 }
+
+/**
+ * Rotina do agendador: gera os lembretes de todas as empresas ativas.
+ *
+ * Sem navegador não há sessão, então a rotina age, em cada empresa, em
+ * nome do primeiro administrador ativo dela (registrado na auditoria).
+ * O RLS continua valendo: cada passada só enxerga a própria empresa.
+ */
+export async function gerarLembretesTodasEmpresas(): Promise<
+  { empresa: string; resultado?: ResultadoLembretes; erro?: string }[]
+> {
+  const { getSupabaseAdmin } = await import("@/integrations/supabase/admin.server");
+  const { executarComo } = await import("@/integrations/postgres/client.server");
+  const admin = getSupabaseAdmin();
+
+  const { data: empresas, error } = await admin
+    .from("tenants")
+    .select("id, slug, fuso_horario")
+    .eq("ativo", true)
+    .is("excluido_em", null);
+  if (error) throw new Error(error.message);
+
+  const saida: { empresa: string; resultado?: ResultadoLembretes; erro?: string }[] = [];
+  for (const e of empresas ?? []) {
+    const { data: executor } = await admin
+      .from("tenant_membros")
+      .select("usuario_id")
+      .eq("tenant_id", e.id)
+      .eq("admin", true)
+      .eq("ativo", true)
+      .order("criado_em")
+      .limit(1)
+      .maybeSingle();
+    if (!executor) {
+      saida.push({ empresa: e.slug as string, erro: "sem administrador ativo" });
+      continue;
+    }
+    try {
+      const resultado = await executarComo(
+        {
+          usuarioId: executor.usuario_id as string,
+          tenantId: e.id as string,
+          fuso: (e.fuso_horario as string | null) ?? "America/Sao_Paulo",
+        },
+        gerarLembretesProjeto,
+      );
+      saida.push({ empresa: e.slug as string, resultado });
+    } catch (err) {
+      saida.push({ empresa: e.slug as string, erro: String(err) });
+    }
+  }
+  return saida;
+}

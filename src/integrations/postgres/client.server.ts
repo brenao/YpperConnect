@@ -1,121 +1,136 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import pg from "pg";
 
 /**
- * Camada de acesso ao PostgreSQL. SOMENTE SERVIDOR.
- * Nunca importar de componente cliente — o bundle quebra e as
- * credenciais vazariam para o navegador.
+ * Adaptador de SQL para o Postgres do Supabase. SOMENTE SERVIDOR.
  *
- * A interface publica (consultar / consultarUm / executar / emTransacao)
- * e identica a que existia para o Oracle, de proposito: os repositorios
- * trocam so o caminho do import.
+ * O módulo de Projetos (e as partes de Recursos e Indicadores que leem
+ * projetos) mantém o SQL do legado, com a mesma interface de antes:
+ * `consultar`, `consultarUm`, `executar` e `emTransacao`. A diferença é
+ * onde e como roda:
+ *
+ *   - Conexão direta ao Postgres do Supabase (SUPABASE_DB_URL, pooler
+ *     em modo transação). Só no servidor; nunca vai para o navegador.
+ *   - TODA operação roda numa transação que primeiro veste a identidade
+ *     de quem chamou: papel `authenticated`, auth.uid() e a empresa
+ *     ativa (`app.tenant_id`). Assim o RLS vale exatamente como no
+ *     restante do sistema — o adaptador não tem caminho sem contexto.
+ *   - O fuso da sessão é o da empresa: CURRENT_DATE e LOCALTIMESTAMP do
+ *     SQL legado continuam significando "hoje" e "agora" para ela.
  */
 
-/**
- * O driver `pg` devolve alguns tipos como STRING por padrao, para nao
- * perder precisao. Sem os dois parsers abaixo:
- *
- *   - COUNT(*) e a coluna `numero` do chamado (BIGINT) chegariam como
- *     "42" em vez de 42, e `total > 0` viraria comparacao de texto;
- *   - horas_dia e duracao (NUMERIC) chegariam como "8.00", e somar
- *     horas daria concatenacao.
- *
- * Convertemos para number, que e o que o Oracle entregava. O limite e
- * 2^53 (~9 quatrilhoes); nenhuma coluna nossa chega perto.
- */
 pg.types.setTypeParser(pg.types.builtins.INT8, (v: string) => Number(v));
 pg.types.setTypeParser(pg.types.builtins.NUMERIC, (v: string) => Number(v));
-
-/**
- * Fuso da sessao.
- *
- * As colunas de data sao TIMESTAMP sem fuso, iguais as do Oracle. O que
- * o banco grava em `LOCALTIMESTAMP` depende do fuso da SESSAO: se ela
- * abrir em UTC, todo prazo de SLA nasce 3 horas adiantado. Por isso o
- * fuso e fixado na conexao, e nao herdado do servidor.
- *
- * Aceita nome de zona (America/Sao_Paulo), nao deslocamento fixo, para
- * o horario de verao continuar correto se um dia voltar.
- */
-const FUSO_SESSAO = process.env["PG_TIMEZONE"] ?? "America/Sao_Paulo";
+// DATE como Date à meia-noite local, como o legado entregava.
+pg.types.setTypeParser(pg.types.builtins.DATE, (v: string) => new Date(`${v}T00:00:00`));
 
 let pool: pg.Pool | undefined;
 
-function obrigatorio(nome: string): string {
-  const v = process.env[nome];
-  if (!v) throw new Error(`Variável de ambiente ${nome} não configurada`);
-  avisarSeEntreAspas(nome, v);
-  return v;
-}
-
-/**
- * Aspas no .env: a pegadinha que custou um deploy.
- *
- * `node --env-file` REMOVE as aspas ao redor do valor. O
- * `docker --env-file` NAO remove: ele pega tudo depois do `=` como
- * literal. A mesma linha
- *
- *     PG_PASSWORD="senha"
- *
- * funciona rodando na maquina do dev e falha dentro do container, com
- * uma mensagem que nao ajuda em nada: "password authentication failed".
- *
- * Aqui so avisamos, nao corrigimos. Tirar as aspas por conta propria
- * esconderia o problema, e uma senha pode legitimamente conter aspas no
- * meio - o que nao pode e comecar e terminar com elas.
- */
-function avisarSeEntreAspas(nome: string, valor: string): void {
-  const aspa = valor[0];
-  if ((aspa === '"' || aspa === "'") && valor.length > 1 && valor.endsWith(aspa)) {
-    console.error(
-      `[postgres] ATENÇÃO: ${nome} começa e termina com ${aspa}. ` +
-        `O docker --env-file não remove aspas, então elas fazem parte do valor ` +
-        `e a conexão vai falhar. Retire as aspas da linha ${nome}= no .env ` +
-        `e recrie o container (docker restart não relê o --env-file).`,
-    );
-  }
-}
-
 function getPool(): pg.Pool {
   if (pool) return pool;
-  // new Pool() nao abre conexao nenhuma: as conexoes nascem sob demanda.
-  // Por isso aqui nao ha a corrida que o Oracle tinha no boot.
+  const url = process.env["SUPABASE_DB_URL"];
+  if (!url) {
+    throw new Error(
+      "SUPABASE_DB_URL não configurada. Veja o .env.example (conexão do pooler do Supabase).",
+    );
+  }
   pool = new pg.Pool({
-    host: obrigatorio("PG_HOST"),
-    port: Number(process.env["PG_PORT"] ?? 5432),
-    user: obrigatorio("PG_USER"),
-    password: obrigatorio("PG_PASSWORD"),
-    database: obrigatorio("PG_DATABASE"),
-    max: Number(process.env["PG_POOL_LIMIT"] ?? 10),
-    // Derruba conexao ociosa que o firewall corporativo ja matou
-    // silenciosamente — o equivalente ao poolPingInterval do Oracle.
+    connectionString: url,
+    max: Number(process.env["SUPABASE_DB_POOL"] ?? 5),
     idleTimeoutMillis: 30_000,
     keepAlive: true,
-    connectionTimeoutMillis: 30_000,
-    options: `-c timezone=${FUSO_SESSAO}`,
+    connectionTimeoutMillis: 15_000,
   });
-
-  // Sem este handler, um erro numa conexao ociosa derruba o processo
-  // Node inteiro (o 'error' do Pool e um EventEmitter sem listener).
   pool.on("error", (erro: Error) => {
     console.error("[postgres] erro em conexão ociosa do pool:", erro.message);
   });
-
   return pool;
 }
 
-/** Fecha o pool. Chamar no shutdown do servidor. */
 export async function fecharPool(): Promise<void> {
   if (!pool) return;
   await pool.end();
   pool = undefined;
 }
 
+// ------------------------------------------------------------ contexto
+
+/** Quem está agindo: define o que o RLS deixa ver e gravar. */
+export interface ContextoBanco {
+  usuarioId: string;
+  tenantId: string;
+  fuso: string;
+}
+
+const contextoExplicito = new AsyncLocalStorage<ContextoBanco>();
+
 /**
- * ORACLE: string vazia e NULL. O Postgres NAO faz isso — '' e um valor.
- * Mantemos a conversao para que o dado gravado continue igual ao que
- * era: sem ela, uma coluna NOT NULL passaria a aceitar '' calada, e um
- * CHECK de enum recusaria o insert com mensagem confusa.
+ * Executa `fn` com um contexto definido à mão. Para rotinas sem sessão
+ * de navegador (agendador, testes) que agem em nome de alguém.
  */
+export function executarComo<T>(ctx: ContextoBanco, fn: () => Promise<T>): Promise<T> {
+  return contextoExplicito.run(ctx, fn);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FUSO = /^[A-Za-z_]+(\/[A-Za-z0-9_+-]+)*$/;
+
+/**
+ * Fuso por empresa, em cache: muda quase nunca, e buscá-lo a cada
+ * operação acrescentaria uma chamada ao Supabase em toda consulta.
+ */
+const fusoPorEmpresa = new Map<string, { fuso: string; expiraEm: number }>();
+const FUSO_TTL_MS = 10 * 60_000;
+
+async function fusoDaEmpresa(tenantId: string): Promise<string> {
+  const agora = Date.now();
+  const emCache = fusoPorEmpresa.get(tenantId);
+  if (emCache && emCache.expiraEm > agora) return emCache.fuso;
+
+  const { getSupabaseServerClient } = await import("@/integrations/supabase/server");
+  const { data } = await getSupabaseServerClient()
+    .from("tenants")
+    .select("fuso_horario")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const fuso = (data?.fuso_horario as string | undefined) ?? "America/Sao_Paulo";
+  fusoPorEmpresa.set(tenantId, { fuso, expiraEm: agora + FUSO_TTL_MS });
+  return fuso;
+}
+
+/**
+ * Quem está agindo agora: o contexto definido por `executarComo` (rotinas
+ * e testes) ou a sessão do navegador.
+ */
+export async function contextoDoBanco(): Promise<ContextoBanco> {
+  const explicito = contextoExplicito.getStore();
+  if (explicito) return explicito;
+
+  // Sessão do navegador: a mesma leitura (uma por requisição) do resto do app.
+  const { getUsuarioAtual } = await import("@/services/current-user.server");
+  const u = await getUsuarioAtual();
+  return { usuarioId: u.id, tenantId: u.tenantId, fuso: await fusoDaEmpresa(u.tenantId) };
+}
+
+/**
+ * Comandos que vestem a identidade, numa ida só ao banco. Os valores vêm
+ * do servidor (IDs do Supabase e fuso do cadastro) e ainda assim são
+ * validados antes de entrar no texto: nada aqui vem do que o usuário digita.
+ */
+function comandosDeSessao(c: ContextoBanco): string {
+  if (!UUID.test(c.usuarioId) || !UUID.test(c.tenantId)) {
+    throw new Error("Contexto de banco inválido (identificador fora do formato).");
+  }
+  const fuso = FUSO.test(c.fuso) ? c.fuso : "America/Sao_Paulo";
+  const claims = JSON.stringify({ sub: c.usuarioId, role: "authenticated" });
+  return [
+    "BEGIN",
+    "SET LOCAL ROLE authenticated",
+    `SELECT set_config('request.jwt.claims', '${claims}', true), set_config('app.tenant_id', '${c.tenantId}', true)`,
+    `SET LOCAL TIME ZONE '${fuso}'`,
+  ].join("; ");
+}
+
 function normalizarValor(v: unknown): unknown {
   return v === "" ? null : v;
 }
@@ -320,41 +335,7 @@ function preparar(
 }
 
 /** SELECT. Devolve linhas já em camelCase. */
-export async function consultar<T = Record<string, unknown>>(
-  sql: string,
-  binds: Record<string, unknown> = {},
-): Promise<T[]> {
-  const { texto, valores } = preparar(sql, binds);
-  try {
-    const r = await getPool().query<Record<string, unknown>>(texto, valores);
-    return r.rows.map((l) => mapearLinha<T>(l));
-  } catch (erro) {
-    traduzirErro(erro, sql);
-  }
-}
-
-/** SELECT de uma linha só. Devolve null se não achar. */
-export async function consultarUm<T = Record<string, unknown>>(
-  sql: string,
-  binds: Record<string, unknown> = {},
-): Promise<T | null> {
-  const linhas = await consultar<T>(sql, binds);
-  return linhas[0] ?? null;
-}
-
-/**
- * INSERT/UPDATE/DELETE isolado. Cada comando solto no Postgres ja e uma
- * transacao propria, entao nao existe o autoCommit do Oracle aqui.
- */
-export async function executar(sql: string, binds: Record<string, unknown> = {}): Promise<number> {
-  const { texto, valores } = preparar(sql, binds);
-  try {
-    const r = await getPool().query(texto, valores);
-    return r.rowCount ?? 0;
-  } catch (erro) {
-    traduzirErro(erro, sql);
-  }
-}
+// --------------------------------------------------------- operações
 
 export interface Transacao {
   consultar<T = Record<string, unknown>>(
@@ -365,14 +346,11 @@ export interface Transacao {
 }
 
 /**
- * Executa várias operações numa transação. Commit no fim, rollback em
- * qualquer erro. Obrigatório sempre que gravar em chamados e
- * chamado_historico juntos — a auditoria não pode ficar órfã.
- *
- * A conexão é reservada do pool e devolvida no finally. Diferente do
- * Oracle, aqui o BEGIN/COMMIT é comando SQL explícito.
+ * Transação com a identidade de quem chamou. Tudo dentro dela vê e grava
+ * só o que o RLS permite a essa pessoa, na empresa ativa.
  */
 export async function emTransacao<T>(fn: (tx: Transacao) => Promise<T>): Promise<T> {
+  const contexto = await contextoDoBanco();
   const conn = await getPool().connect();
 
   const tx: Transacao = {
@@ -397,20 +375,38 @@ export async function emTransacao<T>(fn: (tx: Transacao) => Promise<T>): Promise
   };
 
   try {
-    await conn.query("BEGIN");
+    await conn.query(comandosDeSessao(contexto));
     const resultado = await fn(tx);
     await conn.query("COMMIT");
     return resultado;
   } catch (erro) {
-    // Se o próprio ROLLBACK falhar (conexão já morta), o erro original
-    // é o que interessa — ele é relançado abaixo de qualquer jeito.
     try {
       await conn.query("ROLLBACK");
     } catch {
-      /* vazio de propósito */
+      /* vazio de propósito: o erro original é o que importa */
     }
     throw erro;
   } finally {
     conn.release();
   }
+}
+
+/** Uma consulta = uma transação curta com a identidade de quem chamou. */
+export async function consultar<T = Record<string, unknown>>(
+  sql: string,
+  binds: Record<string, unknown> = {},
+): Promise<T[]> {
+  return emTransacao((tx) => tx.consultar<T>(sql, binds));
+}
+
+export async function consultarUm<T = Record<string, unknown>>(
+  sql: string,
+  binds: Record<string, unknown> = {},
+): Promise<T | null> {
+  const linhas = await consultar<T>(sql, binds);
+  return linhas[0] ?? null;
+}
+
+export async function executar(sql: string, binds: Record<string, unknown> = {}): Promise<number> {
+  return emTransacao((tx) => tx.executar(sql, binds));
 }

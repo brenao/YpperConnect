@@ -124,24 +124,31 @@ export interface NovaNotificacao {
   referenciaId?: string | undefined;
 }
 
-/** Grava na fila da empresa atual. Nunca envia — quem envia é processarFila(). */
+/**
+ * Grava na fila da empresa atual. Nunca envia — quem envia é processarFila().
+ *
+ * Pelo adaptador de SQL: funciona na tela e nas rotinas sem navegador
+ * (executarComo). A empresa vem da sessão (tenant_id padrão no banco).
+ */
 export async function enfileirar(n: NovaNotificacao): Promise<string> {
-  const { data, error } = await getSupabaseServerClient()
-    .from("notificacoes")
-    .insert({
-      tenant_id: await tenantAtual(),
+  const { consultarUm } = await import("@/integrations/postgres/client.server");
+  const linha = await consultarUm<{ id: string }>(
+    `INSERT INTO notificacoes
+       (tipo, destinatario_id, destinatario_email, assunto, corpo, referencia_tipo, referencia_id)
+     VALUES (:tipo, :destinatarioId, :destinatarioEmail, :assunto, :corpo, :referenciaTipo, :referenciaId)
+     RETURNING id`,
+    {
       tipo: n.tipo,
-      destinatario_id: n.destinatarioId ?? null,
-      destinatario_email: n.destinatarioEmail,
+      destinatarioId: n.destinatarioId ?? null,
+      destinatarioEmail: n.destinatarioEmail,
       assunto: n.assunto.slice(0, 300),
       corpo: n.corpo ?? null,
-      referencia_tipo: n.referenciaTipo ?? null,
-      referencia_id: n.referenciaId ?? null,
-    })
-    .select("id")
-    .single();
-  if (error) throw new Error(error.message);
-  return data.id as string;
+      referenciaTipo: n.referenciaTipo ?? null,
+      referenciaId: n.referenciaId ?? null,
+    },
+  );
+  if (!linha) throw new Error("Falha ao gravar a notificação na fila.");
+  return linha.id;
 }
 
 /**

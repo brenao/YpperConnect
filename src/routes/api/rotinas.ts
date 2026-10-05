@@ -21,10 +21,11 @@ export const Route = createFileRoute("/api/rotinas")({
           return Response.json({ erro: "não autorizado" }, { status: 401 });
         }
 
-        const { gerarLembretesProjeto } = await import("@/services/lembretes.server");
+        const { gerarLembretesTodasEmpresas } = await import("@/services/lembretes.server");
         const { processarFila } = await import("@/services/notificacoes.server");
 
-        const lembretes = await gerarLembretesProjeto();
+        // Sem navegador: percorre as empresas, agindo em nome do admin de cada uma.
+        const lembretes = await gerarLembretesTodasEmpresas();
         const fila = await processarFila();
 
         return Response.json({ lembretes, fila });

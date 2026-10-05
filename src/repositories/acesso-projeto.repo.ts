@@ -54,23 +54,23 @@ export interface SolicitacaoAcesso {
 export const SQL_TEM_ACESSO_PROJETO = `(
      CAST(:admin AS smallint) = 1
   OR CAST(:visaoDiretoria AS smallint) = 1
-  OR p.gerente_id = CAST(:usuarioId AS varchar)
-  OR p.sponsor_id = CAST(:usuarioId AS varchar)
+  OR p.gerente_id = CAST(:usuarioId AS uuid)
+  OR p.sponsor_id = CAST(:usuarioId AS uuid)
   OR EXISTS (SELECT 1
                FROM projeto_acessos pa
               WHERE pa.projeto_id = p.id
-                AND pa.usuario_id = CAST(:usuarioId AS varchar))
+                AND pa.usuario_id = CAST(:usuarioId AS uuid))
   OR EXISTS (SELECT 1
                FROM projeto_tarefas t
                JOIN tarefa_responsaveis tr ON tr.tarefa_id = t.id
                JOIN recursos r ON r.id = tr.recurso_id
               WHERE t.projeto_id = p.id
-                AND t.ativo = 1
-                AND r.usuario_id = CAST(:usuarioId AS varchar))
+                AND t.ativo = true
+                AND r.usuario_id = CAST(:usuarioId AS uuid))
 )`;
 
 /** Ver o nome na carteira: todo projeto, menos o sigiloso alheio. */
-export const SQL_PODE_VER_NOME_PROJETO = `(p.sigiloso = 0 OR ${SQL_TEM_ACESSO_PROJETO})`;
+export const SQL_PODE_VER_NOME_PROJETO = `(p.sigiloso = false OR ${SQL_TEM_ACESSO_PROJETO})`;
 
 /** Binds que as duas cláusulas acima exigem. */
 export function bindsDeAcesso(ctx: ContextoUsuario): Record<string, unknown> {

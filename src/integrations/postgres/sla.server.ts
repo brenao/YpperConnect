@@ -1,5 +1,3 @@
-import { getSupabaseServerClient } from "@/integrations/supabase/server";
-
 /**
  * Cálculo de prazo de SLA e aritmética de dias úteis do cronograma.
  *
@@ -107,21 +105,24 @@ function chaveMesDia(d: Date): string {
  * tem permissão de ler o cadastro de localidades.
  */
 async function carregarCalendario(localidadeId?: string | null): Promise<Calendario> {
-  const { getUsuarioAtual } = await import("@/services/current-user.server");
-  const { tenantId } = await getUsuarioAtual();
+  // Pelo adaptador de SQL: funciona na tela e nas rotinas sem navegador
+  // (executarComo), com a identidade de quem age. Um caminho só para o
+  // calendário de chamados e de cronogramas.
+  const { contextoDoBanco, consultarUm } = await import("@/integrations/postgres/client.server");
+  const { tenantId } = await contextoDoBanco();
 
   const chave = `${tenantId}:${localidadeId ?? CHAVE_PADRAO}`;
   const agora = Date.now();
   const cache = caches.get(chave);
   if (cache && cache.expiraEm > agora) return cache.dados;
 
-  const { data, error } = await getSupabaseServerClient().rpc("calendario_localidade", {
-    p_tenant: tenantId,
-    p_localidade: localidadeId ?? null,
-  });
-  if (error) throw new Error(`Falha ao carregar o calendário: ${error.message}`);
+  const linha = await consultarUm<{ calendario: unknown }>(
+    `SELECT public.calendario_localidade(CAST(:tenant AS uuid), CAST(:localidade AS uuid)) AS calendario`,
+    { tenant: tenantId, localidade: localidadeId ?? null },
+  );
+  if (!linha) throw new Error("Falha ao carregar o calendário da empresa.");
 
-  const bruto = data as {
+  const bruto = linha.calendario as {
     expediente: { dia: number; ini: number; fim: number }[];
     feriados: { data: string; recorrente: boolean }[];
   };
