@@ -61,7 +61,7 @@ const DEFINICOES: Record<ChaveKpi, Definicao> = {
     ajuda: "Registrados, aguardando priorização",
   },
   priorizados: {
-    rotulo: "Priorizados",
+    rotulo: "Total de projetos priorizados",
     icone: PlayCircle,
     ajuda: "Carteira ativa, sem os encerrados",
   },

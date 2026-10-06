@@ -3591,8 +3591,12 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
          WHERE p.status IN ('planejamento','execucao','paralisado')
            AND p.fim < CURRENT_DATE)::int                     AS prazo_estourado,
 
+       -- Paralisado fica de fora: ele parou por decisão de alguém, e
+       -- cobrar notícia semanal de quem já avisou que o projeto está
+       -- parado é o tipo de alerta que ensina o gerente a ignorar a
+       -- lista inteira. Volta a ser cobrado quando voltar a execução.
        COUNT(*) FILTER (
-         WHERE p.status IN ('planejamento','execucao','paralisado')
+         WHERE p.status IN ('planejamento','execucao')
            AND COALESCE(
                  (SELECT MAX(a.data_ref)::date
                     FROM projeto_atualizacoes a
