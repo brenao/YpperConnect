@@ -17,6 +17,8 @@ export const Route = createFileRoute("/login")({
   beforeLoad: async () => {
     const sessao = await sessaoFn();
     if (sessao.estado === "ok") throw redirect({ to: "/" });
+    // Afiliado sem empresa: o portal dele é a "casa".
+    if (sessao.estado === "sem_tenant" && sessao.afiliado) throw redirect({ to: "/afiliado" });
     return { sessao };
   },
   component: LoginPage,

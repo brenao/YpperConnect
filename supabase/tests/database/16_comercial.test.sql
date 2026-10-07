@@ -5,6 +5,9 @@ set local search_path = extensions, public;
 
 select plan(10);
 
+-- "Hoje" no fuso do produto (o Supabase roda em UTC).
+create temp table hoje as select (now() at time zone 'America/Sao_Paulo')::date as d;
+
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000001a1', 'ana@alfa.com'),
   ('00000000-0000-0000-0000-0000000001a2', 'caio@alfa.com'),
@@ -50,7 +53,7 @@ update public.assinaturas a set plano_codigo = 'itsm_pro' from t where a.tenant_
 select is(public.valor_mensal_assinatura((select a.id from public.assinaturas a, t where a.tenant_id = t.alfa)),
           49500, 'No Pro a IA ja esta inclusa: 5 x 99 = R$ 495');
 
-update public.assinaturas a set status = 'teste', teste_ate = current_date - 1 from t where a.tenant_id = t.alfa;
+update public.assinaturas a set status = 'teste', teste_ate = (select d from hoje) - 1 from t where a.tenant_id = t.alfa;
 
 -- 6
 select is(public.situacao_assinatura((select alfa from t))->>'acesso', 'bloqueado',
@@ -64,17 +67,17 @@ update public.assinaturas a set status = 'ativa', afiliado_id = '00000000-0000-0
        atribuido_em = now() from t where a.tenant_id = t.alfa;
 
 insert into public.faturas (id, tenant_id, assinatura_id, competencia, valor_centavos, vencimento, status, pago_em)
-select '00000000-0000-0000-0000-0000000001b1', t.alfa, a.id, current_date, 49500, current_date, 'paga', now()
+select '00000000-0000-0000-0000-0000000001b1', t.alfa, a.id, (select d from hoje), 49500, (select d from hoje), 'paga', now()
   from public.assinaturas a, t where a.tenant_id = t.alfa;
 select app.gerar_comissao('00000000-0000-0000-0000-0000000001b1');
 
 -- 7
-select is((select valor_centavos || '|' || status || '|' || (liberar_em - current_date)
+select is((select valor_centavos || '|' || status || '|' || (liberar_em - (select d from hoje))
              from public.comissoes), '9900|prevista|30',
           'Fatura paga gera comissao de 20%, liberada em 30 dias');
 
 insert into public.faturas (id, tenant_id, assinatura_id, competencia, valor_centavos, vencimento, status, pago_em)
-select '00000000-0000-0000-0000-0000000001b2', t.alfa, a.id, current_date + 400, 49500, current_date + 400, 'paga', now()
+select '00000000-0000-0000-0000-0000000001b2', t.alfa, a.id, (select d from hoje) + 400, 49500, (select d from hoje) + 400, 'paga', now()
   from public.assinaturas a, t where a.tenant_id = t.alfa;
 select app.gerar_comissao('00000000-0000-0000-0000-0000000001b2');
 

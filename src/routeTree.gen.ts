@@ -10,11 +10,14 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AfiliadoRouteImport } from './routes/afiliado'
+import { Route as AssinaturaRouteImport } from './routes/assinatura'
 import { Route as AssistenteRouteImport } from './routes/assistente'
 import { Route as BacklogRouteImport } from './routes/backlog'
 import { Route as CatalogoRouteImport } from './routes/catalogo'
 import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
+import { Route as ContratarRouteImport } from './routes/contratar'
 import { Route as DefinirSenhaRouteImport } from './routes/definir-senha'
 import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
@@ -31,12 +34,25 @@ import { Route as AdministracaoUsuariosRouteImport } from './routes/administraca
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiRotinasRouteImport } from './routes/api/rotinas'
 import { Route as AuthConfirmRouteImport } from './routes/auth.confirm'
+import { Route as IndicacaoCodigoRouteImport } from './routes/indicacao.$codigo'
+import { Route as PlataformaComercialRouteImport } from './routes/plataforma.comercial'
 import { Route as PlataformaEmpresasRouteImport } from './routes/plataforma.empresas'
 import { Route as ProjetosProjectIdRouteImport } from './routes/projetos_.$projectId'
+import { Route as ApiWebhooksAsaasRouteImport } from './routes/api/webhooks/asaas'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AfiliadoRoute = AfiliadoRouteImport.update({
+  id: '/afiliado',
+  path: '/afiliado',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AssinaturaRoute = AssinaturaRouteImport.update({
+  id: '/assinatura',
+  path: '/assinatura',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AssistenteRoute = AssistenteRouteImport.update({
@@ -62,6 +78,11 @@ const ChamadosRoute = ChamadosRouteImport.update({
 const ConhecimentoRoute = ConhecimentoRouteImport.update({
   id: '/conhecimento',
   path: '/conhecimento',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContratarRoute = ContratarRouteImport.update({
+  id: '/contratar',
+  path: '/contratar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DefinirSenhaRoute = DefinirSenhaRouteImport.update({
@@ -146,6 +167,16 @@ const AuthConfirmRoute = AuthConfirmRouteImport.update({
   path: '/auth/confirm',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IndicacaoCodigoRoute = IndicacaoCodigoRouteImport.update({
+  id: '/indicacao/$codigo',
+  path: '/indicacao/$codigo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlataformaComercialRoute = PlataformaComercialRouteImport.update({
+  id: '/plataforma/comercial',
+  path: '/plataforma/comercial',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlataformaEmpresasRoute = PlataformaEmpresasRouteImport.update({
   id: '/plataforma/empresas',
   path: '/plataforma/empresas',
@@ -156,14 +187,22 @@ const ProjetosProjectIdRoute = ProjetosProjectIdRouteImport.update({
   path: '/projetos/$projectId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWebhooksAsaasRoute = ApiWebhooksAsaasRouteImport.update({
+  id: '/api/webhooks/asaas',
+  path: '/api/webhooks/asaas',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/afiliado': typeof AfiliadoRoute
+  '/assinatura': typeof AssinaturaRoute
   '/assistente': typeof AssistenteRoute
   '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/contratar': typeof ContratarRoute
   '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
@@ -179,17 +218,23 @@ export interface FileRoutesByFullPath {
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
+  '/indicacao/$codigo': typeof IndicacaoCodigoRoute
+  '/plataforma/comercial': typeof PlataformaComercialRoute
   '/plataforma/empresas': typeof PlataformaEmpresasRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
   '/administracao/': typeof AdministracaoIndexRoute
+  '/api/webhooks/asaas': typeof ApiWebhooksAsaasRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/afiliado': typeof AfiliadoRoute
+  '/assinatura': typeof AssinaturaRoute
   '/assistente': typeof AssistenteRoute
   '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/contratar': typeof ContratarRoute
   '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
@@ -205,18 +250,24 @@ export interface FileRoutesByTo {
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
+  '/indicacao/$codigo': typeof IndicacaoCodigoRoute
+  '/plataforma/comercial': typeof PlataformaComercialRoute
   '/plataforma/empresas': typeof PlataformaEmpresasRoute
   '/projetos/$projectId': typeof ProjetosProjectIdRoute
   '/administracao': typeof AdministracaoIndexRoute
+  '/api/webhooks/asaas': typeof ApiWebhooksAsaasRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/afiliado': typeof AfiliadoRoute
+  '/assinatura': typeof AssinaturaRoute
   '/assistente': typeof AssistenteRoute
   '/backlog': typeof BacklogRoute
   '/catalogo': typeof CatalogoRoute
   '/chamados': typeof ChamadosRoute
   '/conhecimento': typeof ConhecimentoRoute
+  '/contratar': typeof ContratarRoute
   '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
@@ -232,19 +283,25 @@ export interface FileRoutesById {
   '/api/chat': typeof ApiChatRoute
   '/api/rotinas': typeof ApiRotinasRoute
   '/auth/confirm': typeof AuthConfirmRoute
+  '/indicacao/$codigo': typeof IndicacaoCodigoRoute
+  '/plataforma/comercial': typeof PlataformaComercialRoute
   '/plataforma/empresas': typeof PlataformaEmpresasRoute
   '/projetos_/$projectId': typeof ProjetosProjectIdRoute
   '/administracao/': typeof AdministracaoIndexRoute
+  '/api/webhooks/asaas': typeof ApiWebhooksAsaasRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/afiliado'
+    | '/assinatura'
     | '/assistente'
     | '/backlog'
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/contratar'
     | '/definir-senha'
     | '/diretoria'
     | '/governanca'
@@ -260,17 +317,23 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
+    | '/indicacao/$codigo'
+    | '/plataforma/comercial'
     | '/plataforma/empresas'
     | '/projetos/$projectId'
     | '/administracao/'
+    | '/api/webhooks/asaas'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/afiliado'
+    | '/assinatura'
     | '/assistente'
     | '/backlog'
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/contratar'
     | '/definir-senha'
     | '/diretoria'
     | '/governanca'
@@ -286,17 +349,23 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
+    | '/indicacao/$codigo'
+    | '/plataforma/comercial'
     | '/plataforma/empresas'
     | '/projetos/$projectId'
     | '/administracao'
+    | '/api/webhooks/asaas'
   id:
     | '__root__'
     | '/'
+    | '/afiliado'
+    | '/assinatura'
     | '/assistente'
     | '/backlog'
     | '/catalogo'
     | '/chamados'
     | '/conhecimento'
+    | '/contratar'
     | '/definir-senha'
     | '/diretoria'
     | '/governanca'
@@ -312,18 +381,24 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/rotinas'
     | '/auth/confirm'
+    | '/indicacao/$codigo'
+    | '/plataforma/comercial'
     | '/plataforma/empresas'
     | '/projetos_/$projectId'
     | '/administracao/'
+    | '/api/webhooks/asaas'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AfiliadoRoute: typeof AfiliadoRoute
+  AssinaturaRoute: typeof AssinaturaRoute
   AssistenteRoute: typeof AssistenteRoute
   BacklogRoute: typeof BacklogRoute
   CatalogoRoute: typeof CatalogoRoute
   ChamadosRoute: typeof ChamadosRoute
   ConhecimentoRoute: typeof ConhecimentoRoute
+  ContratarRoute: typeof ContratarRoute
   DefinirSenhaRoute: typeof DefinirSenhaRoute
   DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
@@ -339,9 +414,12 @@ export interface RootRouteChildren {
   ApiChatRoute: typeof ApiChatRoute
   ApiRotinasRoute: typeof ApiRotinasRoute
   AuthConfirmRoute: typeof AuthConfirmRoute
+  IndicacaoCodigoRoute: typeof IndicacaoCodigoRoute
+  PlataformaComercialRoute: typeof PlataformaComercialRoute
   PlataformaEmpresasRoute: typeof PlataformaEmpresasRoute
   ProjetosProjectIdRoute: typeof ProjetosProjectIdRoute
   AdministracaoIndexRoute: typeof AdministracaoIndexRoute
+  ApiWebhooksAsaasRoute: typeof ApiWebhooksAsaasRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -351,6 +429,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/afiliado': {
+      id: '/afiliado'
+      path: '/afiliado'
+      fullPath: '/afiliado'
+      preLoaderRoute: typeof AfiliadoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assinatura': {
+      id: '/assinatura'
+      path: '/assinatura'
+      fullPath: '/assinatura'
+      preLoaderRoute: typeof AssinaturaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/assistente': {
@@ -386,6 +478,13 @@ declare module '@tanstack/react-router' {
       path: '/conhecimento'
       fullPath: '/conhecimento'
       preLoaderRoute: typeof ConhecimentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contratar': {
+      id: '/contratar'
+      path: '/contratar'
+      fullPath: '/contratar'
+      preLoaderRoute: typeof ContratarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/definir-senha': {
@@ -500,6 +599,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthConfirmRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/indicacao/$codigo': {
+      id: '/indicacao/$codigo'
+      path: '/indicacao/$codigo'
+      fullPath: '/indicacao/$codigo'
+      preLoaderRoute: typeof IndicacaoCodigoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/plataforma/comercial': {
+      id: '/plataforma/comercial'
+      path: '/plataforma/comercial'
+      fullPath: '/plataforma/comercial'
+      preLoaderRoute: typeof PlataformaComercialRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/plataforma/empresas': {
       id: '/plataforma/empresas'
       path: '/plataforma/empresas'
@@ -514,16 +627,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjetosProjectIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/webhooks/asaas': {
+      id: '/api/webhooks/asaas'
+      path: '/api/webhooks/asaas'
+      fullPath: '/api/webhooks/asaas'
+      preLoaderRoute: typeof ApiWebhooksAsaasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AfiliadoRoute: AfiliadoRoute,
+  AssinaturaRoute: AssinaturaRoute,
   AssistenteRoute: AssistenteRoute,
   BacklogRoute: BacklogRoute,
   CatalogoRoute: CatalogoRoute,
   ChamadosRoute: ChamadosRoute,
   ConhecimentoRoute: ConhecimentoRoute,
+  ContratarRoute: ContratarRoute,
   DefinirSenhaRoute: DefinirSenhaRoute,
   DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
@@ -539,9 +662,12 @@ const rootRouteChildren: RootRouteChildren = {
   ApiChatRoute: ApiChatRoute,
   ApiRotinasRoute: ApiRotinasRoute,
   AuthConfirmRoute: AuthConfirmRoute,
+  IndicacaoCodigoRoute: IndicacaoCodigoRoute,
+  PlataformaComercialRoute: PlataformaComercialRoute,
   PlataformaEmpresasRoute: PlataformaEmpresasRoute,
   ProjetosProjectIdRoute: ProjetosProjectIdRoute,
   AdministracaoIndexRoute: AdministracaoIndexRoute,
+  ApiWebhooksAsaasRoute: ApiWebhooksAsaasRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

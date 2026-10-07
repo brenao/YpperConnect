@@ -14,9 +14,12 @@ import appCss from "../styles.css?url";
 import { ThemeProvider } from "../lib/theme";
 import { Toaster } from "../components/ui/sonner";
 import { sessaoFn } from "../services/sessao.functions";
+import { rotaNoPlano } from "@/models/plano";
 
 /** Rotas abertas: não exigem sessão. */
-const ROTAS_PUBLICAS = ["/login", "/auth/confirm"];
+const ROTAS_PUBLICAS = ["/login", "/auth/confirm", "/contratar"];
+/** Prefixos públicos (com parâmetro). */
+const PREFIXOS_PUBLICOS = ["/indicacao/"];
 
 function NotFoundComponent() {
   return (
@@ -88,8 +91,25 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
    */
   beforeLoad: async ({ location }) => {
     if (ROTAS_PUBLICAS.some((rota) => location.pathname.endsWith(rota))) return;
+    if (PREFIXOS_PUBLICOS.some((p) => location.pathname.includes(p))) return;
     const sessao = await sessaoFn();
+    // Portal do afiliado: basta estar logado (não precisa de empresa).
+    if (location.pathname.includes("/afiliado")) {
+      if (sessao.estado === "anonimo") throw redirect({ to: "/login" });
+      return;
+    }
     if (sessao.estado !== "ok") throw redirect({ to: "/login" });
+
+    // Plano: sem acesso, ou rota de módulo não contratado, vai para a
+    // assinatura. Administração e plataforma ficam abertas para regularizar.
+    const caminho = location.pathname;
+    const livre = ["/assinatura", "/administracao", "/permissoes", "/plataforma"].some((r) =>
+      caminho.includes(r),
+    );
+    if (livre) return;
+    if (sessao.plano.acesso === "bloqueado" || !rotaNoPlano(caminho, sessao.plano)) {
+      throw redirect({ to: "/assinatura" });
+    }
   },
   head: () => ({
     meta: [

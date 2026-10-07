@@ -37,6 +37,12 @@ async function tenantAtual(): Promise<string> {
 }
 
 function falha(erro: { code?: string; message: string }): never {
+  if (erro.message.includes("Limite de usuarios pagantes")) {
+    throw new ErroDominio(
+      erro.message.replace("usuarios", "usuários") +
+        " Contrate mais usuários na assinatura ou deixe esta pessoa como usuário final.",
+    );
+  }
   if (erro.code === "23505") throw new ErroDominio("Este login já está em uso nesta empresa.");
   if (erro.code === "42501")
     throw new ErroDominio("Somente administradores podem alterar usuários");

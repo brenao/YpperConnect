@@ -15,6 +15,7 @@ import {
   KeyRound,
   LogOut,
   Building2,
+  CreditCard,
   Server,
   CalendarDays,
   Mail,
@@ -82,6 +83,7 @@ const navAdministracao = [
     icon: Building2,
     modulo: "/administracao",
   },
+  { to: "/assinatura", label: "Assinatura", icon: CreditCard, modulo: "/administracao" },
   {
     to: "/administracao/notificacoes",
     label: "Notificações",
@@ -223,6 +225,41 @@ function SeletorEmpresa() {
   );
 }
 
+/**
+ * Aviso do plano no topo de todas as telas: teste, pagamento pendente ou
+ * somente leitura. Some quando a assinatura está em dia.
+ */
+function FaixaPlano() {
+  const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn() });
+  const p = sessao.data?.plano;
+  if (!p || p.cortesia) return null;
+
+  let texto: string | null = null;
+  let classe = "border-primary/30 bg-primary/5";
+  if (p.status === "teste" && p.acesso !== "bloqueado" && p.testeAte) {
+    const dias = Math.ceil(
+      (new Date(`${p.testeAte}T23:59:59`).getTime() - Date.now()) / 86_400_000,
+    );
+    texto = `Teste grátis: ${dias} ${dias === 1 ? "dia restante" : "dias restantes"}.`;
+  } else if (p.acesso === "total_com_aviso") {
+    texto = "Pagamento pendente. Regularize para evitar o modo somente leitura.";
+    classe = "border-warning/40 bg-warning/10";
+  } else if (p.acesso === "somente_leitura") {
+    texto = "Modo somente leitura: há um pagamento em atraso. Nenhuma alteração será gravada.";
+    classe = "border-destructive/40 bg-destructive/10";
+  }
+  if (!texto) return null;
+
+  return (
+    <div className={cn("mx-4 mt-3 rounded-lg border px-4 py-2 text-sm sm:mx-6", classe)}>
+      {texto}{" "}
+      <Link to="/assinatura" className="font-medium text-primary hover:underline">
+        Ver assinatura
+      </Link>
+    </div>
+  );
+}
+
 export function AppShell({
   title,
   subtitle,
@@ -304,6 +341,15 @@ export function AppShell({
           {adminPermitidos.length > 0 ? (
             <GrupoAdministracao itens={adminPermitidos} pathname={pathname} />
           ) : null}
+          {sessao.data?.afiliado ? (
+            <Link
+              to="/afiliado"
+              className="mt-4 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+            >
+              <CreditCard className="size-4" />
+              Portal do afiliado
+            </Link>
+          ) : null}
           {operador ? (
             <div className="mt-4">
               <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -320,6 +366,18 @@ export function AppShell({
               >
                 <Building2 className="size-4" />
                 Empresas
+              </Link>
+              <Link
+                to="/plataforma/comercial"
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                  pathname.startsWith("/plataforma/comercial")
+                    ? "bg-sidebar-accent text-sidebar-primary"
+                    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                )}
+              >
+                <CreditCard className="size-4" />
+                Comercial
               </Link>
             </div>
           ) : null}
@@ -389,6 +447,7 @@ export function AppShell({
           ))}
         </nav>
 
+        <FaixaPlano />
         <main className="flex-1 px-6 py-6">{children}</main>
       </div>
     </div>

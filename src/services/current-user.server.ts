@@ -1,3 +1,4 @@
+import { paraSituacaoPlano, type SituacaoPlano } from "@/models/plano";
 import { deleteCookie, getCookie, getRequest, setCookie } from "@tanstack/react-start/server";
 import { getSupabaseServerClient } from "@/integrations/supabase/server";
 
@@ -54,6 +55,8 @@ export interface ContextoUsuario {
   funcionalidades: string[];
   /** Chaves de `perfil_modulos` do perfil do usuário. */
   modulos: string[];
+  /** O que o plano contratado pela empresa libera. */
+  plano: SituacaoPlano;
   /** Atalhos dos papéis de projeto, para não espalhar string mágica. */
   visaoDiretoriaProjetos: boolean;
   gestorPortfolio: boolean;
@@ -142,7 +145,10 @@ async function lerSessao(): Promise<Sessao> {
   const tenant = tenants.find((t) => t.slug === preferido) ?? tenants[0]!;
   if (tenant.slug !== preferido) setCookie(COOKIE_TENANT, tenant.slug, OPCOES_COOKIE_TENANT);
 
-  const acessoRes = await supabase.rpc("meu_acesso", { p_tenant: tenant.id });
+  const [acessoRes, planoRes] = await Promise.all([
+    supabase.rpc("meu_acesso", { p_tenant: tenant.id }),
+    supabase.rpc("situacao_assinatura", { p_tenant: tenant.id }),
+  ]);
   if (acessoRes.error) {
     throw new Error(`Falha ao carregar o perfil de acesso: ${acessoRes.error.message}`);
   }
@@ -168,6 +174,7 @@ async function lerSessao(): Promise<Sessao> {
       equipeId: acesso.equipe_id ?? null,
       funcionalidades,
       modulos: acesso.modulos ?? [],
+      plano: paraSituacaoPlano(planoRes.data as Record<string, unknown> | null),
       visaoDiretoriaProjetos: funcionalidades.includes(FEATURE_PROJETOS_DIRETORIA),
       gestorPortfolio: funcionalidades.includes(FEATURE_PROJETOS_PORTFOLIO),
       coachProjetos: admin || funcionalidades.includes(FEATURE_PROJETOS_COACH),

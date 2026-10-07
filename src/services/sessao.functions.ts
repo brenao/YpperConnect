@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { rotaNoPlano, SEM_PLANO, type SituacaoPlano } from "@/models/plano";
 
 /**
  * Server functions de sessão: login, logout, troca de empresa e o
@@ -11,6 +12,12 @@ import { z } from "zod";
 
 async function servidor() {
   return import("@/services/current-user.server");
+}
+
+async function souAfiliado(): Promise<boolean> {
+  const { getSupabaseServerClient } = await import("@/integrations/supabase/server");
+  const { data } = await getSupabaseServerClient().rpc("sou_afiliado");
+  return data === true;
 }
 
 /** Como no legado (minhasPermissoesFn): o admin sempre vê estas telas. */
@@ -34,6 +41,9 @@ export interface SessaoResumo {
   admin: boolean;
   adminPlataforma: boolean;
   modulos: string[];
+  plano: SituacaoPlano;
+  /** Tem portal de afiliado (independe de empresa). */
+  afiliado: boolean;
 }
 
 const VAZIA: Omit<SessaoResumo, "estado" | "usuario"> = {
@@ -42,6 +52,8 @@ const VAZIA: Omit<SessaoResumo, "estado" | "usuario"> = {
   admin: false,
   adminPlataforma: false,
   modulos: [],
+  plano: SEM_PLANO,
+  afiliado: false,
 };
 
 export const sessaoFn = createServerFn({ method: "GET" }).handler(
@@ -50,9 +62,11 @@ export const sessaoFn = createServerFn({ method: "GET" }).handler(
     const sessao = await getSessao();
 
     if (sessao.estado === "anonimo") return { ...VAZIA, estado: "anonimo", usuario: null };
+    const afiliado = await souAfiliado();
     if (sessao.estado === "sem_tenant") {
       return {
         ...VAZIA,
+        afiliado,
         estado: "sem_tenant",
         usuario: { id: "", nome: sessao.nome, email: sessao.email },
       };
@@ -60,9 +74,10 @@ export const sessaoFn = createServerFn({ method: "GET" }).handler(
 
     const { ctx } = sessao;
     // A raiz entra sempre: sem painel inicial não há para onde ir.
+    // Perfil de acesso (o que a pessoa pode) ∩ plano (o que a empresa comprou).
     const modulos = [
       ...new Set(["/", ...ctx.modulos, ...(ctx.admin ? MODULOS_SEMPRE_DO_ADMIN : [])]),
-    ];
+    ].filter((m) => rotaNoPlano(m, ctx.plano));
 
     return {
       estado: "ok",
@@ -77,6 +92,8 @@ export const sessaoFn = createServerFn({ method: "GET" }).handler(
       admin: ctx.admin,
       adminPlataforma: ctx.adminPlataforma,
       modulos,
+      plano: ctx.plano,
+      afiliado,
     };
   },
 );
