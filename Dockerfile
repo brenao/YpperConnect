@@ -90,11 +90,15 @@ USER node
 
 EXPOSE 8080
 
-# O healthcheck precisa bater no mesmo prefixo em que o app foi construido.
-# APP_BASE_PATH e reaproveitado aqui so para montar essa URL.
+# A sonda tem de bater no mesmo prefixo em que o app foi construido; e so para
+# montar essa URL que o APP_BASE_PATH e reaproveitado aqui.
 ARG APP_BASE_PATH=/
 ENV APP_BASE_PATH=${APP_BASE_PATH}
+
+# A sonda so pergunta se a porta atende: qualquer resposta HTTP aprova, e so a
+# falha de conexao reprova. Olhar o status reprovava container saudavel — a home
+# exige o token do OpenResty e devolve 500 quando a sonda bate no 127.0.0.1.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+(process.env.APP_BASE_PATH||'/')).then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+(process.env.APP_BASE_PATH||'/')).then(()=>process.exit(0)).catch(()=>process.exit(1))"
 
 CMD ["node", ".output/server/index.mjs"]

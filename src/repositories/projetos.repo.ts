@@ -1238,10 +1238,20 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
           :quadro, :marco, :duracao, :unidade, :alocacaoPct,
           COALESCE(:ordem, (SELECT COALESCE(MAX(ordem), 0) + 1
                               FROM projeto_tarefas
-                             WHERE projeto_id = :projetoId)))`,
+                             WHERE projeto_id = :projetoDaOrdem)))`,
       {
         id,
         projetoId: d.projetoId,
+        /**
+         * O mesmo projeto, por um bind próprio.
+         *
+         * `:projetoId` aparecia nos dois lugares do SQL e virava o
+         * mesmo `$2`: na coluna do INSERT o Postgres deduz o tipo pela
+         * coluna, e na comparação do subselect deduz por outro caminho.
+         * As duas deduções conflitam e ele recusa a consulta inteira
+         * com "inconsistent types deduced for parameter $2".
+         */
+        projetoDaOrdem: d.projetoId,
         paiId: d.paiId ?? null,
         nome: d.nome.trim(),
         atividade: d.atividade?.trim() ?? null,
@@ -3586,8 +3596,12 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
          WHERE p.status IN ('planejamento','execucao','paralisado')
            AND p.fim < CURRENT_DATE)::int                     AS prazo_estourado,
 
+       -- Paralisado fica de fora: ele parou por decisão de alguém, e
+       -- cobrar notícia semanal de quem já avisou que o projeto está
+       -- parado é o tipo de alerta que ensina o gerente a ignorar a
+       -- lista inteira. Volta a ser cobrado quando voltar a execução.
        COUNT(*) FILTER (
-         WHERE p.status IN ('planejamento','execucao','paralisado')
+         WHERE p.status IN ('planejamento','execucao')
            AND COALESCE(
                  (SELECT MAX(a.data_ref)::date
                     FROM projeto_atualizacoes a

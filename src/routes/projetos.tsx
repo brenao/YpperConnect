@@ -241,6 +241,10 @@ function passaNoKpi(p: ProjetoComProgresso, kpi: ChaveKpi): boolean {
     case "prazoEstourado":
       return estaVivo(p) && new Date(p.fim).getTime() < Date.now();
     case "semAcompanhamento": {
+      // Paralisado fica de fora: ele parou por decisão de alguém, e
+      // cobrar notícia semanal de quem já avisou que o projeto está
+      // parado é o tipo de alerta que ensina a ignorar a lista inteira.
+      if (p.status === "paralisado") return false;
       if (!estaVivo(p)) return false;
       const ref = p.ultimaAtualizacao ?? p.criadoEm;
       return (Date.now() - new Date(ref).getTime()) / DIA_MS > 7;
@@ -499,7 +503,7 @@ function Projetos() {
             inteira que a pessoa enxerga — não para o resultado da busca.
             Clicar filtra a lista abaixo; clicar de novo desliga. */}
         <KpisPortfolio
-          cards={["execucao", "prazoEstourado", "semAcompanhamento", "paralisado"]}
+          cards={["priorizados", "prazoEstourado", "semAcompanhamento", "semCronograma"]}
           ativo={filtros.kpi}
           onAlternar={(c) =>
             // Um filtro de situação de cada vez, nos dois sentidos.
