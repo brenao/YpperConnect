@@ -64,6 +64,18 @@ export interface ContextoUsuario {
   admin: boolean;
   perfilId: string | null;
   equipeId: string | null;
+  /**
+   * Área em que a pessoa trabalha.
+   *
+   * Entra no contexto porque a visibilidade de portfólio passou a somar
+   * o departamento à participação: a pessoa vê os projetos da própria
+   * área, mais os de qualquer outra em que ela participe.
+   *
+   * Nulo quando o cadastro está incompleto — e aí ela cai na visão de
+   * participação, que é o comportamento seguro. Abrir o portfólio
+   * inteiro nesse caso seria o oposto do que a regra existe para fazer.
+   */
+  departamento: string | null;
   /** Chaves de `perfil_features` do perfil do usuário. */
   funcionalidades: string[];
   /** Atalhos dos papéis de projeto, para não espalhar string mágica. */
@@ -106,6 +118,7 @@ interface LinhaUsuario {
   admin: number;
   perfilId: string | null;
   equipeId: string | null;
+  departamento: string | null;
   /** Chaves separadas por vírgula, agregadas no SQL. */
   funcionalidades: string | null;
 }
@@ -174,6 +187,7 @@ async function buscarLinha(login: string): Promise<LinhaUsuario | null> {
   // de meia dúzia de chaves não se paga.
   return consultarUm<LinhaUsuario>(
     `SELECT u.id, u.nome, u.email, u.admin, u.perfil_id, u.equipe_id,
+            u.departamento,
             f.chaves AS funcionalidades
        FROM usuarios u
        LEFT JOIN (SELECT perfil_id, STRING_AGG(feature_key, ',') AS chaves
@@ -305,6 +319,7 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
     admin,
     perfilId: linha.perfilId,
     equipeId: linha.equipeId,
+    departamento: linha.departamento,
     funcionalidades,
     visaoDiretoriaProjetos: funcionalidades.includes(FEATURE_PROJETOS_DIRETORIA),
     gestorPortfolio: funcionalidades.includes(FEATURE_PROJETOS_PORTFOLIO),

@@ -742,7 +742,7 @@ function LinhaTarefa({
                   onDragStart={onComecarArraste}
                   onDragEnd={onCancelarArraste}
                   title="Arraste para reordenar"
-                  className="cursor-grab text-muted-foreground opacity-0 transition-opacity active:cursor-grabbing group-focus-within:opacity-100 group-hover:opacity-100"
+                  className="hidden cursor-grab text-muted-foreground opacity-0 transition-opacity active:cursor-grabbing group-focus-within:opacity-100 group-hover:opacity-100 sm:inline"
                 >
                   <GripVertical className="size-3.5" />
                 </span>
@@ -752,9 +752,15 @@ function LinhaTarefa({
 
               {/* Inserir, endentar e excluir mudam o PLANO: ficam com
                   quem responde pelo projeto. Quem executa continua
-                  lançando progresso nas colunas da direita. */}
+                  lançando progresso nas colunas da direita.
+
+                  Escondidos no celular (sm:flex): a calha tem 88px e
+                  estes cinco botões transbordavam sobre a coluna da
+                  tarefa. No toque não há hover para revelá-los na hora
+                  certa, e ninguém reorganiza WBS pelo telefone — o
+                  lápis de cada linha continua abrindo a tarefa. */}
               {gerencia ? (
-                <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                <span className="hidden gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 sm:flex">
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1372,26 +1378,6 @@ function CampoData({
     <Input
       type="date"
       autoFocus
-      /**
-       * Abre o calendário ao entrar em edição.
-       *
-       * O input nativo só mostra o seletor quando a pessoa acerta o
-       * ícone à direita — que numa coluna de 80px fica cortado. Quem
-       * clica no campo esperando o calendário encontra os segmentos de
-       * texto e acha que a grade não respondeu.
-       *
-       * `showPicker` não existe em todo navegador, e o try/catch cobre
-       * o caso em que ele recusa a chamada; digitar continua
-       * funcionando em qualquer um.
-       */
-      ref={(el) => {
-        if (!el) return;
-        try {
-          el.showPicker();
-        } catch {
-          /* navegador sem suporte: digitar ainda funciona */
-        }
-      }}
       value={rascunho}
       onChange={(e) => setRascunho(e.target.value)}
       onBlur={() => {
@@ -1498,7 +1484,9 @@ function CampoNumero({
           e.currentTarget.blur();
         }
       }}
-      className="h-7 w-12 border-transparent bg-transparent px-1 font-mono text-xs font-normal shadow-none hover:border-border focus:border-primary"
+      // w-14: "100" mais o cursor não cabia em w-12, e o valor aparecia
+      // cortado justamente na tarefa concluída.
+      className="h-7 w-14 border-transparent bg-transparent px-1 font-mono text-xs font-normal shadow-none hover:border-border focus:border-primary"
     />
   );
 }

@@ -250,6 +250,28 @@ const SQL_TIME_DO_GESTOR = `
                JOIN usuarios ur ON ur.id = re.usuario_id
               WHERE te.projeto_id = p.id AND te.ativo = 1 AND ur.equipe_id = :equipeId)`;
 
+/**
+ * Projetos da área em que a pessoa trabalha.
+ *
+ * "Da área" é o departamento de quem GERENCIA o projeto — é ele que diz
+ * quem toca a iniciativa. A área demandante responde outra pergunta (de
+ * quem partiu o pedido), e numa TI que atende a empresa inteira as duas
+ * quase nunca coincidem: usar a demandante faria o pessoal de TI perder
+ * de vista os próprios projetos.
+ *
+ * Soma-se à participação, não a substitui. Quem executa tarefa num
+ * projeto de outra área continua enxergando o projeto em que trabalha —
+ * tirar isso seria pedir que a pessoa entregue o que não pode abrir.
+ *
+ * A comparação ignora caixa e espaços das pontas porque `departamento`
+ * é texto de cadastro livre, e "TI" e "ti " não deveriam ser áreas
+ * diferentes na hora de decidir quem enxerga o quê.
+ */
+const SQL_AREA_DO_USUARIO = `
+  EXISTS (SELECT 1 FROM usuarios ug2
+           WHERE ug2.id = p.gerente_id
+             AND LOWER(TRIM(ug2.departamento)) = LOWER(TRIM(:departamento)))`;
+
 export interface FiltroVisibilidade {
   /** Predicado SQL sobre o alias `p` de `projetos`. */
   clausula: string;
@@ -298,6 +320,15 @@ export function filtroVisibilidadeProjetos(ctx: ContextoUsuario): FiltroVisibili
   if (ctx.gestorPortfolio && ctx.equipeId !== null) {
     partes.push(SQL_TIME_DO_GESTOR);
     binds["equipeId"] = ctx.equipeId;
+  }
+
+  // A área amplia: tudo do departamento da pessoa, mais o que ela
+  // participa em qualquer outro. Sem departamento cadastrado, ela cai
+  // na visão de participação — cadastro incompleto não deve abrir o
+  // portfólio inteiro.
+  if (ctx.departamento !== null && ctx.departamento.trim() !== "") {
+    partes.push(SQL_AREA_DO_USUARIO);
+    binds["departamento"] = ctx.departamento;
   }
 
   return { clausula: partes.join("\n  OR "), binds };
@@ -1233,20 +1264,10 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
           :quadro, :marco, :duracao, :unidade, :alocacaoPct,
           COALESCE(:ordem, (SELECT COALESCE(MAX(ordem), 0) + 1
                               FROM projeto_tarefas
-                             WHERE projeto_id = :projetoDaOrdem)))`,
+                             WHERE projeto_id = :projetoId)))`,
       {
         id,
         projetoId: d.projetoId,
-        /**
-         * O mesmo projeto, por um bind próprio.
-         *
-         * `:projetoId` aparecia nos dois lugares do SQL e virava o
-         * mesmo `$2`: na coluna do INSERT o Postgres deduz o tipo pela
-         * coluna, e na comparação do subselect deduz por outro caminho.
-         * As duas deduções conflitam e ele recusa a consulta inteira
-         * com "inconsistent types deduced for parameter $2".
-         */
-        projetoDaOrdem: d.projetoId,
         paiId: d.paiId ?? null,
         nome: d.nome.trim(),
         atividade: d.atividade?.trim() ?? null,
@@ -3591,12 +3612,8 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
          WHERE p.status IN ('planejamento','execucao','paralisado')
            AND p.fim < CURRENT_DATE)::int                     AS prazo_estourado,
 
-       -- Paralisado fica de fora: ele parou por decisão de alguém, e
-       -- cobrar notícia semanal de quem já avisou que o projeto está
-       -- parado é o tipo de alerta que ensina o gerente a ignorar a
-       -- lista inteira. Volta a ser cobrado quando voltar a execução.
        COUNT(*) FILTER (
-         WHERE p.status IN ('planejamento','execucao')
+         WHERE p.status IN ('planejamento','execucao','paralisado')
            AND COALESCE(
                  (SELECT MAX(a.data_ref)::date
                     FROM projeto_atualizacoes a
