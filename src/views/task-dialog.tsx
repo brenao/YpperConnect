@@ -133,8 +133,18 @@ export function TaskDialog({
 
   const [form, setForm] = useState<Form>(vazio);
 
+  /**
+   * O término como estava ao abrir o diálogo.
+   *
+   * Serve para distinguir "a data que já estava lá" de "a data que
+   * acabei de escolher". Só a segunda é decisão, e só ela deve fixar o
+   * término e recalcular o esforço no servidor.
+   */
+  const [fimOriginal, setFimOriginal] = useState("");
+
   useEffect(() => {
     if (!aberto) return;
+    setFimOriginal(tarefa ? paraInput(tarefa.fim) : "");
     setForm(
       tarefa
         ? {
@@ -231,9 +241,23 @@ export function TaskDialog({
       return;
     }
 
-    const duracao = Number(form.duracao.replace(",", "."));
-    if (!Number.isFinite(duracao) || duracao <= 0) {
-      toast.error("Informe um esforço maior que zero.");
+    /**
+     * Esforço e término: um dos dois basta.
+     *
+     * Com término digitado, o esforço é consequência — o servidor o
+     * deriva do intervalo e da capacidade de quem executa. Exigir os
+     * dois obrigava a pessoa a inventar um número para conseguir gravar
+     * uma data que ela já tinha fechada.
+     */
+    const texto = form.duracao.trim();
+    const duracao = texto === "" ? null : Number(texto.replace(",", "."));
+
+    if (duracao !== null && (!Number.isFinite(duracao) || duracao <= 0)) {
+      toast.error("O esforço precisa ser maior que zero.");
+      return;
+    }
+    if (duracao === null && !form.fim) {
+      toast.error("Informe o esforço ou o término da tarefa.");
       return;
     }
 
@@ -259,9 +283,21 @@ export function TaskDialog({
       atividade: form.atividade.trim() || null,
       paiId: form.paiId === SEM ? null : form.paiId,
       inicio: doInput(form.inicio),
-      ...(form.fim ? { fim: doInput(form.fim) } : {}),
-      duracao,
-      duracaoUnidade: form.duracaoUnidade,
+      /**
+       * O término só vai quando a pessoa MEXEU nele.
+       *
+       * Na edição o campo abre preenchido com o que está gravado, e
+       * mandá-lo de volta a cada salvamento diria ao servidor que a
+       * data foi combinada agora — o que faz o esforço ser recalculado
+       * a partir do intervalo. Renomear uma tarefa apagaria a
+       * estimativa de quem a planejou.
+       *
+       * Mudou, manda: aí a data é decisão nova, e é ela que manda.
+       */
+      ...(form.fim && form.fim !== fimOriginal ? { fim: doInput(form.fim) } : {}),
+      // Ausente quando a pessoa não digitou: o schema trata a duração
+      // como opcional, e mandar null faria o Zod recusar.
+      ...(duracao !== null ? { duracao, duracaoUnidade: form.duracaoUnidade } : {}),
       progresso: form.progresso,
       quadro: form.quadro,
       marco: form.marco,

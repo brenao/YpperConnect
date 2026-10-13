@@ -709,7 +709,7 @@ export const SEED_SYSTEMS: SystemRegistry[] = [
 export const SEED_PROFILES: AccessProfile[] = [
   {
     id: "PRF-ADMIN",
-    nome: "Administrador de TI",
+    nome: "Administrador",
     descricao: "Acesso total ao sistema, incluindo cadastros administrativos e perfis de acesso.",
     modulos: APP_MODULES.map((m) => m.key),
     funcionalidades: APP_FEATURES.map((f) => f.key),
@@ -718,7 +718,7 @@ export const SEED_PROFILES: AccessProfile[] = [
   },
   {
     id: "PRF-AGENTE",
-    nome: "Analista de TI",
+    nome: "Analista",
     descricao: "Atende chamados, gerencia problemas, projetos e a base de conhecimento.",
     modulos: [
       "/",

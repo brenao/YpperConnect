@@ -119,6 +119,15 @@ export interface Tarefa {
    * tarefa numa data combinada sem que o cronograma a puxe de volta.
    */
   restricaoInicio: Date | null;
+  /**
+   * O término foi combinado, não calculado.
+   *
+   * Inverte quem manda: a data fica e o esforço é derivado do intervalo
+   * e da capacidade de quem executa. Sem este registro, trocar o
+   * responsável reescreveria estimativas que alguém digitou de
+   * propósito — 40h viram 20h porque o novo responsável rende metade.
+   */
+  fimFixado: boolean;
   concluidoEm: Date | null;
 }
 
@@ -639,22 +648,27 @@ export async function podeEditarProjeto(ctx: ContextoUsuario, projetoId: string)
   return (await papeisNoProjeto(ctx, projetoId)).edita;
 }
 
-/** Linha crua da tarefa: `marco` é SMALLINT 0/1 no schema. */
-interface LinhaTarefaBruta extends Omit<Tarefa, "marco"> {
+/** Linha crua da tarefa: os booleanos são SMALLINT 0/1 no schema. */
+interface LinhaTarefaBruta extends Omit<Tarefa, "marco" | "fimFixado"> {
   marco: number;
+  fimFixado: number;
 }
 
 export async function listarTarefas(projetoId: string): Promise<Tarefa[]> {
   const linhas = await consultar<LinhaTarefaBruta>(
     `SELECT id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
             quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem,
-            restricao_inicio, concluido_em
+            restricao_inicio, fim_fixado, concluido_em
        FROM projeto_tarefas
       WHERE projeto_id = :projetoId AND ativo = 1
       ORDER BY ordem, inicio`,
     { projetoId },
   );
-  return linhas.map((l) => ({ ...l, marco: paraBool(l.marco) }));
+  return linhas.map((l) => ({
+    ...l,
+    marco: paraBool(l.marco),
+    fimFixado: paraBool(l.fimFixado),
+  }));
 }
 
 /**
@@ -1233,6 +1247,48 @@ export interface DadosTarefa {
 }
 
 /**
+ * Deriva o esforço a partir do intervalo, quando a data é que mandou.
+ *
+ * Tarefa criada só com datas ficava com duração nula, e aí a grade e o
+ * formulário caíam no caminho de tarefa antiga: contavam dias de
+ * calendário e multiplicavam por uma jornada cheia. O número que
+ * aparecia não era o trabalho de ninguém — ignorava a capacidade de
+ * quem executa, que é justamente o que o resto do sistema respeita.
+ *
+ * Roda depois da transação porque precisa dos responsáveis já
+ * gravados: é deles que sai a capacidade diária. Sem responsável, cai
+ * na jornada cheia — quem não foi atribuído não tem disponibilidade
+ * conhecida, e supor 100% é a leitura honesta de "ainda não se sabe".
+ */
+async function derivarEsforcoDoIntervalo(tarefaId: string): Promise<void> {
+  const t = await consultarUm<{
+    inicio: Date;
+    fim: Date;
+    alocacaoPct: number | null;
+    usaDiasUteis: boolean;
+  }>(
+    `SELECT t.inicio, t.fim, t.alocacao_pct, (p.usa_dias_uteis = 1) AS usa_dias_uteis
+       FROM projeto_tarefas t
+       JOIN projetos p ON p.id = t.projeto_id
+      WHERE t.id = :id`,
+    { id: tarefaId },
+  );
+  if (!t) return;
+
+  const { capacidadeDiariaDaTarefa } = await import("@/repositories/recursos.repo");
+  const capacidade = await capacidadeDiariaDaTarefa(tarefaId);
+
+  const cal = await calendarioDoProjeto(t.usaDiasUteis);
+  const dias = cal.contar(cal.normalizar(t.inicio), meiaNoite(t.fim));
+  const horas = diasParaDuracao(dias, "horas", t.alocacaoPct, capacidade);
+
+  await executar(
+    `UPDATE projeto_tarefas SET duracao = :duracao, duracao_unidade = 'horas' WHERE id = :id`,
+    { id: tarefaId, duracao: horas },
+  );
+}
+
+/**
  * Cria tarefa com seus vínculos em transação: tarefa sem responsável
  * por falha parcial desmonta o cálculo de capacidade.
  */
@@ -1258,10 +1314,10 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
       // fazia o Enter criar a tarefa no fim do cronograma.
       `INSERT INTO projeto_tarefas
          (id, projeto_id, pai_id, nome, atividade, inicio, fim, progresso,
-          quadro, marco, duracao, duracao_unidade, alocacao_pct, ordem)
+          quadro, marco, duracao, duracao_unidade, alocacao_pct, fim_fixado, ordem)
        VALUES
          (:id, :projetoId, :paiId, :nome, :atividade, :inicio, :fim, :progresso,
-          :quadro, :marco, :duracao, :unidade, :alocacaoPct,
+          :quadro, :marco, :duracao, :unidade, :alocacaoPct, :fimFixado,
           COALESCE(:ordem, (SELECT COALESCE(MAX(ordem), 0) + 1
                               FROM projeto_tarefas
                              WHERE projeto_id = :projetoId)))`,
@@ -1282,6 +1338,9 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
         quadro: d.quadro ?? "backlog",
         marco: deBool(d.marco),
         alocacaoPct: d.alocacaoPct ?? null,
+        // Término digitado vira combinação: a data manda daqui em
+        // diante, e o esforço é que se ajusta ao responsável.
+        fimFixado: deBool(d.fim !== undefined),
         // Nulo deixa o SQL calcular: a tarefa nasce no fim do
         // cronograma, que é onde quem usa o formulário espera que ela
         // apareça.
@@ -1307,6 +1366,11 @@ export async function criarTarefa(ctx: ContextoUsuario, d: DadosTarefa): Promise
       );
     }
   });
+
+  // Data digitada sem esforço: o esforço é consequência, e precisa ser
+  // gravado — senão a grade o recalcula por calendário a cada leitura,
+  // ignorando a capacidade de quem executa.
+  if (d.fim && d.duracao === undefined) await derivarEsforcoDoIntervalo(id);
 
   await propagarCronograma(d.projetoId);
   return id;
@@ -1381,6 +1445,29 @@ export async function atualizarTarefa(
       }
     }
   });
+
+  /**
+   * Término digitado manda sobre o esforço antigo.
+   *
+   * Sem esta derivação o esforço gravado vencia: a pessoa fechava uma
+   * data e via a data voltar ao que as horas antigas produziam. Com a
+   * data combinada, é o esforço que se ajusta ao intervalo e a quem
+   * executa.
+   *
+   * A marca fica gravada para que trocar o responsável depois continue
+   * recalculando o esforço, em vez de mover a data que alguém fechou.
+   *
+   * `d.fim` só chega quando a pessoa MEXEU no campo — o formulário
+   * compara com a data que carregou ao abrir e omite o que não mudou.
+   * Sem esse cuidado, renomear uma tarefa fixaria o término dela e
+   * apagaria a estimativa de esforço de quem a planejou.
+   */
+  if (d.fim) {
+    await executar(`UPDATE projeto_tarefas SET fim_fixado = 1 WHERE id = :id`, {
+      id,
+    });
+    await derivarEsforcoDoIntervalo(id);
+  }
 
   await propagarCronogramaDaTarefa(id);
 }
@@ -2573,12 +2660,10 @@ export interface DadosCpm {
   critica: boolean;
 }
 
-const UM_DIA = 86_400_000;
-
 function duracaoEmDias(inicio: Date, fim: Date): number {
   const a = new Date(inicio).setHours(0, 0, 0, 0);
   const b = new Date(fim).setHours(0, 0, 0, 0);
-  return Math.max(1, Math.round((b - a) / UM_DIA) + 1);
+  return Math.max(1, Math.round((b - a) / DIA_MS) + 1);
 }
 
 /**
@@ -2845,6 +2930,25 @@ export async function atualizarVinculosTarefa(
       }
     }
   });
+
+  /**
+   * Responsável novo, término combinado: o esforço se recalcula.
+   *
+   * Quem rende 4h/dia faz menos trabalho no mesmo intervalo do que quem
+   * rende 8h. Com a data fechada, é o esforço que carrega essa
+   * diferença — e sem recalcular, a grade mostraria as horas do
+   * responsável anterior.
+   *
+   * Só em tarefa com `fim_fixado`. Nas demais o esforço é estimativa de
+   * alguém, e a troca de responsável move a DATA, não o número.
+   */
+  if (d.responsaveis) {
+    const fixada = await consultarUm<{ fixado: number }>(
+      `SELECT fim_fixado AS fixado FROM projeto_tarefas WHERE id = :id`,
+      { id },
+    );
+    if (paraBool(fixada?.fixado ?? 0)) await derivarEsforcoDoIntervalo(id);
+  }
 
   // Trocar responsável muda a capacidade diária, e capacidade muda a
   // duração em dias: sem propagar, a tarefa fica com as datas da
