@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -28,7 +28,9 @@ import { sessaoFn } from "@/services/sessao.functions";
 import { DialogLink } from "@/views/dialog-link";
 import {
   atualizarAssinaturaFn,
+  codigoAfiliadoEmUsoFn,
   criarAfiliadoFn,
+  sugerirCodigoAfiliadoFn,
   marcarComissaoPagaFn,
   painelComercialFn,
 } from "@/services/comercial.functions";
@@ -184,8 +186,8 @@ function DialogAssinatura({
             <Label>Código do afiliado (opcional)</Label>
             <Input
               value={f.afiliadoCodigo}
-              onChange={(e) => setF({ ...f, afiliadoCodigo: e.target.value })}
-              placeholder="ex.: parceiro-x"
+              onChange={(e) => setF({ ...f, afiliadoCodigo: e.target.value.toUpperCase() })}
+              placeholder="ex.: LUCIANA20"
             />
           </div>
           <label className="flex items-center gap-2 text-sm">
@@ -218,7 +220,47 @@ function DialogAfiliado({
   onLink: (url: string) => void;
 }) {
   const qc = useQueryClient();
-  const [f, setF] = useState({ codigo: "", nome: "", email: "", tipo: "afiliado" as const });
+  const [f, setF] = useState<{
+    codigo: string;
+    nome: string;
+    email: string;
+    tipo: "afiliado" | "parceiro";
+  }>({ codigo: "", nome: "", email: "", tipo: "afiliado" });
+  // Enquanto a pessoa não digita o código, ele acompanha nome e tipo.
+  const [codigoEditado, setCodigoEditado] = useState(false);
+  const [codigoDigitado, setCodigoDigitado] = useState("");
+
+  const gerar = useMutation({
+    mutationFn: () => sugerirCodigoAfiliadoFn({ data: { nome: f.nome, tipo: f.tipo } }),
+    onSuccess: (r) => {
+      setF((atual) => ({ ...atual, codigo: r.codigo }));
+      setCodigoDigitado(r.codigo);
+    },
+    onError: erro,
+  });
+
+  // Sugestão automática ao preencher o nome ou trocar o tipo.
+  useEffect(() => {
+    if (codigoEditado || f.nome.trim().length < 2) return;
+    const t = setTimeout(() => gerar.mutate(), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.nome, f.tipo, codigoEditado]);
+
+  // Valida o código enquanto se digita (com pausa, para não consultar a cada tecla).
+  const [codigoEstavel, setCodigoEstavel] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setCodigoEstavel(f.codigo), 350);
+    return () => clearTimeout(t);
+  }, [f.codigo]);
+  const valido = /^[A-Z0-9-]{3,30}$/.test(f.codigo);
+  const emUso = useQuery({
+    queryKey: ["codigo-afiliado", codigoEstavel],
+    queryFn: () => codigoAfiliadoEmUsoFn({ data: { codigo: codigoEstavel } }),
+    enabled: valido && codigoEstavel === f.codigo,
+  });
+  const ocupado = emUso.data?.emUso === true;
+
   const criar = useMutation({
     mutationFn: () => criarAfiliadoFn({ data: f }),
     onSuccess: (r) => {
@@ -229,6 +271,7 @@ function DialogAfiliado({
     },
     onError: erro,
   });
+
   return (
     <Dialog open onOpenChange={(v) => (v ? null : onFechar())}>
       <DialogContent className="sm:max-w-md">
@@ -245,16 +288,11 @@ function DialogAfiliado({
             <Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
           </div>
           <div className="space-y-1.5">
-            <Label>Código (vai no link de indicação)</Label>
-            <Input
-              className="font-mono"
-              value={f.codigo}
-              onChange={(e) => setF({ ...f, codigo: e.target.value.toLowerCase() })}
-            />
-          </div>
-          <div className="space-y-1.5">
             <Label>Tipo</Label>
-            <Select value={f.tipo} onValueChange={(v) => setF({ ...f, tipo: v as never })}>
+            <Select
+              value={f.tipo}
+              onValueChange={(v) => setF({ ...f, tipo: v as "afiliado" | "parceiro" })}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -264,12 +302,56 @@ function DialogAfiliado({
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-1.5">
+            <Label>Código (vai no link de indicação)</Label>
+            <div className="flex gap-2">
+              <Input
+                className="font-mono uppercase"
+                value={f.codigo}
+                onChange={(e) => {
+                  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+                  setCodigoEditado(v !== "" && v !== codigoDigitado);
+                  setF({ ...f, codigo: v });
+                }}
+                placeholder="LUCIANA20"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={gerar.isPending || f.nome.trim().length < 2}
+                onClick={() => {
+                  setCodigoEditado(false);
+                  gerar.mutate();
+                }}
+              >
+                {gerar.isPending ? "Gerando..." : "Gerar código"}
+              </Button>
+            </div>
+            {f.codigo && !valido ? (
+              <p className="text-xs text-destructive">
+                3 a 30 caracteres: letras, números e hífen.
+              </p>
+            ) : ocupado ? (
+              <p className="text-xs text-destructive">
+                {f.codigo} já está em uso. Clique em Gerar código ou digite outro.
+              </p>
+            ) : valido && emUso.data?.emUso === false ? (
+              <p className="text-xs text-success">{f.codigo} está disponível.</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Padrão: primeiro nome + percentual (ex.: LUCIANA20).
+              </p>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onFechar}>
             Cancelar
           </Button>
-          <Button disabled={criar.isPending} onClick={() => criar.mutate()}>
+          <Button
+            disabled={criar.isPending || !valido || ocupado || emUso.isFetching}
+            onClick={() => criar.mutate()}
+          >
             Cadastrar
           </Button>
         </DialogFooter>

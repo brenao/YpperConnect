@@ -43,7 +43,7 @@ select is((select valor_mensal_centavos from public.painel_assinaturas() where s
           'Projetos Pro mensal, 4 usuarios: 4 x 95 = R$ 380');
 
 -- 4
-select is((select afiliado_codigo from public.painel_assinaturas() where slug = 'alfa18'), 'parceiro-y',
+select is((select afiliado_codigo from public.painel_assinaturas() where slug = 'alfa18'), 'PARCEIRO-Y',
           'Venda atribuida ao afiliado');
 
 -- 5

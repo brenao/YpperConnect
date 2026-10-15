@@ -65,6 +65,20 @@ export const criarAfiliadoFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => (await repo()).criarAfiliado(await ctx(), data));
 
+export const sugerirCodigoAfiliadoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) =>
+    z.object({ nome: z.string(), tipo: z.enum(["afiliado", "parceiro"]) }).parse(d),
+  )
+  .handler(async ({ data }) => ({
+    codigo: await (await repo()).sugerirCodigo(await ctx(), data.nome, data.tipo),
+  }));
+
+export const codigoAfiliadoEmUsoFn = createServerFn({ method: "GET" })
+  .validator((d: unknown) => z.object({ codigo: z.string() }).parse(d))
+  .handler(async ({ data }) => ({
+    emUso: (await (await repo()).codigosEmUso(await ctx(), [data.codigo])).length > 0,
+  }));
+
 export const marcarComissaoPagaFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
   .handler(async ({ data }) => {

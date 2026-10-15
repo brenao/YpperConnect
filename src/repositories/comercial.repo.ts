@@ -155,26 +155,80 @@ export interface NovoAfiliado {
   tipo: "afiliado" | "parceiro";
 }
 
+/** Percentual de comissão por tipo (regra do backlog). */
+export const COMISSAO_POR_TIPO = { afiliado: 20, parceiro: 30 } as const;
+
+/** "Luciana Silva" -> ["LUCIANA", "SILVA"] (sem acento, só letras). */
+function partesDoNome(nome: string): string[] {
+  return nome
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .split(/[^A-Z]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Sugestões de código em ordem de preferência: PRIMEIRONOME+%, depois
+ * com a inicial do sobrenome, com o sobrenome e, por fim, numeradas.
+ */
+export function candidatosDeCodigo(nome: string, pct: number): string[] {
+  const partes = partesDoNome(nome);
+  const primeiro = (partes[0] ?? "AFILIADO").slice(0, 24);
+  const ultimo = partes.length > 1 ? partes[partes.length - 1]! : "";
+  const lista = [`${primeiro}${pct}`];
+  if (ultimo) {
+    lista.push(`${primeiro}${ultimo[0]}${pct}`);
+    lista.push(`${primeiro}${ultimo}`.slice(0, 27) + pct);
+  }
+  for (let n = 2; n <= 30; n++) lista.push(`${primeiro}${pct}-${n}`);
+  return [...new Set(lista)].filter((c) => /^[A-Z0-9-]{3,30}$/.test(c));
+}
+
+/** Quais destes códigos já existem (sem diferenciar maiúsculas). */
+export async function codigosEmUso(ctx: ContextoUsuario, codigos: string[]): Promise<string[]> {
+  exigirOperador(ctx);
+  const { data, error } = await getSupabaseServerClient().rpc("codigos_afiliado_em_uso", {
+    p_codigos: codigos.map((c) => c.trim().toUpperCase()),
+  });
+  if (error) falha(error);
+  return (data ?? []) as string[];
+}
+
+/** Primeiro código livre para o nome e o tipo. */
+export async function sugerirCodigo(
+  ctx: ContextoUsuario,
+  nome: string,
+  tipo: keyof typeof COMISSAO_POR_TIPO,
+): Promise<string> {
+  const candidatos = candidatosDeCodigo(nome, COMISSAO_POR_TIPO[tipo]);
+  const usados = new Set(await codigosEmUso(ctx, candidatos));
+  const livre = candidatos.find((c) => !usados.has(c));
+  if (!livre) throw new ErroDominio("Não encontrei um código livre; digite um código.");
+  return livre;
+}
+
 /** Regra do backlog: afiliado 20%, parceiro implantador 30%, por 12 meses. */
 export async function criarAfiliado(
   ctx: ContextoUsuario,
   d: NovoAfiliado,
 ): Promise<{ link: string | null }> {
   exigirOperador(ctx);
-  const codigo = d.codigo.trim().toLowerCase();
-  if (!/^[a-z0-9-]{3,30}$/.test(codigo)) {
-    throw new ErroDominio("Código: 3 a 30 caracteres, só letras minúsculas, números e hífen.");
+  const codigo = d.codigo.trim().toUpperCase();
+  if (!/^[A-Z0-9-]{3,30}$/.test(codigo)) {
+    throw new ErroDominio("Código: 3 a 30 caracteres, só letras, números e hífen.");
   }
-  const { error } = await getSupabaseServerClient()
-    .from("afiliados")
-    .insert({
-      codigo,
-      nome: d.nome.trim(),
-      email: d.email.trim().toLowerCase(),
-      tipo: d.tipo,
-      comissao_pct: d.tipo === "parceiro" ? 30 : 20,
-      meses_recorrencia: 12,
-    });
+  if ((await codigosEmUso(ctx, [codigo])).length) {
+    throw new ErroDominio(`O código ${codigo} já está em uso. Gere ou digite outro.`);
+  }
+  const { error } = await getSupabaseServerClient().from("afiliados").insert({
+    codigo,
+    nome: d.nome.trim(),
+    email: d.email.trim().toLowerCase(),
+    tipo: d.tipo,
+    comissao_pct: COMISSAO_POR_TIPO[d.tipo],
+    meses_recorrencia: 12,
+  });
   if (error) falha(error);
 
   // Conta de login do afiliado (portal). O link vai para o operador
