@@ -21,6 +21,7 @@
 set -eu
 
 BASE_DIR=/var/beagleone
+SRC_DIR="${BASE_DIR}/src"
 BRANCH="${1:-main}"
 TAG=latest
 NOME=beagleone-app
@@ -51,6 +52,28 @@ fi
 # shellcheck disable=SC1091
 . "${BASE_DIR}/.deploy.env"
 
+if [ -z "${GITHUB_PAT:-}" ]; then
+  echo "ERRO: GITHUB_PAT vazio em ${BASE_DIR}/.deploy.env."
+  exit 1
+fi
+
+# O token vai num CABECALHO Authorization, e nao na URL: o `git` descarta a
+# credencial da URL ao seguir um redirecionamento do GitHub e para com
+# "could not read Username" (Gerencial, 16/10/2026 -- ADR-003 no vault). O
+# cabecalho e repetido em toda requisicao, com ou sem redirecionamento.
+#
+# Por variavel de ambiente, e nao `git -c`: `-c` poe o cabecalho nos argumentos
+# do processo, visivel por `ps` a qualquer usuario. GIT_CONFIG_COUNT exige
+# git >= 2.31. `printf` e builtin: o token tambem nao vira argumento ali.
+#
+# Por isso tambem o clone em ${SRC_DIR}: o `docker build <url-do-git>` de antes
+# clonava pelo daemon do Docker, onde nao ha como passar o cabecalho.
+GITHUB_AUTH="$(printf 'x-access-token:%s' "${GITHUB_PAT}" | base64 -w0)"
+git_github() {
+  GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
+    GIT_CONFIG_VALUE_0="Authorization: Basic ${GITHUB_AUTH}" git "$@"
+}
+
 if [ ! -f "${BASE_DIR}/.env" ]; then
   echo "ERRO: ${BASE_DIR}/.env nao existe. Copiar de .env.example e preencher."
   exit 1
@@ -62,12 +85,24 @@ fi
 # se a linha nao existir, o grep falha mas o cut devolve vazio, e segue.
 VITE_URL_ABRIR_CHAMADO="$(grep -E '^VITE_URL_ABRIR_CHAMADO=' "${BASE_DIR}/.env" | tail -n 1 | cut -d= -f2-)"
 
+echo "Atualizando o codigo (branch ${BRANCH})..."
+# A URL fica sem token, e e ela que fica gravada no .git/config.
+if [ -d "${SRC_DIR}/.git" ]; then
+  git_github -C "${SRC_DIR}" fetch --prune origin
+  git -C "${SRC_DIR}" checkout "${BRANCH}"
+  git -C "${SRC_DIR}" reset --hard "origin/${BRANCH}"
+else
+  git_github clone --branch "${BRANCH}" "https://${REPO}" "${SRC_DIR}"
+fi
+echo "    commit: $(git -C "${SRC_DIR}" log --oneline -1)"
+
+# O .dockerignore tira .git e .env do contexto, como o build pela URL fazia.
 echo "Construindo a imagem (branch ${BRANCH}, base ${APP_BASE_PATH}, portal de chamados '${VITE_URL_ABRIR_CHAMADO}')..."
 docker build \
   --build-arg "APP_BASE_PATH=${APP_BASE_PATH}" \
   --build-arg "VITE_URL_ABRIR_CHAMADO=${VITE_URL_ABRIR_CHAMADO}" \
   --tag "${IMAGEM}" \
-  "https://${GITHUB_PAT}@${REPO}#${BRANCH}"
+  "${SRC_DIR}"
 
 # So derruba o que esta no ar depois que a imagem nova existe.
 # Se o build falhar, o `set -e` para aqui e a versao antiga continua servindo.
