@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { documentoValido, somenteDigitos } from "@/lib/documento";
 
 /** Checkout público (sem login). */
 
@@ -16,7 +17,10 @@ export const criarCheckoutFn = createServerFn({ method: "POST" })
         slug: z.string().trim().toLowerCase(),
         nome: z.string().trim().min(2, "Informe seu nome"),
         email: z.string().trim().toLowerCase().email("E-mail inválido"),
-        cpfCnpj: z.string().trim().min(11, "Informe CPF ou CNPJ"),
+        cpfCnpj: z
+          .string()
+          .transform(somenteDigitos)
+          .refine(documentoValido, "CPF ou CNPJ inválido"),
         plano: z.string(),
         ciclo: z.enum(["mensal", "anual"]),
         usuarios: z.number().int().min(3).max(500),

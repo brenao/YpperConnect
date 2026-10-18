@@ -3,6 +3,8 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { documentoValido, formatarDocumento, somenteDigitos } from "@/lib/documento";
+import { mensagemErro } from "@/lib/mensagem-erro";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +52,9 @@ function Contratar() {
   const [slugEditado, setSlugEditado] = useState(false);
   const [enviadoPara, setEnviadoPara] = useState<string | null>(null);
 
+  const docDigitado = somenteDigitos(f.cpfCnpj).length > 0;
+  const docOk = documentoValido(f.cpfCnpj);
+
   const plano = planos.data?.planos.find((p) => p.modulo === modulo && p.nivel === nivel);
   const total = useMemo(() => {
     if (!plano || !planos.data) return 0;
@@ -75,7 +80,7 @@ function Contratar() {
         },
       }),
     onSuccess: (r) => setEnviadoPara(r.email),
-    onError: (e: Error) => toast.error("Não foi possível concluir", { description: e.message }),
+    onError: (e: Error) => toast.error("Não foi possível concluir", { description: mensagemErro(e) }),
   });
 
   if (enviadoPara) {
@@ -214,9 +219,15 @@ function Contratar() {
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>CPF ou CNPJ (para a cobrança)</Label>
                 <Input
+                  inputMode="numeric"
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
                   value={f.cpfCnpj}
-                  onChange={(e) => setF({ ...f, cpfCnpj: e.target.value })}
+                  aria-invalid={docDigitado && !docOk}
+                  onChange={(e) => setF({ ...f, cpfCnpj: formatarDocumento(e.target.value) })}
                 />
+                {docDigitado && !docOk ? (
+                  <p className="text-xs text-destructive">CPF ou CNPJ inválido.</p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -240,7 +251,7 @@ function Contratar() {
             ) : null}
             <Button
               className="w-full"
-              disabled={contratar.isPending || !plano}
+              disabled={contratar.isPending || !plano || !docOk}
               onClick={() => contratar.mutate()}
             >
               {contratar.isPending ? "Criando..." : "Começar 14 dias grátis"}
