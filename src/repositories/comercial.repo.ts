@@ -37,6 +37,8 @@ export interface Afiliado {
   email: string;
   tipo: "afiliado" | "parceiro";
   comissaoPct: number;
+  /** Desconto do comprador que usar o cupom (é o número do código). */
+  descontoPct: number;
   mesesRecorrencia: number;
   ativo: boolean;
 }
@@ -133,7 +135,7 @@ export async function listarAfiliados(ctx: ContextoUsuario): Promise<Afiliado[]>
   exigirOperador(ctx);
   const { data, error } = await getSupabaseServerClient()
     .from("afiliados")
-    .select("id, codigo, nome, email, tipo, comissao_pct, meses_recorrencia, ativo")
+    .select("id, codigo, nome, email, tipo, comissao_pct, desconto_pct, meses_recorrencia, ativo")
     .order("nome");
   if (error) falha(error);
   return (data ?? []).map((a) => ({
@@ -143,6 +145,7 @@ export async function listarAfiliados(ctx: ContextoUsuario): Promise<Afiliado[]>
     email: a.email as string,
     tipo: a.tipo as Afiliado["tipo"],
     comissaoPct: Number(a.comissao_pct),
+    descontoPct: Number(a.desconto_pct ?? 0),
     mesesRecorrencia: Number(a.meses_recorrencia),
     ativo: a.ativo as boolean,
   }));
@@ -153,6 +156,8 @@ export interface NovoAfiliado {
   nome: string;
   email: string;
   tipo: "afiliado" | "parceiro";
+  /** 0 a 50. O código sugerido termina com ele (LUCIANA20 = 20%). */
+  descontoPct: number;
 }
 
 /** Percentual de comissão por tipo (regra do backlog). */
@@ -169,10 +174,12 @@ function partesDoNome(nome: string): string[] {
 }
 
 /**
- * Sugestões de código em ordem de preferência: PRIMEIRONOME+%, depois
- * com a inicial do sobrenome, com o sobrenome e, por fim, numeradas.
+ * Sugestões de código em ordem de preferência: PRIMEIRONOME+desconto,
+ * depois com a inicial do sobrenome, com o sobrenome e, por fim,
+ * numeradas. Sem desconto, o código é só o nome.
  */
-export function candidatosDeCodigo(nome: string, pct: number): string[] {
+export function candidatosDeCodigo(nome: string, descontoPct: number): string[] {
+  const pct = descontoPct > 0 ? String(descontoPct) : "";
   const partes = partesDoNome(nome);
   const primeiro = (partes[0] ?? "AFILIADO").slice(0, 24);
   const ultimo = partes.length > 1 ? partes[partes.length - 1]! : "";
@@ -195,13 +202,13 @@ export async function codigosEmUso(ctx: ContextoUsuario, codigos: string[]): Pro
   return (data ?? []) as string[];
 }
 
-/** Primeiro código livre para o nome e o tipo. */
+/** Primeiro código livre para o nome e o desconto. */
 export async function sugerirCodigo(
   ctx: ContextoUsuario,
   nome: string,
-  tipo: keyof typeof COMISSAO_POR_TIPO,
+  descontoPct: number,
 ): Promise<string> {
-  const candidatos = candidatosDeCodigo(nome, COMISSAO_POR_TIPO[tipo]);
+  const candidatos = candidatosDeCodigo(nome, descontoPct);
   const usados = new Set(await codigosEmUso(ctx, candidatos));
   const livre = candidatos.find((c) => !usados.has(c));
   if (!livre) throw new ErroDominio("Não encontrei um código livre; digite um código.");
@@ -212,7 +219,7 @@ export async function sugerirCodigo(
 export async function criarAfiliado(
   ctx: ContextoUsuario,
   d: NovoAfiliado,
-): Promise<{ link: string | null }> {
+): Promise<{ link: string | null; emailEnviado: boolean }> {
   exigirOperador(ctx);
   const codigo = d.codigo.trim().toUpperCase();
   if (!/^[A-Z0-9-]{3,30}$/.test(codigo)) {
@@ -227,6 +234,7 @@ export async function criarAfiliado(
     email: d.email.trim().toLowerCase(),
     tipo: d.tipo,
     comissao_pct: COMISSAO_POR_TIPO[d.tipo],
+    desconto_pct: d.descontoPct,
     meses_recorrencia: 12,
   });
   if (error) falha(error);
@@ -240,7 +248,24 @@ export async function criarAfiliado(
     p_usuario: conta.id,
   });
   if (v.error) falha(v.error);
-  return { link: conta.link };
+
+  // Convite por e-mail (cupom + acesso ao portal). Se falhar, o
+  // cadastro vale e o link aparece na tela para o operador repassar.
+  let emailEnviado = false;
+  try {
+    const { enviarConviteAfiliado } = await import("@/services/convite.server");
+    await enviarConviteAfiliado({
+      nome: d.nome,
+      email: d.email,
+      codigo,
+      descontoPct: d.descontoPct,
+      link: conta.link,
+    });
+    emailEnviado = true;
+  } catch (e) {
+    console.error("Convite do afiliado não foi enviado:", e);
+  }
+  return { link: conta.link, emailEnviado };
 }
 
 export async function listarComissoes(ctx: ContextoUsuario): Promise<Comissao[]> {

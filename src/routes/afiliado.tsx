@@ -54,7 +54,8 @@ function Portal() {
   });
 
   const p = portal.data;
-  const link = p ? `${origem}/indicacao/${p.codigo}` : "";
+  // O link só preenche o cupom; o que vale é o cupom informado na compra.
+  const link = p ? `${origem}/contratar?cupom=${encodeURIComponent(p.codigo)}` : "";
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -82,7 +83,13 @@ function Portal() {
       ) : p ? (
         <div className="space-y-6">
           <section className="panel space-y-2 p-5">
-            <p className="text-sm font-medium">Seu link de indicação</p>
+            <p className="text-sm font-medium">
+              Seu cupom: <span className="font-mono text-base">{p.codigo}</span>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Peça para o cliente informar o cupom na contratação. Ou envie o link abaixo, que já
+              abre com o cupom preenchido.
+            </p>
             <div className="flex gap-2">
               <Input readOnly value={link} className="font-mono text-xs" />
               <Button
@@ -99,8 +106,8 @@ function Portal() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Vale a última indicação em até 90 dias. A comissão é liberada 30 dias após cada
-              pagamento do cliente.
+              O cupom informado na compra é o que vale; sem cupom, conta o último clique no link em
+              até 90 dias. A comissão é liberada 30 dias após cada pagamento do cliente.
             </p>
           </section>
 

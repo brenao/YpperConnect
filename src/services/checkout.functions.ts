@@ -25,10 +25,22 @@ export const criarCheckoutFn = createServerFn({ method: "POST" })
         ciclo: z.enum(["mensal", "anual"]),
         usuarios: z.number().int().min(3).max(500),
         addonIa: z.boolean(),
+        cupom: z.string().trim().toUpperCase().max(30).optional(),
       })
       .parse(d),
   )
   .handler(async ({ data }) => {
     const { criarCheckout } = await import("@/services/checkout.server");
     return criarCheckout(data);
+  });
+/** Confere o cupom de indicação enquanto a pessoa digita. */
+export const validarCupomFn = createServerFn({ method: "GET" })
+  .validator((d: unknown) =>
+    z
+      .object({ codigo: z.string().trim().max(30), email: z.string().trim().max(320).optional() })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { validarCupom } = await import("@/services/checkout.server");
+    return validarCupom(data.codigo, data.email);
   });

@@ -92,6 +92,33 @@ export interface DadosCheckout {
   ciclo: "mensal" | "anual";
   usuarios: number;
   addonIa: boolean;
+  /** Cupom de indicação digitado (vazio = sem cupom). */
+  cupom?: string | undefined;
+}
+
+export interface CupomValidado {
+  valido: boolean;
+  motivo?: string | undefined;
+  codigo?: string | undefined;
+  /** Primeiro nome de quem indicou. */
+  afiliado?: string | undefined;
+  descontoPct?: number | undefined;
+}
+
+/** Confere o cupom na hora em que a pessoa digita (sem gravar nada). */
+export async function validarCupom(codigo: string, email?: string): Promise<CupomValidado> {
+  const { data, error } = await (
+    await admin()
+  ).rpc("validar_cupom", { p_codigo: codigo, p_email: email?.trim() || null });
+  if (error) throw new Error(error.message);
+  const r = (data ?? {}) as Record<string, unknown>;
+  return {
+    valido: r["valido"] === true,
+    motivo: (r["motivo"] as string | undefined) ?? undefined,
+    codigo: (r["codigo"] as string | undefined) ?? undefined,
+    afiliado: (r["afiliado"] as string | undefined) ?? undefined,
+    descontoPct: r["desconto_pct"] !== undefined ? Number(r["desconto_pct"]) : undefined,
+  };
 }
 
 function urlDoApp(): string {
@@ -122,11 +149,14 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
     p_usuarios: d.usuarios,
     p_addon_ia: d.addonIa,
     p_visitante: visitanteAtual(),
+    p_cupom: d.cupom?.trim() || null,
   });
   if (error) {
     if (error.code === "23505")
       throw new ErroDominio("Esse endereço já está em uso. Escolha outro.");
     if (error.code === "P0001") throw new ErroDominio("Plano inválido.");
+    // Cupom inexistente, inativo ou do próprio afiliado.
+    if (error.code === "22023") throw new ErroDominio(error.message);
     throw new Error(error.message);
   }
 
@@ -144,6 +174,9 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
       p_assinatura: assinatura.data.id,
     });
     const valor = Number(mensal ?? 0) * (d.ciclo === "anual" ? 12 : 1);
+    // Nome do plano na cobrança (o cliente não conhece o código interno).
+    const { data: plano } = await sb.from("planos").select("nome").eq("codigo", d.plano).single();
+    const nomePlano = (plano?.nome as string | undefined) ?? d.plano;
     const cliente = await GATEWAY.criarCliente({
       nome: d.empresa,
       email: d.email,
@@ -154,7 +187,9 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
       valorCentavos: valor,
       ciclo: d.ciclo,
       primeiroVencimento: assinatura.data.teste_ate as string,
-      descricao: `BeagleOne · ${d.plano} · ${d.usuarios} usuários`,
+      descricao: `BeagleOne · ${nomePlano} · ${d.usuarios} usuários${
+        d.cupom?.trim() ? ` · cupom ${d.cupom.trim().toUpperCase()}` : ""
+      }`,
       referencia: tenantId as string,
     });
     await sb.rpc("vincular_gateway", {

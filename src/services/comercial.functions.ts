@@ -60,6 +60,7 @@ export const criarAfiliadoFn = createServerFn({ method: "POST" })
         nome: z.string().trim().min(2, "Informe o nome"),
         email: z.string().trim().email("E-mail inválido"),
         tipo: z.enum(["afiliado", "parceiro"]),
+        descontoPct: z.number().int().min(0).max(50, "Desconto de no máximo 50%"),
       })
       .parse(d),
   )
@@ -67,10 +68,10 @@ export const criarAfiliadoFn = createServerFn({ method: "POST" })
 
 export const sugerirCodigoAfiliadoFn = createServerFn({ method: "POST" })
   .validator((d: unknown) =>
-    z.object({ nome: z.string(), tipo: z.enum(["afiliado", "parceiro"]) }).parse(d),
+    z.object({ nome: z.string(), descontoPct: z.number().int().min(0).max(50) }).parse(d),
   )
   .handler(async ({ data }) => ({
-    codigo: await (await repo()).sugerirCodigo(await ctx(), data.nome, data.tipo),
+    codigo: await (await repo()).sugerirCodigo(await ctx(), data.nome, data.descontoPct),
   }));
 
 export const codigoAfiliadoEmUsoFn = createServerFn({ method: "GET" })

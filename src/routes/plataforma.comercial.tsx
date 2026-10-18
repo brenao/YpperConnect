@@ -217,7 +217,7 @@ function DialogAfiliado({
   onLink,
 }: {
   onFechar: () => void;
-  onLink: (url: string) => void;
+  onLink: (url: string, aviso: string) => void;
 }) {
   const qc = useQueryClient();
   const [f, setF] = useState<{
@@ -225,13 +225,15 @@ function DialogAfiliado({
     nome: string;
     email: string;
     tipo: "afiliado" | "parceiro";
-  }>({ codigo: "", nome: "", email: "", tipo: "afiliado" });
+    descontoPct: number;
+  }>({ codigo: "", nome: "", email: "", tipo: "afiliado", descontoPct: 10 });
   // Enquanto a pessoa não digita o código, ele acompanha nome e tipo.
   const [codigoEditado, setCodigoEditado] = useState(false);
   const [codigoDigitado, setCodigoDigitado] = useState("");
 
   const gerar = useMutation({
-    mutationFn: () => sugerirCodigoAfiliadoFn({ data: { nome: f.nome, tipo: f.tipo } }),
+    mutationFn: () =>
+      sugerirCodigoAfiliadoFn({ data: { nome: f.nome, descontoPct: f.descontoPct } }),
     onSuccess: (r) => {
       setF((atual) => ({ ...atual, codigo: r.codigo }));
       setCodigoDigitado(r.codigo);
@@ -239,13 +241,13 @@ function DialogAfiliado({
     onError: erro,
   });
 
-  // Sugestão automática ao preencher o nome ou trocar o tipo.
+  // Sugestão automática ao preencher o nome ou mudar o desconto.
   useEffect(() => {
     if (codigoEditado || f.nome.trim().length < 2) return;
     const t = setTimeout(() => gerar.mutate(), 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f.nome, f.tipo, codigoEditado]);
+  }, [f.nome, f.descontoPct, codigoEditado]);
 
   // Valida o código enquanto se digita (com pausa, para não consultar a cada tecla).
   const [codigoEstavel, setCodigoEstavel] = useState("");
@@ -267,7 +269,11 @@ function DialogAfiliado({
       qc.invalidateQueries({ queryKey: ["painel-comercial"] });
       toast.success("Afiliado cadastrado");
       onFechar();
-      if (r.link) onLink(r.link);
+      const aviso = r.emailEnviado
+        ? `Cupom e convite do portal enviados por e-mail para ${f.email.trim()}. Se preferir, copie o link abaixo.`
+        : `Não foi possível enviar o e-mail agora. Envie este link a ${f.email.trim()}.`;
+      if (r.link) onLink(r.link, aviso);
+      else if (r.emailEnviado) toast.info(`Cupom enviado por e-mail para ${f.email.trim()}`);
     },
     onError: erro,
   });
@@ -303,7 +309,26 @@ function DialogAfiliado({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Código (vai no link de indicação)</Label>
+            <Label>Desconto para o cliente (%)</Label>
+            <Input
+              type="number"
+              min={0}
+              max={50}
+              value={f.descontoPct}
+              onChange={(e) =>
+                setF({
+                  ...f,
+                  descontoPct: Math.min(50, Math.max(0, Math.round(Number(e.target.value) || 0))),
+                })
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Quem usar o cupom paga a assinatura com este desconto (até 50%). A comissão do
+              afiliado é calculada sobre o valor com desconto.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Cupom (o cliente informa na compra)</Label>
             <div className="flex gap-2">
               <Input
                 className="font-mono uppercase"
@@ -339,7 +364,7 @@ function DialogAfiliado({
               <p className="text-xs text-success">{f.codigo} está disponível.</p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Padrão: primeiro nome + percentual (ex.: LUCIANA20).
+                Padrão: primeiro nome + desconto (ex.: LUCIANA20 = 20% de desconto).
               </p>
             )}
           </div>
@@ -371,7 +396,7 @@ function Comercial() {
   });
   const [editando, setEditando] = useState<LinhaAssinatura | null>(null);
   const [novoAfiliado, setNovoAfiliado] = useState(false);
-  const [link, setLink] = useState<{ url: string; titulo: string } | null>(null);
+  const [link, setLink] = useState<{ url: string; titulo: string; aviso?: string } | null>(null);
   const pagar = useMutation({
     mutationFn: (id: string) => marcarComissaoPagaFn({ data: { id } }),
     onSuccess: () => {
@@ -497,6 +522,7 @@ function Comercial() {
                       <th className="px-4 py-2 font-medium">Afiliado</th>
                       <th className="px-4 py-2 font-medium">Código</th>
                       <th className="px-4 py-2 font-medium">Tipo</th>
+                      <th className="px-4 py-2 font-medium">Desconto do cliente</th>
                       <th className="px-4 py-2 font-medium">Comissão</th>
                     </tr>
                   </thead>
@@ -510,6 +536,9 @@ function Comercial() {
                         <td className="px-4 py-2 font-mono text-xs">{a.codigo}</td>
                         <td className="px-4 py-2">
                           {a.tipo === "parceiro" ? "Parceiro" : "Afiliado"}
+                        </td>
+                        <td className="px-4 py-2">
+                          {a.descontoPct > 0 ? `${a.descontoPct}%` : "—"}
                         </td>
                         <td className="px-4 py-2">
                           {a.comissaoPct}% · {a.mesesRecorrencia} meses
@@ -578,7 +607,9 @@ function Comercial() {
           {novoAfiliado ? (
             <DialogAfiliado
               onFechar={() => setNovoAfiliado(false)}
-              onLink={(url) => setLink({ url, titulo: "Convite do afiliado (portal)" })}
+              onLink={(url, aviso) =>
+                setLink({ url, titulo: "Convite do afiliado (portal)", aviso })
+              }
             />
           ) : null}
           <DialogLink link={link} onFechar={() => setLink(null)} />

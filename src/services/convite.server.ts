@@ -36,3 +36,39 @@ export async function enviarConvite(
   const { processarFila } = await import("@/services/notificacoes.server");
   await processarFila();
 }
+/**
+ * Convite do afiliado para o portal. Afiliado não pertence a nenhuma
+ * empresa, então não passa pela fila (que é por empresa): envia direto.
+ * Quem chama trata a falha — o link continua na tela para o operador.
+ */
+export async function enviarConviteAfiliado(d: {
+  nome: string;
+  email: string;
+  codigo: string;
+  descontoPct: number;
+  link: string | null;
+}): Promise<void> {
+  const { provedorEmail } = await import("@/services/notificacoes.server");
+  const { urlDoApp } = await import("@/repositories/usuarios.repo");
+
+  const primeiroNome = d.nome.trim().split(/\s+/)[0] ?? d.nome;
+  const acesso = d.link
+    ? `Defina sua senha e acesse o portal (o link vale uma vez e expira em 1 hora):\n${d.link}`
+    : `Acesse o portal com a sua conta de sempre:\n${urlDoApp()}/afiliado`;
+  const beneficio =
+    d.descontoPct > 0
+      ? ` Quem usar o cupom ganha ${d.descontoPct}% de desconto na assinatura.`
+      : "";
+
+  await provedorEmail().enviar({
+    id: `afiliado-${d.codigo}`,
+    para: d.email.trim().toLowerCase(),
+    assunto: "Seu cupom de parceiro BeagleOne",
+    texto:
+      `Olá, ${primeiroNome}!\n\n` +
+      `Você agora é parceiro do BeagleOne. Seu cupom de indicação é ${d.codigo}: ` +
+      `peça para o cliente informá-lo na contratação.${beneficio}\n\n` +
+      `Link direto, que já preenche o cupom:\n${urlDoApp()}/contratar?cupom=${d.codigo}\n\n` +
+      `${acesso}\n\n—\nBeagleOne`,
+  });
+}

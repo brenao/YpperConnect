@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { criarCheckoutFn, planosPublicosFn } from "@/services/checkout.functions";
+import { criarCheckoutFn, planosPublicosFn, validarCupomFn } from "@/services/checkout.functions";
 
 export const Route = createFileRoute("/contratar")({
   head: () => ({
@@ -19,8 +19,19 @@ export const Route = createFileRoute("/contratar")({
       { name: "description", content: "Planos do BeagleOne: ITSM, Projetos ou a Suíte completa." },
     ],
   }),
+  // ?cupom=LUCIANA20 chega do link do afiliado e preenche o campo.
+  validateSearch: (s: Record<string, unknown>): { cupom?: string | undefined } => ({
+    cupom: typeof s["cupom"] === "string" ? s["cupom"] : undefined,
+  }),
   component: Contratar,
 });
+
+/** Só letras, números e hífen, em maiúsculas (o formato do código). */
+const limparCupom = (v: string) =>
+  v
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "")
+    .slice(0, 30);
 
 const reais = (centavos: number) =>
   (centavos / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -52,6 +63,36 @@ function Contratar() {
   const [slugEditado, setSlugEditado] = useState(false);
   const [enviadoPara, setEnviadoPara] = useState<string | null>(null);
 
+  // Cupom de indicação: digitado ou vindo do link. Confere com pausa,
+  // para não consultar o servidor a cada tecla.
+  const search = Route.useSearch();
+  const [cupom, setCupom] = useState(() => limparCupom(search.cupom ?? ""));
+  const [cupomEstavel, setCupomEstavel] = useState(cupom);
+  const [emailEstavel, setEmailEstavel] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setCupomEstavel(cupom);
+      setEmailEstavel(f.email.trim());
+    }, 400);
+    return () => clearTimeout(t);
+  }, [cupom, f.email]);
+  const cupomQuery = useQuery({
+    queryKey: ["cupom", cupomEstavel, emailEstavel],
+    queryFn: () =>
+      validarCupomFn({
+        data: { codigo: cupomEstavel, ...(emailEstavel ? { email: emailEstavel } : {}) },
+      }),
+    enabled: cupomEstavel.length >= 3,
+    staleTime: 60_000,
+  });
+  const cupomDigitado = cupom.length > 0;
+  const conferindoCupom =
+    cupomDigitado && (cupom !== cupomEstavel || cupomQuery.isFetching || cupom.length < 3);
+  const cupomOk =
+    cupomDigitado && !conferindoCupom && cupomQuery.data?.valido === true ? cupomQuery.data : null;
+  const cupomRecusado = cupomDigitado && !conferindoCupom && !cupomOk;
+  const descontoPct = cupomOk?.descontoPct ?? 0;
+
   const docDigitado = somenteDigitos(f.cpfCnpj).length > 0;
   const docOk = documentoValido(f.cpfCnpj);
 
@@ -67,6 +108,8 @@ function Contratar() {
         : 0;
     return Math.max(usuarios, 3) * (base + ia);
   }, [plano, planos.data, ciclo, usuarios, addonIa]);
+  // Mesma conta do banco (valor_mensal_assinatura): arredonda o total.
+  const totalComDesconto = Math.round((total * (100 - descontoPct)) / 100);
 
   const contratar = useMutation({
     mutationFn: () =>
@@ -77,10 +120,12 @@ function Contratar() {
           ciclo,
           usuarios,
           addonIa: addonIa && nivel === "essencial",
+          ...(cupomOk?.codigo ? { cupom: cupomOk.codigo } : {}),
         },
       }),
     onSuccess: (r) => setEnviadoPara(r.email),
-    onError: (e: Error) => toast.error("Não foi possível concluir", { description: mensagemErro(e) }),
+    onError: (e: Error) =>
+      toast.error("Não foi possível concluir", { description: mensagemErro(e) }),
   });
 
   if (enviadoPara) {
@@ -229,6 +274,33 @@ function Contratar() {
                   <p className="text-xs text-destructive">CPF ou CNPJ inválido.</p>
                 ) : null}
               </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>
+                  Cupom de indicação{" "}
+                  <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+                </Label>
+                <Input
+                  className="font-mono uppercase"
+                  placeholder="Ex.: LUCIANA20"
+                  value={cupom}
+                  aria-invalid={cupomRecusado}
+                  onChange={(e) => setCupom(limparCupom(e.target.value))}
+                />
+                {conferindoCupom ? (
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" /> Conferindo cupom...
+                  </p>
+                ) : cupomOk ? (
+                  <p className="text-xs text-success">
+                    ✓ Indicação de {cupomOk.afiliado}
+                    {descontoPct > 0 ? ` · ${descontoPct}% de desconto na assinatura` : ""}
+                  </p>
+                ) : cupomRecusado ? (
+                  <p className="text-xs text-destructive">
+                    {cupomQuery.data?.motivo ?? "Cupom inválido."} Corrija ou apague o campo.
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -240,18 +312,26 @@ function Contratar() {
               {ciclo === "anual" ? "plano anual" : "plano mensal"}
               {nivel === "pro" || addonIa ? " · com IA" : ""}
             </p>
+            {descontoPct > 0 ? (
+              <p className="text-sm text-muted-foreground">
+                <span className="line-through">{reais(total)}</span>{" "}
+                <span className="font-medium text-success">
+                  cupom {cupomOk?.codigo} · −{descontoPct}%
+                </span>
+              </p>
+            ) : null}
             <p className="text-3xl font-semibold">
-              {reais(total)}
+              {reais(totalComDesconto)}
               <span className="text-sm font-normal text-muted-foreground">/mês</span>
             </p>
             {ciclo === "anual" ? (
               <p className="text-xs text-muted-foreground">
-                Cobrado anualmente: {reais(total * 12)}
+                Cobrado anualmente: {reais(totalComDesconto * 12)}
               </p>
             ) : null}
             <Button
               className="w-full"
-              disabled={contratar.isPending || !plano || !docOk}
+              disabled={contratar.isPending || !plano || !docOk || conferindoCupom || cupomRecusado}
               onClick={() => contratar.mutate()}
             >
               {contratar.isPending ? "Criando..." : "Começar 14 dias grátis"}
