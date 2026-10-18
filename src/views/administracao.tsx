@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/views/app-shell";
 import { PainelCalendario } from "@/views/calendario-admin";
 import { PainelFornecedores } from "@/views/fornecedores-admin";
+import { PainelDepartamentos } from "@/views/departamentos-admin";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,6 +47,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { CRITICALITY_LABEL, type SystemCriticality } from "@/models/itsm-types";
+import { CARGOS, ehCargo, type Cargo } from "@/models/cargos";
 import type { Sistema, TipoSistema } from "@/repositories/catalogo.repo";
 import type { Usuario } from "@/repositories/usuarios.repo";
 import { Paginacao, usePaginacao } from "@/views/paginacao";
@@ -60,6 +62,7 @@ import {
   listarUsuariosFn,
   listarEquipesFn,
   listarPerfisFn,
+  listarDepartamentosFn,
   listarSistemasAdminFn,
   listarCategoriasFn,
   listarNotificacoesFn,
@@ -122,22 +125,27 @@ function fmt(v: Date | string | null | undefined): string {
 interface FormUsuario {
   nome: string;
   email: string;
-  login: string;
-  departamento: string;
+  departamentoId: string;
+  /** Cargo ou SEM. Com o departamento, decide o perfil. */
+  cargo: string;
   equipeId: string;
-  perfilId: string;
   admin: boolean;
 }
 
 const usuarioVazio: FormUsuario = {
   nome: "",
   email: "",
-  login: "",
-  departamento: "",
+  departamentoId: SEM,
+  cargo: SEM,
   equipeId: SEM,
-  perfilId: SEM,
   admin: false,
 };
+
+/** Administrador de TI vira "Analista": administrar é a chave à parte. */
+function cargoDoPerfil(cargo: string | null | undefined): string {
+  if (cargo === "administrador") return "analista";
+  return ehCargo(cargo) ? cargo : SEM;
+}
 
 /**
  * Diálogo de usuário.
@@ -182,6 +190,16 @@ function UserDialog({
     enabled: open,
   });
   const perfis = useQuery({ queryKey: ["perfis"], queryFn: () => listarPerfisFn(), enabled: open });
+  const departamentos = useQuery({
+    queryKey: ["departamentos"],
+    queryFn: () => listarDepartamentosFn(),
+    enabled: open,
+  });
+
+  // Perfil atual da pessoa: dos do sistema sai o cargo; os criados pela
+  // empresa não têm cargo e ficam como estão até alguém escolher um.
+  const perfilAtual = (perfis.data ?? []).find((p) => p.id === user?.perfilId);
+  const cargoAtual = cargoDoPerfil(perfilAtual?.cargo);
 
   useEffect(() => {
     if (!open) return;
@@ -191,15 +209,39 @@ function UserDialog({
         ? {
             nome: texto(user.nome),
             email: texto(user.email),
-            login: texto(user.login),
-            departamento: texto(user.departamento),
+            departamentoId: user.departamentoId ?? SEM,
+            cargo: cargoAtual,
             equipeId: user.equipeId ?? SEM,
-            perfilId: user.perfilId ?? SEM,
             admin: user.admin ?? false,
           }
         : usuarioVazio,
     );
+    // cargoAtual fica fora: os perfis chegam depois e não podem apagar o
+    // que a pessoa já mudou. O efeito abaixo completa o cargo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, user]);
+
+  useEffect(() => {
+    if (!open || !user || cargoAtual === SEM) return;
+    setForm((f) => (f.cargo === SEM ? { ...f, cargo: cargoAtual } : f));
+  }, [open, user, cargoAtual]);
+
+  const departamentoEscolhido = (departamentos.data ?? []).find(
+    (d) => d.id === form.departamentoId,
+  );
+  const ehTi = departamentoEscolhido?.ti === true;
+  // Nome do perfil que a combinação vai dar, mostrado embaixo do campo.
+  const perfilResultante =
+    departamentoEscolhido && form.cargo !== SEM
+      ? (perfis.data ?? []).find(
+          (p) =>
+            p.ativo &&
+            p.cargo === form.cargo &&
+            (p.area === null || p.area === (ehTi ? "ti" : "negocio")),
+        )
+      : undefined;
+  // Quem tem perfil criado pela empresa pode salvar sem cargo (mantém).
+  const mantemPerfilDaEmpresa = !!user && !!perfilAtual && perfilAtual.cargo === null;
 
   function sucesso() {
     qc.invalidateQueries({ queryKey: ["usuarios"] });
@@ -238,30 +280,29 @@ function UserDialog({
   // tela branca.
   const nome = texto(form.nome).trim();
   const email = texto(form.email).trim();
-  const login = texto(form.login).trim();
 
   const erroNome = nome.length < 3 ? "Informe o nome completo." : null;
   const erroEmail =
     email === "" ? "Campo obrigatório." : !email.includes("@") ? "Informe um e-mail válido." : null;
-  // Opcional: so quem integra com o Active Directory precisa.
-  const erroLogin = login !== "" && login.length < 3 ? "Login de rede muito curto." : null;
+  const erroDepartamento = departamentoEscolhido ? null : "Escolha o departamento.";
+  const erroCargo = form.cargo === SEM && !mantemPerfilDaEmpresa ? "Escolha o perfil." : null;
 
   const classeErro = "border-destructive focus-visible:ring-destructive/40";
 
   function salvar() {
     setTentou(true);
-    if (erroNome || erroEmail || erroLogin) {
+    if (erroNome || erroEmail || erroDepartamento || erroCargo) {
       toast.error("Revise os campos destacados.");
       return;
     }
 
-    const payload = {
+    const cargo: Cargo | undefined = ehCargo(form.cargo) ? form.cargo : undefined;
+    const base = {
       nome,
       email,
-      login,
-      departamento: texto(form.departamento).trim() || null,
-      equipeId: form.equipeId === SEM ? null : form.equipeId,
-      perfilId: form.perfilId === SEM ? null : form.perfilId,
+      departamentoId: form.departamentoId,
+      // Fora da TI não há equipe (o banco também garante).
+      equipeId: ehTi && form.equipeId !== SEM ? form.equipeId : null,
       admin: form.admin,
     };
 
@@ -269,9 +310,9 @@ function UserDialog({
     // ao spread do payload.
     const idExistente = user?.id;
     if (idExistente) {
-      atualizar.mutate({ id: idExistente, ...payload });
-    } else {
-      criar.mutate(payload);
+      atualizar.mutate({ id: idExistente, ...base, ...(cargo ? { cargo } : {}) });
+    } else if (cargo) {
+      criar.mutate({ ...base, cargo });
     }
   }
 
@@ -282,8 +323,8 @@ function UserDialog({
         <DialogHeader>
           <DialogTitle>{user ? "Editar usuário" : "Novo usuário"}</DialogTitle>
           <DialogDescription>
-            Usuários com equipe podem receber atribuição de chamado. Quando a integração com o
-            Active Directory entrar, o cadastro passa a ser sincronizado.
+            O acesso é pelo e-mail: a pessoa recebe um convite para definir a senha. O perfil vem do
+            departamento e do cargo; quem é de TI e tem equipe pode receber chamados.
           </DialogDescription>
         </DialogHeader>
 
@@ -318,64 +359,93 @@ function UserDialog({
             {tentou && erroEmail ? <p className="text-xs text-destructive">{erroEmail}</p> : null}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="usr-login">
-              Login de rede{" "}
-              <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+            <Label>
+              Departamento <span className="text-destructive">*</span>
             </Label>
-            <Input
-              id="usr-login"
-              maxLength={120}
-              disabled={!!user}
-              aria-invalid={tentou && erroLogin !== null}
-              className={tentou && erroLogin ? classeErro : undefined}
-              value={form.login}
-              onChange={(e) => setForm({ ...form, login: e.target.value })}
-              placeholder="Só para integração com Active Directory"
-            />
-            {tentou && erroLogin ? <p className="text-xs text-destructive">{erroLogin}</p> : null}
-          </div>
-          <div className="space-y-1.5">
-            <Label>Departamento</Label>
-            <Input
-              maxLength={160}
-              value={form.departamento}
-              onChange={(e) => setForm({ ...form, departamento: e.target.value })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Equipe de TI</Label>
-            <Select value={form.equipeId} onValueChange={(v) => setForm({ ...form, equipeId: v })}>
-              <SelectTrigger>
-                <SelectValue />
+            <Select
+              value={form.departamentoId}
+              onValueChange={(v) => {
+                const ti = (departamentos.data ?? []).find((d) => d.id === v)?.ti === true;
+                // Saiu da TI: a equipe some do formulário e do cadastro.
+                setForm({ ...form, departamentoId: v, equipeId: ti ? form.equipeId : SEM });
+              }}
+            >
+              <SelectTrigger
+                aria-invalid={tentou && erroDepartamento !== null}
+                className={tentou && erroDepartamento ? classeErro : undefined}
+              >
+                <SelectValue placeholder="Escolha" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={SEM}>Sem equipe (usuário final)</SelectItem>
-                {(equipes.data ?? []).map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {e.nome}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Perfil de acesso</Label>
-            <Select value={form.perfilId} onValueChange={(v) => setForm({ ...form, perfilId: v })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SEM}>Sem perfil</SelectItem>
-                {(perfis.data ?? [])
-                  .filter((p) => p.ativo)
-                  .map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.nome}
+                {(departamentos.data ?? [])
+                  .filter((d) => d.ativo || d.id === form.departamentoId)
+                  .map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.nome}
+                      {d.ti ? " (TI)" : ""}
                     </SelectItem>
                   ))}
               </SelectContent>
             </Select>
+            {tentou && erroDepartamento ? (
+              <p className="text-xs text-destructive">{erroDepartamento}</p>
+            ) : null}
           </div>
+          <div className="space-y-1.5">
+            <Label>
+              Perfil <span className="text-destructive">*</span>
+            </Label>
+            <Select value={form.cargo} onValueChange={(v) => setForm({ ...form, cargo: v })}>
+              <SelectTrigger
+                aria-invalid={tentou && erroCargo !== null}
+                className={tentou && erroCargo ? classeErro : undefined}
+              >
+                <SelectValue placeholder="Escolha" />
+              </SelectTrigger>
+              <SelectContent>
+                {CARGOS.map((c) => (
+                  <SelectItem key={c.valor} value={c.valor}>
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {tentou && erroCargo ? (
+              <p className="text-xs text-destructive">{erroCargo}</p>
+            ) : perfilResultante ? (
+              <p className="text-xs text-muted-foreground">
+                Acesso: <span className="font-medium">{perfilResultante.nome}</span>
+              </p>
+            ) : mantemPerfilDaEmpresa && form.cargo === SEM ? (
+              <p className="text-xs text-muted-foreground">
+                Mantém o perfil atual: {perfilAtual?.nome}
+              </p>
+            ) : null}
+          </div>
+          {ehTi ? (
+            <div className="space-y-1.5">
+              <Label>Equipe de TI</Label>
+              <Select
+                value={form.equipeId}
+                onValueChange={(v) => setForm({ ...form, equipeId: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SEM}>Sem equipe</SelectItem>
+                  {(equipes.data ?? []).map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Quem tem equipe pode receber chamados.
+              </p>
+            </div>
+          ) : null}
           <div className="flex items-center gap-2 sm:col-span-2">
             <Switch
               id="usr-admin"
@@ -1348,6 +1418,11 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
                 empresa — é configuração de instalação, e por isso mora
                 aqui e não dentro de um projeto. */}
             <PainelCalendario isAdmin={isAdmin} />
+          </TabsContent>
+
+          {/* --------------------------------------------- departamentos */}
+          <TabsContent value="departamentos" className="mt-4">
+            <PainelDepartamentos isAdmin={isAdmin} />
           </TabsContent>
 
           {/* ---------------------------------------------- fornecedores */}

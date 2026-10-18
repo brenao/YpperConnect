@@ -15,6 +15,9 @@ export interface PerfilAcesso {
   funcionalidades: string[];
   /** Perfil embutido na aplicação: pode ser ajustado, nunca excluído. */
   sistema: boolean;
+  /** Cargo e área dos perfis do sistema (nulos nos criados pela empresa). */
+  cargo: string | null;
+  area: "ti" | "negocio" | null;
   ativo: boolean;
 }
 
@@ -41,7 +44,7 @@ export async function listarPerfis(): Promise<PerfilAcesso[]> {
   const [perfis, modulos, features] = await Promise.all([
     sb
       .from("perfis_acesso")
-      .select("id, nome, descricao, sistema, ativo")
+      .select("id, nome, descricao, sistema, ativo, cargo, area")
       .eq("tenant_id", tenantId)
       .order("nome"),
     sb.from("perfil_modulos").select("perfil_id, modulo_key").eq("tenant_id", tenantId),
@@ -70,6 +73,8 @@ export async function listarPerfis(): Promise<PerfilAcesso[]> {
     nome: p.nome as string,
     descricao: (p.descricao as string | null) ?? null,
     sistema: p.sistema as boolean,
+    cargo: (p.cargo as string | null) ?? null,
+    area: (p.area as "ti" | "negocio" | null) ?? null,
     ativo: p.ativo as boolean,
     modulos: porPerfilModulo.get(p.id as string) ?? [],
     funcionalidades: porPerfilFeature.get(p.id as string) ?? [],

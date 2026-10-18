@@ -16,7 +16,7 @@ grant select on t to authenticated;
 
 -- 1
 select is((select count(*) from public.perfis_acesso p, t where p.tenant_id = t.alfa and p.sistema)::int,
-          4, 'Empresa nasce com os 4 perfis do legado');
+          6, 'Empresa nasce com os 4 perfis do legado e os 2 de gerente de projetos');
 
 -- 2
 select is((select count(*) from public.equipes e, t where e.tenant_id = t.alfa)::int,

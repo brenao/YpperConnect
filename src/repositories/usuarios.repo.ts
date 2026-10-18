@@ -2,18 +2,20 @@ import { getRequestUrl } from "@tanstack/react-start/server";
 import { getSupabaseServerClient } from "@/integrations/supabase/server";
 import { ErroDominio } from "./tipos";
 import type { ContextoUsuario } from "@/services/current-user.server";
+import type { Cargo } from "@/models/cargos";
 
 /**
  * Usuários da empresa. Mesma interface do repositório legado.
  *
  * Por dentro, um usuário é a soma de duas coisas:
  *   - a pessoa (`usuarios`): nome e e-mail, a mesma em todas as empresas;
- *   - o vínculo com a empresa (`tenant_membros`): login, departamento,
- *     equipe, perfil, administrador e situação — o que era da tabela
- *     `usuarios` do legado e varia de empresa para empresa.
+ *   - o vínculo com a empresa (`tenant_membros`): departamento, equipe,
+ *     perfil, administrador e situação — o que era da tabela `usuarios`
+ *     do legado e varia de empresa para empresa.
  *
- * Diferença de login: sem AD/GLPI, criar um usuário cria a conta dele no
- * Supabase Auth e devolve um link para ele definir a senha.
+ * O login é o e-mail: criar um usuário cria a conta dele no Supabase
+ * Auth e devolve um link para ele definir a senha. O perfil vem da
+ * combinação departamento + cargo (ver `@/models/cargos`).
  */
 
 export interface Usuario {
@@ -21,7 +23,9 @@ export interface Usuario {
   nome: string;
   email: string;
   login: string;
+  /** Nome do departamento (o banco copia do cadastro). */
   departamento: string | null;
+  departamentoId: string | null;
   equipeId: string | null;
   equipeNome: string | null;
   perfilId: string | null;
@@ -40,10 +44,11 @@ function falha(erro: { code?: string; message: string }): never {
   if (erro.message.includes("Limite de usuarios pagantes")) {
     throw new ErroDominio(
       erro.message.replace("usuarios", "usuários") +
-        " Contrate mais usuários na assinatura ou deixe esta pessoa como usuário final.",
+        " Contrate mais usuários na assinatura, ou cadastre esta pessoa como Analista de um" +
+        " departamento fora da TI (não conta como pagante).",
     );
   }
-  if (erro.code === "23505") throw new ErroDominio("Este login já está em uso nesta empresa.");
+  if (erro.code === "P0001") throw new ErroDominio(erro.message);
   if (erro.code === "42501")
     throw new ErroDominio("Somente administradores podem alterar usuários");
   throw new Error(erro.message);
@@ -61,7 +66,9 @@ async function carregar(filtro: {
 
   let q = sb
     .from("tenant_membros")
-    .select("usuario_id, login, departamento, equipe_id, perfil_id, origem, admin, ativo")
+    .select(
+      "usuario_id, login, departamento, departamento_id, equipe_id, perfil_id, origem, admin, ativo",
+    )
     .eq("tenant_id", tenantId);
   if (filtro.apenasAtivos) q = q.eq("ativo", true);
   if (filtro.id) q = q.eq("usuario_id", filtro.id);
@@ -103,6 +110,7 @@ async function carregar(filtro: {
         email: pessoas.get(id)?.email ?? "",
         login: (m.login as string | null) ?? "",
         departamento: (m.departamento as string | null) ?? null,
+        departamentoId: (m.departamento_id as string | null) ?? null,
         equipeId,
         equipeNome: equipeId ? (nomeEquipe.get(equipeId) ?? null) : null,
         perfilId: (m.perfil_id as string | null) ?? null,
@@ -134,21 +142,55 @@ export interface DadosUsuario {
   id: string;
   nome: string;
   email: string;
-  login: string;
-  departamento?: string | null | undefined;
+  departamentoId: string;
+  cargo: Cargo;
   equipeId?: string | null | undefined;
-  perfilId?: string | null | undefined;
   admin?: boolean | undefined;
 }
 
 export interface AlteracaoUsuario {
   nome?: string | undefined;
   email?: string | undefined;
-  login?: string | undefined;
-  departamento?: string | null | undefined;
-  equipeId?: string | null | undefined;
+  departamentoId?: string | undefined;
+  /** Com o departamento, decide o perfil. */
+  cargo?: Cargo | undefined;
+  /**
+   * Perfil escolhido direto (tela Perfis de acesso, que lista também os
+   * perfis criados pela empresa). Ignorado quando vem o cargo.
+   */
   perfilId?: string | null | undefined;
+  equipeId?: string | null | undefined;
   admin?: boolean | undefined;
+}
+
+/** Perfil da combinação departamento + cargo, resolvido no banco. */
+async function perfilDoCargo(departamentoId: string, cargo: Cargo): Promise<string> {
+  const { data, error } = await getSupabaseServerClient().rpc("perfil_do_cargo", {
+    p_departamento: departamentoId,
+    p_cargo: cargo,
+  });
+  if (error) falha(error);
+  if (!data) {
+    throw new ErroDominio(
+      "Não há perfil ativo para este cargo neste departamento. Confira em Perfis de acesso.",
+    );
+  }
+  return data as string;
+}
+
+/** Cargo do perfil atual (só dos perfis do sistema; os da empresa não têm). */
+async function cargoDoPerfil(perfilId: string | null): Promise<Cargo | null> {
+  if (!perfilId) return null;
+  const { data, error } = await getSupabaseServerClient()
+    .from("perfis_acesso")
+    .select("cargo")
+    .eq("id", perfilId)
+    .maybeSingle();
+  if (error) falha(error);
+  const c = (data?.cargo as string | null) ?? null;
+  // Administrador de TI vira analista: administrar é a chave à parte.
+  if (c === "administrador") return "analista";
+  return c === "analista" || c === "gerente_projetos" || c === "diretoria" ? c : null;
 }
 
 // ------------------------------------------------------------------ login
@@ -222,6 +264,7 @@ export async function criarUsuario(
 ): Promise<{ id: string; link: string | null }> {
   if (!ctx.admin) throw new ErroDominio("Somente administradores podem criar usuários");
 
+  const perfilId = await perfilDoCargo(d.departamentoId, d.cargo);
   const { id, link } = await prepararConta(d.email, d.nome);
 
   // Vínculo com a sessão de quem cadastrou: RLS e auditoria registram o autor.
@@ -233,11 +276,12 @@ export async function criarUsuario(
         usuario_id: id,
         tipo: "interno",
         origem: "manual",
-        // Sem AD o login fica nulo: a unicidade (empresa, login) ignora nulos.
-        login: d.login.trim() || null,
-        departamento: d.departamento ?? null,
+        // O login é o e-mail. A coluna fica para uma futura integração com AD.
+        login: null,
+        departamento_id: d.departamentoId,
+        // Fora da TI o banco tira a equipe (gatilho em tenant_membros).
         equipe_id: d.equipeId ?? null,
-        perfil_id: d.perfilId ?? null,
+        perfil_id: perfilId,
         admin: d.admin ?? false,
         ativo: true,
       },
@@ -271,21 +315,36 @@ export async function atualizarUsuario(
     );
   }
 
-  const mudancas: Record<string, unknown> = {
-    departamento: d.departamento ?? null,
-    equipe_id: d.equipeId ?? null,
-    perfil_id: d.perfilId ?? null,
-  };
+  // Só o que veio: a tela de Perfis de acesso manda apenas o perfil, e
+  // não pode apagar departamento e equipe de quem ela altera.
+  const mudancas: Record<string, unknown> = {};
+  if (d.departamentoId !== undefined) mudancas["departamento_id"] = d.departamentoId;
+  if (d.equipeId !== undefined) mudancas["equipe_id"] = d.equipeId;
   if (d.admin !== undefined) mudancas["admin"] = d.admin;
 
-  const { data, error } = await getSupabaseServerClient()
-    .from("tenant_membros")
-    .update(mudancas)
-    .eq("tenant_id", ctx.tenantId)
-    .eq("usuario_id", id)
-    .select("usuario_id");
-  if (error) falha(error);
-  if (!data?.length) throw new ErroDominio(`Usuário ${id} não encontrado`);
+  // Trocar o departamento sem dizer o cargo mantém o cargo atual.
+  const cargo =
+    d.cargo ?? (d.departamentoId !== undefined ? await cargoDoPerfil(atual.perfilId) : null);
+  const departamentoId = d.departamentoId ?? atual.departamentoId;
+  if (cargo && departamentoId) {
+    mudancas["perfil_id"] = await perfilDoCargo(departamentoId, cargo);
+  } else if (d.cargo) {
+    throw new ErroDominio("Escolha o departamento para definir o perfil.");
+  } else if (d.perfilId !== undefined) {
+    mudancas["perfil_id"] = d.perfilId;
+  }
+  if (Object.keys(mudancas).length === 0 && d.nome === undefined) return;
+
+  if (Object.keys(mudancas).length > 0) {
+    const { data, error } = await getSupabaseServerClient()
+      .from("tenant_membros")
+      .update(mudancas)
+      .eq("tenant_id", ctx.tenantId)
+      .eq("usuario_id", id)
+      .select("usuario_id");
+    if (error) falha(error);
+    if (!data?.length) throw new ErroDominio(`Usuário ${id} não encontrado`);
+  }
 
   if (d.nome !== undefined && d.nome.trim() && d.nome.trim() !== atual.nome) {
     // A pessoa é global e o RLS só deixa cada um editar o próprio nome;

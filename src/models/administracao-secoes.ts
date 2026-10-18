@@ -6,7 +6,7 @@
  * texto divergiriam na primeira mudança.
  */
 export type SecaoAdministracao =
-  "usuarios" | "sistemas" | "calendario" | "fornecedores" | "notificacoes";
+  "usuarios" | "departamentos" | "sistemas" | "calendario" | "fornecedores" | "notificacoes";
 
 export const SECOES_ADMINISTRACAO: Record<
   SecaoAdministracao,
@@ -15,6 +15,10 @@ export const SECOES_ADMINISTRACAO: Record<
   usuarios: {
     titulo: "Usuários",
     subtitulo: "Quem acessa o sistema, perfil, equipe e administradores",
+  },
+  departamentos: {
+    titulo: "Departamentos",
+    subtitulo: "Áreas da empresa e quais delas são de TI",
   },
   sistemas: {
     titulo: "Sistemas",

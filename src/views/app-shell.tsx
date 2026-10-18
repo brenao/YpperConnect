@@ -20,6 +20,7 @@ import {
   CalendarDays,
   Mail,
   UserCog,
+  Network,
   ChevronDown,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -69,6 +70,12 @@ const nav = [
  */
 const navAdministracao = [
   { to: "/administracao/usuarios", label: "Usuários", icon: UserCog, modulo: "/administracao" },
+  {
+    to: "/administracao/departamentos",
+    label: "Departamentos",
+    icon: Network,
+    modulo: "/administracao",
+  },
   { to: "/permissoes", label: "Perfis de acesso", icon: KeyRound, modulo: "/permissoes" },
   { to: "/administracao/sistemas", label: "Sistemas", icon: Server, modulo: "/administracao" },
   {

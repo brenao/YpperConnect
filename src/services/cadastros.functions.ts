@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { VALORES_CARGO } from "@/models/cargos";
 
 /**
  * Server functions dos cadastros: leitura e escrita de catálogo,
@@ -203,20 +204,71 @@ export const criarEquipeFn = createServerFn({ method: "POST" })
     return { id };
   });
 
+// ------------------------------------------------------------ departamentos
+
+export const listarDepartamentosFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { listarDepartamentos } = await import("@/repositories/departamentos.repo");
+  return listarDepartamentos(await ctx());
+});
+
+const DepartamentoSchema = z.object({
+  nome: z.string().trim().min(2, "Informe o nome").max(80),
+  ti: z.boolean(),
+});
+export type DepartamentoInput = z.infer<typeof DepartamentoSchema>;
+
+export const criarDepartamentoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => DepartamentoSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { criarDepartamento } = await import("@/repositories/departamentos.repo");
+    return { id: await criarDepartamento(await ctx(), data) };
+  });
+
+const DepartamentoUpdateSchema = DepartamentoSchema.partial().extend({ id: z.string() });
+export type DepartamentoUpdateInput = z.infer<typeof DepartamentoUpdateSchema>;
+
+export const atualizarDepartamentoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => DepartamentoUpdateSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { atualizarDepartamento } = await import("@/repositories/departamentos.repo");
+    const { id, ...dados } = data;
+    await atualizarDepartamento(await ctx(), id, dados);
+    return { ok: true };
+  });
+
+export const definirDepartamentoAtivoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => AtivoSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { definirDepartamentoAtivo } = await import("@/repositories/departamentos.repo");
+    await definirDepartamentoAtivo(await ctx(), data.id, data.ativo);
+    return { ok: true };
+  });
+
+export const vinculosDepartamentoFn = createServerFn({ method: "GET" })
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { vinculosDepartamento } = await import("@/repositories/departamentos.repo");
+    return { pessoas: await vinculosDepartamento(await ctx(), data.id) };
+  });
+
+/** Exclusão lógica, depois da confirmação na tela. */
+export const excluirDepartamentoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { excluirDepartamento } = await import("@/repositories/departamentos.repo");
+    await excluirDepartamento(await ctx(), data.id);
+    return { ok: true };
+  });
+
 // ----------------------------------------------------------------- usuários
 
+// O login é o e-mail. O perfil sai da combinação departamento + cargo.
 const UsuarioSchema = z.object({
   nome: z.string().min(3).max(200),
   email: z.string().email().max(320),
-  // Opcional: so empresas com Active Directory usam. Vazio vira nulo.
-  login: z
-    .string()
-    .trim()
-    .max(120)
-    .refine((v) => v === "" || v.length >= 3, "Login de rede muito curto"),
-  departamento: z.string().max(160).nullable().optional(),
+  departamentoId: z.string().uuid("Escolha o departamento"),
+  cargo: z.enum(VALORES_CARGO),
   equipeId: z.string().nullable().optional(),
-  perfilId: z.string().nullable().optional(),
   admin: z.boolean().optional(),
 });
 
@@ -243,7 +295,11 @@ export const criarUsuarioFn = createServerFn({ method: "POST" })
     return { ...r, emailEnviado, email: data.email.trim().toLowerCase() };
   });
 
-const UsuarioUpdateSchema = UsuarioSchema.partial().extend({ id: z.string() });
+// perfilId: atribuição direta pela tela Perfis de acesso.
+const UsuarioUpdateSchema = UsuarioSchema.partial().extend({
+  id: z.string(),
+  perfilId: z.string().nullable().optional(),
+});
 export type UsuarioUpdateInput = z.infer<typeof UsuarioUpdateSchema>;
 
 export const atualizarUsuarioFn = createServerFn({ method: "POST" })
