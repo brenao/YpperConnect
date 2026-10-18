@@ -28,6 +28,12 @@ export interface EventoPagamento {
   };
 }
 
+/** Repasse automático ao afiliado (split): carteira dele e percentual. */
+export interface SplitGateway {
+  carteira: string;
+  pct: number;
+}
+
 export interface GatewayPagamento {
   nome: "asaas" | "pagarme" | "stripe";
   /** Gateway configurado no ambiente? Sem chave, o checkout cria só o teste. */
@@ -40,7 +46,16 @@ export interface GatewayPagamento {
     primeiroVencimento: string;
     descricao: string;
     referencia: string;
+    split?: SplitGateway | null | undefined;
   }): Promise<string>;
+  /**
+   * Novo valor por ciclo e split (null tira o split). Vale para as
+   * próximas cobranças e para as pendentes.
+   */
+  atualizarAssinatura(
+    id: string,
+    d: { valorCentavos: number; split: SplitGateway | null },
+  ): Promise<void>;
   cancelarAssinatura(id: string): Promise<void>;
   /** A requisição veio mesmo do gateway? */
   webhookAutentico(headers: Headers): boolean;

@@ -1,5 +1,6 @@
 import { getCookie, setCookie } from "@tanstack/react-start/server";
 import { asaas } from "@/integrations/gateway/asaas.server";
+import type { SplitGateway } from "@/integrations/gateway/tipos";
 import { ErroDominio } from "@/repositories/tipos";
 
 /**
@@ -58,11 +59,16 @@ export interface PlanoPublico {
 export async function planosPublicos(): Promise<{
   planos: PlanoPublico[];
   addonIa: { anualCentavos: number; mensalCentavos: number };
+  parametros: { diasTeste: number; diasGratisAnual: number; mesesDescontoCupom: number };
 }> {
   const sb = await admin();
-  const [p, a] = await Promise.all([
+  const [p, a, c] = await Promise.all([
     sb.from("planos").select("*").eq("ativo", true).order("ordem"),
     sb.from("planos_addons").select("*").eq("codigo", "ia").single(),
+    sb
+      .from("parametros_comerciais")
+      .select("dias_teste, dias_gratis_anual, meses_desconto_cupom")
+      .single(),
   ]);
   if (p.error) throw new Error(p.error.message);
   return {
@@ -78,6 +84,11 @@ export async function planosPublicos(): Promise<{
     addonIa: {
       anualCentavos: Number(a.data?.preco_anual_centavos ?? 0),
       mensalCentavos: Number(a.data?.preco_mensal_centavos ?? 0),
+    },
+    parametros: {
+      diasTeste: Number(c.data?.dias_teste ?? 14),
+      diasGratisAnual: Number(c.data?.dias_gratis_anual ?? 60),
+      mesesDescontoCupom: Number(c.data?.meses_desconto_cupom ?? 12),
     },
   };
 }
@@ -182,7 +193,23 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
       email: d.email,
       cpfCnpj: documento,
     });
-    const idAssinatura = await GATEWAY.criarAssinatura({
+    // Split: comissão direto na carteira do afiliado, se ele já informou.
+    const { data: af } = await sb
+      .from("assinaturas")
+      .select("afiliados(gateway_conta_id, comissao_pct, ativo)")
+      .eq("id", assinatura.data.id)
+      .single();
+    const afiliado = (af?.afiliados ?? null) as {
+      gateway_conta_id: string | null;
+      comissao_pct: number;
+      ativo: boolean;
+    } | null;
+    let split: SplitGateway | null =
+      afiliado?.ativo && afiliado.gateway_conta_id
+        ? { carteira: afiliado.gateway_conta_id, pct: Number(afiliado.comissao_pct) }
+        : null;
+
+    const dadosAssinatura = {
       cliente,
       valorCentavos: valor,
       ciclo: d.ciclo,
@@ -191,21 +218,41 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
         d.cupom?.trim() ? ` · cupom ${d.cupom.trim().toUpperCase()}` : ""
       }`,
       referencia: tenantId as string,
-    });
+    };
+    let idAssinatura: string;
+    try {
+      idAssinatura = await GATEWAY.criarAssinatura({ ...dadosAssinatura, split });
+    } catch (e) {
+      // Carteira inválida não pode impedir a venda: cria sem split e a
+      // comissão segue pelo pagamento manual.
+      if (!split) throw e;
+      console.error("Split recusado pelo gateway; assinatura criada sem split:", e);
+      split = null;
+      idAssinatura = await GATEWAY.criarAssinatura(dadosAssinatura);
+    }
     await sb.rpc("vincular_gateway", {
       p_tenant: tenantId,
       p_gateway: GATEWAY.nome,
       p_cliente: cliente,
       p_assinatura: idAssinatura,
     });
+    await sb.rpc("registrar_estado_gateway", {
+      p_assinatura: assinatura.data.id,
+      p_valor: valor,
+      p_carteira: split?.carteira ?? null,
+      p_pct: split?.pct ?? null,
+    });
   }
 
   // Boas-vindas por e-mail (nunca o link na tela: quem digitou o e-mail
   // pode não ser o dono dele).
+  const { data: param } = await sb.from("parametros_comerciais").select("dias_teste").single();
+  const diasTeste = Number(param?.dias_teste ?? 14);
+  const teste = `com ${diasTeste} dias de teste grátis`;
   const corpo = conta.link
-    ? `Sua empresa ${d.empresa} foi criada no BeagleOne, com 14 dias de teste grátis.\n\n` +
+    ? `Sua empresa ${d.empresa} foi criada no BeagleOne, ${teste}.\n\n` +
       `Defina sua senha e entre:\n${conta.link}\n\n—\nBeagleOne`
-    : `Sua empresa ${d.empresa} foi criada no BeagleOne, com 14 dias de teste grátis.\n\n` +
+    : `Sua empresa ${d.empresa} foi criada no BeagleOne, ${teste}.\n\n` +
       `Entre com a sua conta de sempre:\n${urlDoApp()}/login\n\n—\nBeagleOne`;
   await sb.from("notificacoes").insert({
     tenant_id: tenantId,

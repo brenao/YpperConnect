@@ -97,19 +97,28 @@ function Contratar() {
   const docOk = documentoValido(f.cpfCnpj);
 
   const plano = planos.data?.planos.find((p) => p.modulo === modulo && p.nivel === nivel);
-  const total = useMemo(() => {
-    if (!plano || !planos.data) return 0;
-    const base = ciclo === "anual" ? plano.anualCentavos : plano.mensalCentavos;
-    const ia =
-      addonIa && !plano.iaIncluida
-        ? ciclo === "anual"
-          ? planos.data.addonIa.anualCentavos
-          : planos.data.addonIa.mensalCentavos
-        : 0;
-    return Math.max(usuarios, 3) * (base + ia);
-  }, [plano, planos.data, ciclo, usuarios, addonIa]);
-  // Mesma conta do banco (valor_mensal_assinatura): arredonda o total.
-  const totalComDesconto = Math.round((total * (100 - descontoPct)) / 100);
+  const param = planos.data?.parametros;
+  const diasTeste = param?.diasTeste ?? 14;
+  // Mesma conta do banco (valor_mensal_assinatura). Descontos não somam:
+  // no anual vale o maior entre o preço anual e o cupom sobre o mensal.
+  const precos = useMemo(() => {
+    if (!plano || !planos.data) return { cheio: 0, final: 0, vale: "nenhum" as const };
+    const ia = addonIa && !plano.iaIncluida;
+    const qtd = Math.max(usuarios, 3);
+    const mensal = qtd * (plano.mensalCentavos + (ia ? planos.data.addonIa.mensalCentavos : 0));
+    const anual = qtd * (plano.anualCentavos + (ia ? planos.data.addonIa.anualCentavos : 0));
+    const comCupom = (mensal * (100 - descontoPct)) / 100;
+    if (ciclo === "anual") {
+      return comCupom >= anual
+        ? { cheio: anual, final: anual, vale: "anual" as const }
+        : { cheio: mensal, final: Math.round(comCupom), vale: "cupom" as const };
+    }
+    return descontoPct > 0
+      ? { cheio: mensal, final: Math.round(comCupom), vale: "cupom" as const }
+      : { cheio: mensal, final: mensal, vale: "nenhum" as const };
+  }, [plano, planos.data, ciclo, usuarios, addonIa, descontoPct]);
+  const total = precos.cheio;
+  const totalComDesconto = precos.final;
 
   const contratar = useMutation({
     mutationFn: () =>
@@ -134,8 +143,9 @@ function Contratar() {
         <Check className="mx-auto size-10 text-success" />
         <h1 className="mt-4 text-2xl font-semibold">Empresa criada!</h1>
         <p className="mt-2 text-muted-foreground">
-          Enviamos para <strong>{enviadoPara}</strong> o link para definir sua senha. Seus 14 dias
-          de teste grátis já começaram; a primeira cobrança só vence no fim do teste.
+          Enviamos para <strong>{enviadoPara}</strong> o link para definir sua senha. Seus{" "}
+          {diasTeste} dias de teste grátis já começaram; a primeira cobrança só vence no fim do
+          teste.
         </p>
       </div>
     );
@@ -145,8 +155,8 @@ function Contratar() {
     <div className="mx-auto max-w-5xl px-4 py-10">
       <h1 className="text-3xl font-semibold">Escolha seu plano</h1>
       <p className="mt-1 text-muted-foreground">
-        14 dias grátis. Pague só por quem atende chamados ou gerencia projetos; quem só abre
-        chamados não paga.
+        {diasTeste} dias grátis. Pague só por quem atende chamados ou gerencia projetos; quem só
+        abre chamados não paga.
       </p>
 
       {planos.isPending ? (
@@ -200,7 +210,9 @@ function Contratar() {
                       ciclo === c ? "bg-primary text-primary-foreground" : "",
                     )}
                   >
-                    {c === "anual" ? "Anual (≈2 meses grátis)" : "Mensal"}
+                    {c === "anual"
+                      ? `Anual (${param?.diasGratisAnual ?? 60} dias grátis)`
+                      : "Mensal"}
                   </button>
                 ))}
               </div>
@@ -312,12 +324,18 @@ function Contratar() {
               {ciclo === "anual" ? "plano anual" : "plano mensal"}
               {nivel === "pro" || addonIa ? " · com IA" : ""}
             </p>
-            {descontoPct > 0 ? (
+            {precos.vale === "cupom" ? (
               <p className="text-sm text-muted-foreground">
                 <span className="line-through">{reais(total)}</span>{" "}
                 <span className="font-medium text-success">
-                  cupom {cupomOk?.codigo} · −{descontoPct}%
+                  cupom {cupomOk?.codigo} · −{descontoPct}% por {param?.mesesDescontoCupom ?? 12}{" "}
+                  meses
                 </span>
+              </p>
+            ) : descontoPct > 0 && precos.vale === "anual" ? (
+              <p className="text-xs text-muted-foreground">
+                O desconto do plano anual já é maior que o do cupom {cupomOk?.codigo}; os descontos
+                não se somam.
               </p>
             ) : null}
             <p className="text-3xl font-semibold">
@@ -334,7 +352,7 @@ function Contratar() {
               disabled={contratar.isPending || !plano || !docOk || conferindoCupom || cupomRecusado}
               onClick={() => contratar.mutate()}
             >
-              {contratar.isPending ? "Criando..." : "Começar 14 dias grátis"}
+              {contratar.isPending ? "Criando..." : `Começar ${diasTeste} dias grátis`}
             </Button>
             <p className="text-xs text-muted-foreground">
               Pix, boleto ou cartão. A primeira cobrança vence no fim do teste.

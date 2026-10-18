@@ -45,7 +45,7 @@ update public.assinaturas a set plano_codigo = 'itsm_essencial', usuarios_contra
 
 -- 4
 select is(public.valor_mensal_assinatura((select a.id from public.assinaturas a, t where a.tenant_id = t.alfa)),
-          52000, 'ITSM Essencial anual, 5 usuarios + IA: 5 x (65 + 39) = R$ 520');
+          52500, 'ITSM Essencial anual (60 dias gratis), 5 usuarios + IA: 5 x (66 + 39) = R$ 525');
 
 update public.assinaturas a set plano_codigo = 'itsm_pro' from t where a.tenant_id = t.alfa;
 

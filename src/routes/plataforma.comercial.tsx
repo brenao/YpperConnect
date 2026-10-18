@@ -27,14 +27,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { sessaoFn } from "@/services/sessao.functions";
 import { DialogLink } from "@/views/dialog-link";
 import {
+  atualizarAfiliadoFn,
   atualizarAssinaturaFn,
+  salvarParametrosFn,
   codigoAfiliadoEmUsoFn,
   criarAfiliadoFn,
   sugerirCodigoAfiliadoFn,
   marcarComissaoPagaFn,
   painelComercialFn,
 } from "@/services/comercial.functions";
-import type { LinhaAssinatura, Plano } from "@/repositories/comercial.repo";
+import type {
+  Afiliado,
+  LinhaAssinatura,
+  ParametrosComerciais,
+  Plano,
+} from "@/repositories/comercial.repo";
 
 export const Route = createFileRoute("/plataforma/comercial")({
   head: () => ({ meta: [{ title: "Comercial · Plataforma · BeagleOne" }] }),
@@ -213,9 +220,11 @@ function DialogAssinatura({
 }
 
 function DialogAfiliado({
+  descontoMax,
   onFechar,
   onLink,
 }: {
+  descontoMax: number;
   onFechar: () => void;
   onLink: (url: string, aviso: string) => void;
 }) {
@@ -226,7 +235,13 @@ function DialogAfiliado({
     email: string;
     tipo: "afiliado" | "parceiro";
     descontoPct: number;
-  }>({ codigo: "", nome: "", email: "", tipo: "afiliado", descontoPct: 10 });
+  }>({
+    codigo: "",
+    nome: "",
+    email: "",
+    tipo: "afiliado",
+    descontoPct: Math.min(10, descontoMax),
+  });
   // Enquanto a pessoa não digita o código, ele acompanha nome e tipo.
   const [codigoEditado, setCodigoEditado] = useState(false);
   const [codigoDigitado, setCodigoDigitado] = useState("");
@@ -313,18 +328,21 @@ function DialogAfiliado({
             <Input
               type="number"
               min={0}
-              max={50}
+              max={descontoMax}
               value={f.descontoPct}
               onChange={(e) =>
                 setF({
                   ...f,
-                  descontoPct: Math.min(50, Math.max(0, Math.round(Number(e.target.value) || 0))),
+                  descontoPct: Math.min(
+                    descontoMax,
+                    Math.max(0, Math.round(Number(e.target.value) || 0)),
+                  ),
                 })
               }
             />
             <p className="text-xs text-muted-foreground">
-              Quem usar o cupom paga a assinatura com este desconto (até 50%). A comissão do
-              afiliado é calculada sobre o valor com desconto.
+              Quem usar o cupom paga a assinatura com este desconto (até {descontoMax}%, conforme os
+              parâmetros). A comissão do afiliado é calculada sobre o valor com desconto.
             </p>
           </div>
           <div className="space-y-1.5">
@@ -385,6 +403,187 @@ function DialogAfiliado({
   );
 }
 
+function DialogEditarAfiliado({
+  afiliado,
+  descontoMax,
+  onFechar,
+}: {
+  afiliado: Afiliado;
+  descontoMax: number;
+  onFechar: () => void;
+}) {
+  const qc = useQueryClient();
+  const [descontoPct, setDescontoPct] = useState(afiliado.descontoPct);
+  const [ativo, setAtivo] = useState(afiliado.ativo);
+  const salvar = useMutation({
+    mutationFn: () => atualizarAfiliadoFn({ data: { id: afiliado.id, descontoPct, ativo } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["painel-comercial"] });
+      toast.success("Afiliado atualizado");
+      onFechar();
+    },
+    onError: erro,
+  });
+  return (
+    <Dialog open onOpenChange={(v) => (v ? null : onFechar())}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {afiliado.nome} · <span className="font-mono">{afiliado.codigo}</span>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Desconto para o cliente (%)</Label>
+            <Input
+              type="number"
+              min={0}
+              max={descontoMax}
+              value={descontoPct}
+              onChange={(e) =>
+                setDescontoPct(
+                  Math.min(descontoMax, Math.max(0, Math.round(Number(e.target.value) || 0))),
+                )
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Vale para as próximas vendas. O código não muda, porque já foi divulgado; se ele traz
+              o número do desconto antigo, considere cadastrar um novo.
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Switch checked={ativo} onCheckedChange={setAtivo} />
+            Ativo (inativo: o cupom deixa de valer e o split é retirado na próxima sincronização)
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onFechar}>
+            Cancelar
+          </Button>
+          <Button disabled={salvar.isPending} onClick={() => salvar.mutate()}>
+            {salvar.isPending ? "Salvando..." : "Salvar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CampoNumero({
+  label,
+  ajuda,
+  valor,
+  onChange,
+  min,
+  max,
+  sufixo,
+}: {
+  label: string;
+  ajuda: string;
+  valor: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  sufixo: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          min={min}
+          max={max}
+          className="w-28"
+          value={valor}
+          onChange={(e) => onChange(Math.round(Number(e.target.value) || 0))}
+        />
+        <span className="text-sm text-muted-foreground">{sufixo}</span>
+      </div>
+      <p className="text-xs text-muted-foreground">{ajuda}</p>
+    </div>
+  );
+}
+
+function AbaParametros({ atual }: { atual: ParametrosComerciais }) {
+  const qc = useQueryClient();
+  const [p, setP] = useState(atual);
+  useEffect(() => setP(atual), [atual]);
+  const mudou = JSON.stringify(p) !== JSON.stringify(atual);
+  const salvar = useMutation({
+    mutationFn: () => salvarParametrosFn({ data: p }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["painel-comercial"] });
+      qc.invalidateQueries({ queryKey: ["planos-publicos"] });
+      toast.success("Parâmetros salvos", {
+        description:
+          p.diasGratisAnual !== atual.diasGratisAnual
+            ? "Preços anuais recalculados. Assinaturas existentes são ajustadas na sincronização diária."
+            : undefined,
+      });
+    },
+    onError: erro,
+  });
+  return (
+    <div className="panel max-w-2xl space-y-5 p-5">
+      <div className="grid gap-5 sm:grid-cols-2">
+        <CampoNumero
+          label="Teste grátis"
+          sufixo="dias"
+          min={0}
+          max={90}
+          valor={p.diasTeste}
+          onChange={(v) => setP({ ...p, diasTeste: v })}
+          ajuda="Para empresas novas. Quem já está em teste mantém o prazo."
+        />
+        <CampoNumero
+          label="Plano anual: dias grátis"
+          sufixo="dias"
+          min={0}
+          max={180}
+          valor={p.diasGratisAnual}
+          onChange={(v) => setP({ ...p, diasGratisAnual: v })}
+          ajuda={`Preço anual = mensal × (365 − ${p.diasGratisAnual}) / 365 (≈ ${Math.round(
+            (p.diasGratisAnual / 365) * 100,
+          )}% de desconto).`}
+        />
+        <CampoNumero
+          label="Desconto máximo do cupom"
+          sufixo="%"
+          min={0}
+          max={90}
+          valor={p.descontoCupomMax}
+          onChange={(v) => setP({ ...p, descontoCupomMax: v })}
+          ajuda="Teto para o desconto de cada afiliado."
+        />
+        <CampoNumero
+          label="Duração do desconto do cupom"
+          sufixo="meses"
+          min={1}
+          max={60}
+          valor={p.mesesDescontoCupom}
+          onChange={(v) => setP({ ...p, mesesDescontoCupom: v })}
+          ajuda="Contados do fim do teste. Vale para vendas novas."
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Os descontos não se somam: no plano anual vale o maior entre o desconto do anual e o do
+        cupom.
+      </p>
+      <div className="flex gap-2">
+        <Button disabled={!mudou || salvar.isPending} onClick={() => salvar.mutate()}>
+          {salvar.isPending ? "Salvando..." : "Salvar parâmetros"}
+        </Button>
+        {mudou ? (
+          <Button variant="ghost" onClick={() => setP(atual)}>
+            Descartar
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function Comercial() {
   const qc = useQueryClient();
   const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn() });
@@ -396,6 +595,7 @@ function Comercial() {
   });
   const [editando, setEditando] = useState<LinhaAssinatura | null>(null);
   const [novoAfiliado, setNovoAfiliado] = useState(false);
+  const [editandoAfiliado, setEditandoAfiliado] = useState<Afiliado | null>(null);
   const [link, setLink] = useState<{ url: string; titulo: string; aviso?: string } | null>(null);
   const pagar = useMutation({
     mutationFn: (id: string) => marcarComissaoPagaFn({ data: { id } }),
@@ -452,7 +652,12 @@ function Comercial() {
             <TabsList>
               <TabsTrigger value="assinaturas">Assinaturas</TabsTrigger>
               <TabsTrigger value="afiliados">Afiliados e comissões</TabsTrigger>
+              <TabsTrigger value="parametros">Parâmetros</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="parametros" className="mt-4">
+              <AbaParametros atual={d.parametros} />
+            </TabsContent>
 
             <TabsContent value="assinaturas" className="mt-4">
               <div className="panel overflow-x-auto">
@@ -522,15 +727,28 @@ function Comercial() {
                       <th className="px-4 py-2 font-medium">Afiliado</th>
                       <th className="px-4 py-2 font-medium">Código</th>
                       <th className="px-4 py-2 font-medium">Tipo</th>
-                      <th className="px-4 py-2 font-medium">Desconto do cliente</th>
+                      <th className="px-4 py-2 font-medium">Desconto</th>
                       <th className="px-4 py-2 font-medium">Comissão</th>
+                      <th className="px-4 py-2 font-medium">Vendas</th>
+                      <th className="px-4 py-2 font-medium">Receita/mês</th>
+                      <th className="px-4 py-2 font-medium">Comissões</th>
+                      <th className="px-4 py-2 font-medium">Recebimento</th>
+                      <th className="px-4 py-2" />
                     </tr>
                   </thead>
                   <tbody>
                     {d.afiliados.map((a) => (
-                      <tr key={a.id} className="border-b border-border/60">
+                      <tr
+                        key={a.id}
+                        className={`border-b border-border/60 ${a.ativo ? "" : "opacity-60"}`}
+                      >
                         <td className="px-4 py-2">
                           {a.nome}
+                          {a.ativo ? null : (
+                            <Badge variant="outline" className="ml-2 text-[10px]">
+                              Inativo
+                            </Badge>
+                          )}
                           <span className="block text-[11px] text-muted-foreground">{a.email}</span>
                         </td>
                         <td className="px-4 py-2 font-mono text-xs">{a.codigo}</td>
@@ -542,6 +760,39 @@ function Comercial() {
                         </td>
                         <td className="px-4 py-2">
                           {a.comissaoPct}% · {a.mesesRecorrencia} meses
+                        </td>
+                        <td className="px-4 py-2">
+                          {a.ativas} ativas
+                          <span className="block text-[11px] text-muted-foreground">
+                            {a.emTeste} em teste · {a.canceladas} canceladas
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">{reais(a.receitaMensalCentavos)}</td>
+                        <td className="px-4 py-2">
+                          {reais(a.comissaoTotalCentavos)}
+                          <span className="block text-[11px] text-muted-foreground">
+                            {reais(a.comissaoAPagarCentavos)} em aberto
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          {a.temCarteira ? (
+                            <Badge variant="outline" className="text-[10px]">
+                              Split Asaas
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Manual</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            title="Editar afiliado"
+                            onClick={() => setEditandoAfiliado(a)}
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -568,7 +819,14 @@ function Comercial() {
                         <td className="px-4 py-2">{c.afiliadoNome}</td>
                         <td className="px-4 py-2">{c.empresa}</td>
                         <td className="px-4 py-2">{reais(c.valorCentavos)}</td>
-                        <td className="px-4 py-2 capitalize">{c.status}</td>
+                        <td className="px-4 py-2 capitalize">
+                          {c.status}
+                          {c.viaSplit ? (
+                            <span className="block text-[11px] normal-case text-muted-foreground">
+                              via split Asaas
+                            </span>
+                          ) : null}
+                        </td>
                         <td className="px-4 py-2 text-muted-foreground">{dataBr(c.liberarEm)}</td>
                         <td className="px-4 py-2 text-right">
                           {c.status === "liberada" ? (
@@ -606,10 +864,18 @@ function Comercial() {
           ) : null}
           {novoAfiliado ? (
             <DialogAfiliado
+              descontoMax={d.parametros.descontoCupomMax}
               onFechar={() => setNovoAfiliado(false)}
               onLink={(url, aviso) =>
                 setLink({ url, titulo: "Convite do afiliado (portal)", aviso })
               }
+            />
+          ) : null}
+          {editandoAfiliado ? (
+            <DialogEditarAfiliado
+              afiliado={editandoAfiliado}
+              descontoMax={d.parametros.descontoCupomMax}
+              onFechar={() => setEditandoAfiliado(null)}
             />
           ) : null}
           <DialogLink link={link} onFechar={() => setLink(null)} />

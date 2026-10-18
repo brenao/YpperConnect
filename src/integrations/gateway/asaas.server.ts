@@ -18,7 +18,11 @@ function config() {
   };
 }
 
-async function chamar<T>(metodo: "GET" | "POST" | "DELETE", caminho: string, corpo?: unknown) {
+async function chamar<T>(
+  metodo: "GET" | "POST" | "PUT" | "DELETE",
+  caminho: string,
+  corpo?: unknown,
+) {
   const { url, chave } = config();
   const r = await fetch(`${url}${caminho}`, {
     method: metodo,
@@ -82,8 +86,19 @@ export const asaas: GatewayPagamento = {
       cycle: d.ciclo === "anual" ? "YEARLY" : "MONTHLY",
       description: d.descricao,
       externalReference: d.referencia,
+      // Comissão do afiliado direto na carteira dele, a cada cobrança.
+      ...(d.split ? { split: [{ walletId: d.split.carteira, percentualValue: d.split.pct }] } : {}),
     });
     return r.id;
+  },
+
+  async atualizarAssinatura(id, d) {
+    await chamar("PUT", `/subscriptions/${encodeURIComponent(id)}`, {
+      value: Math.round(d.valorCentavos) / 100,
+      // Lista vazia desliga o split nas próximas cobranças.
+      split: d.split ? [{ walletId: d.split.carteira, percentualValue: d.split.pct }] : [],
+      updatePendingPayments: true,
+    });
   },
 
   async cancelarAssinatura(id) {

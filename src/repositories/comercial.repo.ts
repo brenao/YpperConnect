@@ -41,6 +41,23 @@ export interface Afiliado {
   descontoPct: number;
   mesesRecorrencia: number;
   ativo: boolean;
+  /** Desempenho (desempenho_afiliados). */
+  emTeste: number;
+  ativas: number;
+  canceladas: number;
+  receitaMensalCentavos: number;
+  comissaoTotalCentavos: number;
+  comissaoAPagarCentavos: number;
+  /** Informou a carteira Asaas (recebe por split)? */
+  temCarteira: boolean;
+}
+
+/** Regras comerciais que o operador ajusta (tabela parametros_comerciais). */
+export interface ParametrosComerciais {
+  diasTeste: number;
+  diasGratisAnual: number;
+  descontoCupomMax: number;
+  mesesDescontoCupom: number;
 }
 
 export interface Comissao {
@@ -51,6 +68,8 @@ export interface Comissao {
   status: "prevista" | "liberada" | "paga" | "estornada";
   liberarEm: string | null;
   pagoEm: string | null;
+  /** Paga pelo split do Asaas, direto na carteira do afiliado. */
+  viaSplit: boolean;
 }
 
 function exigirOperador(ctx: ContextoUsuario): void {
@@ -61,7 +80,13 @@ function falha(erro: { code?: string; message: string }): never {
   if (erro.code === "42501") throw new ErroDominio("Somente operadores da plataforma.");
   if (erro.code === "P0001" || erro.code === "P0002") throw new ErroDominio(erro.message);
   if (erro.code === "23505") throw new ErroDominio("Já existe um afiliado com esse código.");
-  if (erro.code === "23514") throw new ErroDominio("Valor fora do permitido (confira os campos).");
+  if (erro.code === "23514") {
+    throw new ErroDominio(
+      erro.message.startsWith("Desconto")
+        ? erro.message
+        : "Valor fora do permitido (confira os campos).",
+    );
+  }
   throw new Error(erro.message);
 }
 
@@ -133,22 +158,87 @@ export async function atualizarAssinatura(
 
 export async function listarAfiliados(ctx: ContextoUsuario): Promise<Afiliado[]> {
   exigirOperador(ctx);
-  const { data, error } = await getSupabaseServerClient()
-    .from("afiliados")
-    .select("id, codigo, nome, email, tipo, comissao_pct, desconto_pct, meses_recorrencia, ativo")
-    .order("nome");
+  const sb = getSupabaseServerClient();
+  const [{ data, error }, desempenho] = await Promise.all([
+    sb
+      .from("afiliados")
+      .select("id, codigo, nome, email, tipo, comissao_pct, desconto_pct, meses_recorrencia, ativo")
+      .order("nome"),
+    sb.rpc("desempenho_afiliados"),
+  ]);
   if (error) falha(error);
-  return (data ?? []).map((a) => ({
-    id: a.id as string,
-    codigo: a.codigo as string,
-    nome: a.nome as string,
-    email: a.email as string,
-    tipo: a.tipo as Afiliado["tipo"],
-    comissaoPct: Number(a.comissao_pct),
-    descontoPct: Number(a.desconto_pct ?? 0),
-    mesesRecorrencia: Number(a.meses_recorrencia),
-    ativo: a.ativo as boolean,
-  }));
+  if (desempenho.error) falha(desempenho.error);
+  const porId = new Map(
+    ((desempenho.data ?? []) as Record<string, unknown>[]).map((d) => [
+      d["afiliado_id"] as string,
+      d,
+    ]),
+  );
+  return (data ?? []).map((a) => {
+    const d: Record<string, unknown> = porId.get(a.id as string) ?? {};
+    return {
+      id: a.id as string,
+      codigo: a.codigo as string,
+      nome: a.nome as string,
+      email: a.email as string,
+      tipo: a.tipo as Afiliado["tipo"],
+      comissaoPct: Number(a.comissao_pct),
+      descontoPct: Number(a.desconto_pct ?? 0),
+      mesesRecorrencia: Number(a.meses_recorrencia),
+      ativo: a.ativo as boolean,
+      emTeste: Number(d["em_teste"] ?? 0),
+      ativas: Number(d["ativas"] ?? 0),
+      canceladas: Number(d["canceladas"] ?? 0),
+      receitaMensalCentavos: Number(d["receita_mensal_centavos"] ?? 0),
+      comissaoTotalCentavos: Number(d["comissao_total_centavos"] ?? 0),
+      comissaoAPagarCentavos: Number(d["comissao_a_pagar_centavos"] ?? 0),
+      temCarteira: d["tem_carteira"] === true,
+    };
+  });
+}
+
+export async function lerParametros(ctx: ContextoUsuario): Promise<ParametrosComerciais> {
+  exigirOperador(ctx);
+  const { data, error } = await getSupabaseServerClient()
+    .from("parametros_comerciais")
+    .select("dias_teste, dias_gratis_anual, desconto_cupom_max, meses_desconto_cupom")
+    .single();
+  if (error) falha(error);
+  return {
+    diasTeste: Number(data.dias_teste),
+    diasGratisAnual: Number(data.dias_gratis_anual),
+    descontoCupomMax: Number(data.desconto_cupom_max),
+    mesesDescontoCupom: Number(data.meses_desconto_cupom),
+  };
+}
+
+/** Novos dias grátis do anual recalculam o preço anual de todos os planos. */
+export async function salvarParametros(
+  ctx: ContextoUsuario,
+  p: ParametrosComerciais,
+): Promise<void> {
+  exigirOperador(ctx);
+  const { error } = await getSupabaseServerClient().rpc("salvar_parametros_comerciais", {
+    p_dias_teste: p.diasTeste,
+    p_dias_gratis_anual: p.diasGratisAnual,
+    p_desconto_cupom_max: p.descontoCupomMax,
+    p_meses_desconto_cupom: p.mesesDescontoCupom,
+  });
+  if (error) falha(error);
+}
+
+/** O código não muda (já foi divulgado); desconto e situação, sim. */
+export async function atualizarAfiliado(
+  ctx: ContextoUsuario,
+  d: { id: string; descontoPct: number; ativo: boolean },
+): Promise<void> {
+  exigirOperador(ctx);
+  const { error } = await getSupabaseServerClient().rpc("atualizar_afiliado", {
+    p_id: d.id,
+    p_desconto: d.descontoPct,
+    p_ativo: d.ativo,
+  });
+  if (error) falha(error);
 }
 
 export interface NovoAfiliado {
@@ -156,7 +246,7 @@ export interface NovoAfiliado {
   nome: string;
   email: string;
   tipo: "afiliado" | "parceiro";
-  /** 0 a 50. O código sugerido termina com ele (LUCIANA20 = 20%). */
+  /** 0 ao máximo dos parâmetros comerciais. O código sugerido termina com ele (LUCIANA20 = 20%). */
   descontoPct: number;
 }
 
@@ -273,7 +363,9 @@ export async function listarComissoes(ctx: ContextoUsuario): Promise<Comissao[]>
   const sb = getSupabaseServerClient();
   const { data, error } = await sb
     .from("comissoes")
-    .select("id, afiliado_id, assinatura_id, valor_centavos, status, liberar_em, pago_em")
+    .select(
+      "id, afiliado_id, assinatura_id, valor_centavos, status, liberar_em, pago_em, via_split",
+    )
     .order("criado_em", { ascending: false })
     .limit(200);
   if (error) falha(error);
@@ -300,6 +392,7 @@ export async function listarComissoes(ctx: ContextoUsuario): Promise<Comissao[]>
     status: c.status as Comissao["status"],
     liberarEm: (c.liberar_em as string | null) ?? null,
     pagoEm: (c.pago_em as string | null) ?? null,
+    viaSplit: c.via_split === true,
   }));
 }
 
