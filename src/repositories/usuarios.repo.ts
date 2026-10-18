@@ -233,7 +233,8 @@ export async function criarUsuario(
         usuario_id: id,
         tipo: "interno",
         origem: "manual",
-        login: d.login.trim(),
+        // Sem AD o login fica nulo: a unicidade (empresa, login) ignora nulos.
+        login: d.login.trim() || null,
         departamento: d.departamento ?? null,
         equipe_id: d.equipeId ?? null,
         perfil_id: d.perfilId ?? null,

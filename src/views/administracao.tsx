@@ -52,7 +52,6 @@ import { Paginacao, usePaginacao } from "@/views/paginacao";
 import { listarRecursosFn } from "@/services/recursos.functions";
 import { cn } from "@/lib/utils";
 import { SECOES_ADMINISTRACAO, type SecaoAdministracao } from "@/models/administracao-secoes";
-import { sessaoFn } from "@/services/sessao.functions";
 import { ConfirmarExclusao } from "@/views/confirmar-exclusao";
 import { DialogLink } from "@/views/dialog-link";
 import { descreverVinculos } from "@/lib/vinculos";
@@ -183,8 +182,6 @@ function UserDialog({
     enabled: open,
   });
   const perfis = useQuery({ queryKey: ["perfis"], queryFn: () => listarPerfisFn(), enabled: open });
-  // O exemplo do login usa o nome da empresa vinculada (ex.: Ypper Tech\usuario).
-  const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn(), enabled: open });
 
   useEffect(() => {
     if (!open) return;
@@ -242,7 +239,8 @@ function UserDialog({
   const erroNome = nome.length < 3 ? "Informe o nome completo." : null;
   const erroEmail =
     email === "" ? "Campo obrigatório." : !email.includes("@") ? "Informe um e-mail válido." : null;
-  const erroLogin = login.length < 3 ? "Informe o login de rede." : null;
+  // Opcional: so quem integra com o Active Directory precisa.
+  const erroLogin = login !== "" && login.length < 3 ? "Login de rede muito curto." : null;
 
   const classeErro = "border-destructive focus-visible:ring-destructive/40";
 
@@ -317,7 +315,8 @@ function UserDialog({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="usr-login">
-              Login de rede <span className="text-destructive">*</span>
+              Login de rede{" "}
+              <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
             </Label>
             <Input
               id="usr-login"
@@ -327,7 +326,7 @@ function UserDialog({
               className={tentou && erroLogin ? classeErro : undefined}
               value={form.login}
               onChange={(e) => setForm({ ...form, login: e.target.value })}
-              placeholder={`${sessao.data?.tenant?.nome ?? "Empresa"}\\usuario`}
+              placeholder="Só para integração com Active Directory"
             />
             {tentou && erroLogin ? <p className="text-xs text-destructive">{erroLogin}</p> : null}
           </div>

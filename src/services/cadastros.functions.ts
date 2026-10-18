@@ -208,7 +208,12 @@ export const criarEquipeFn = createServerFn({ method: "POST" })
 const UsuarioSchema = z.object({
   nome: z.string().min(3).max(200),
   email: z.string().email().max(320),
-  login: z.string().min(3).max(120),
+  // Opcional: so empresas com Active Directory usam. Vazio vira nulo.
+  login: z
+    .string()
+    .trim()
+    .max(120)
+    .refine((v) => v === "" || v.length >= 3, "Login de rede muito curto"),
   departamento: z.string().max(160).nullable().optional(),
   equipeId: z.string().nullable().optional(),
   perfilId: z.string().nullable().optional(),
