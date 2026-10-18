@@ -1,4 +1,4 @@
-import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
@@ -47,7 +47,9 @@ function LoginPage() {
       // Descarta o que ficou em cache de outra sessão antes de entrar.
       queryClient.clear();
       await router.invalidate();
-      await router.navigate({ to: "/" });
+      // Afiliado sem empresa vai para o portal.
+      const s = await sessaoFn();
+      await router.navigate({ to: s.estado === "sem_tenant" && s.afiliado ? "/afiliado" : "/" });
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "Não foi possível entrar.");
     } finally {
@@ -103,7 +105,15 @@ function LoginPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="senha">Senha</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="senha">Senha</Label>
+                <Link
+                  to="/esqueci-senha"
+                  className="text-xs text-muted-foreground hover:text-primary hover:underline"
+                >
+                  Esqueci minha senha
+                </Link>
+              </div>
               <Input
                 id="senha"
                 type="password"

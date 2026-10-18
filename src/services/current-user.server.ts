@@ -238,7 +238,9 @@ export async function confirmarLink(
   const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: tipo });
   if (!error) return { erro: null };
   if (error.code === "otp_expired") {
-    return { erro: "Este link expirou ou já foi usado. Peça um novo ao administrador." };
+    return {
+      erro: 'Este link expirou ou já foi usado. Peça um novo em "Esqueci minha senha", na tela de login.',
+    };
   }
   return { erro: error.message };
 }
@@ -246,7 +248,12 @@ export async function confirmarLink(
 export async function definirSenha(senha: string): Promise<{ erro: string | null }> {
   const supabase = getSupabaseServerClient();
   const { error } = await supabase.auth.updateUser({ password: senha });
-  if (!error) return { erro: null };
+  if (!error) {
+    // Senha nova encerra as outras sessões abertas (outro aparelho, ou
+    // quem tenha usado a senha antiga); a atual continua.
+    await supabase.auth.signOut({ scope: "others" });
+    return { erro: null };
+  }
   if (error.code === "same_password") return { erro: null };
   if (error.code === "weak_password") return { erro: "Senha fraca. Use ao menos 8 caracteres." };
   return { erro: error.message };

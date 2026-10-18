@@ -17,7 +17,7 @@ import { sessaoFn } from "../services/sessao.functions";
 import { rotaNoPlano } from "@/models/plano";
 
 /** Rotas abertas: não exigem sessão. */
-const ROTAS_PUBLICAS = ["/login", "/auth/confirm", "/contratar"];
+const ROTAS_PUBLICAS = ["/login", "/auth/confirm", "/contratar", "/esqueci-senha"];
 /** Prefixos públicos (com parâmetro). */
 const PREFIXOS_PUBLICOS = ["/indicacao/"];
 
@@ -93,8 +93,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     if (ROTAS_PUBLICAS.some((rota) => location.pathname.endsWith(rota))) return;
     if (PREFIXOS_PUBLICOS.some((p) => location.pathname.includes(p))) return;
     const sessao = await sessaoFn();
-    // Portal do afiliado: basta estar logado (não precisa de empresa).
-    if (location.pathname.includes("/afiliado")) {
+    // Portal do afiliado e definição de senha: basta estar logado (não
+    // precisa de empresa; o afiliado não tem nenhuma).
+    if (location.pathname.includes("/afiliado") || location.pathname.endsWith("/definir-senha")) {
       if (sessao.estado === "anonimo") throw redirect({ to: "/login" });
       return;
     }

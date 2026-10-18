@@ -1,5 +1,5 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ export const Route = createFileRoute("/definir-senha")({
 
 function DefinirSenha() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const sessao = useQuery({ queryKey: ["sessao"], queryFn: () => sessaoFn() });
 
   const [senha, setSenha] = useState("");
@@ -39,7 +40,11 @@ function DefinirSenha() {
       const r = await definirSenhaFn({ data: { senha } });
       if (r.erro) return setErro(r.erro);
       toast.success("Senha definida");
-      await router.navigate({ to: "/" });
+      queryClient.clear();
+      await router.invalidate();
+      // Afiliado não tem empresa: a casa dele é o portal.
+      const s = await sessaoFn();
+      await router.navigate({ to: s.estado === "sem_tenant" && s.afiliado ? "/afiliado" : "/" });
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "Não foi possível salvar a senha.");
     } finally {
@@ -60,7 +65,11 @@ function DefinirSenha() {
           <div>
             <h1 className="text-lg font-semibold">{nome ? `Olá, ${nome}` : "Definir senha"}</h1>
             <p className="text-sm text-muted-foreground">
-              {empresa ? `Crie sua senha para acessar ${empresa}.` : "Crie sua senha de acesso."}
+              {empresa
+                ? `Crie sua senha para acessar ${empresa}.`
+                : sessao.data?.afiliado
+                  ? "Crie sua senha para acessar o portal do afiliado."
+                  : "Crie sua senha de acesso."}
             </p>
           </div>
 

@@ -142,3 +142,14 @@ export const definirSenhaFn = createServerFn({ method: "POST" })
     const { definirSenha } = await servidor();
     return definirSenha(data.senha);
   });
+/**
+ * Esqueci minha senha. A resposta é sempre a mesma, exista a conta ou
+ * não, para a tela não revelar quais e-mails têm cadastro.
+ */
+export const esqueciSenhaFn = createServerFn({ method: "POST" })
+  .validator(z.object({ email: z.string().trim().toLowerCase().email("E-mail inválido") }))
+  .handler(async ({ data }) => {
+    const { solicitarRecuperacao } = await import("@/services/recuperacao.server");
+    await solicitarRecuperacao(data.email);
+    return { ok: true };
+  });

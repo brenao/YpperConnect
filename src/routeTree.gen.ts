@@ -20,6 +20,7 @@ import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
 import { Route as ContratarRouteImport } from './routes/contratar'
 import { Route as DefinirSenhaRouteImport } from './routes/definir-senha'
 import { Route as DiretoriaRouteImport } from './routes/diretoria'
+import { Route as EsqueciSenhaRouteImport } from './routes/esqueci-senha'
 import { Route as GovernancaRouteImport } from './routes/governanca'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PermissoesRouteImport } from './routes/permissoes'
@@ -94,6 +95,11 @@ const DefinirSenhaRoute = DefinirSenhaRouteImport.update({
 const DiretoriaRoute = DiretoriaRouteImport.update({
   id: '/diretoria',
   path: '/diretoria',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EsqueciSenhaRoute = EsqueciSenhaRouteImport.update({
+  id: '/esqueci-senha',
+  path: '/esqueci-senha',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GovernancaRoute = GovernancaRouteImport.update({
@@ -212,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/contratar': typeof ContratarRoute
   '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
+  '/esqueci-senha': typeof EsqueciSenhaRoute
   '/governanca': typeof GovernancaRoute
   '/login': typeof LoginRoute
   '/permissoes': typeof PermissoesRoute
@@ -245,6 +252,7 @@ export interface FileRoutesByTo {
   '/contratar': typeof ContratarRoute
   '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
+  '/esqueci-senha': typeof EsqueciSenhaRoute
   '/governanca': typeof GovernancaRoute
   '/login': typeof LoginRoute
   '/permissoes': typeof PermissoesRoute
@@ -279,6 +287,7 @@ export interface FileRoutesById {
   '/contratar': typeof ContratarRoute
   '/definir-senha': typeof DefinirSenhaRoute
   '/diretoria': typeof DiretoriaRoute
+  '/esqueci-senha': typeof EsqueciSenhaRoute
   '/governanca': typeof GovernancaRoute
   '/login': typeof LoginRoute
   '/permissoes': typeof PermissoesRoute
@@ -314,6 +323,7 @@ export interface FileRouteTypes {
     | '/contratar'
     | '/definir-senha'
     | '/diretoria'
+    | '/esqueci-senha'
     | '/governanca'
     | '/login'
     | '/permissoes'
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/contratar'
     | '/definir-senha'
     | '/diretoria'
+    | '/esqueci-senha'
     | '/governanca'
     | '/login'
     | '/permissoes'
@@ -380,6 +391,7 @@ export interface FileRouteTypes {
     | '/contratar'
     | '/definir-senha'
     | '/diretoria'
+    | '/esqueci-senha'
     | '/governanca'
     | '/login'
     | '/permissoes'
@@ -414,6 +426,7 @@ export interface RootRouteChildren {
   ContratarRoute: typeof ContratarRoute
   DefinirSenhaRoute: typeof DefinirSenhaRoute
   DiretoriaRoute: typeof DiretoriaRoute
+  EsqueciSenhaRoute: typeof EsqueciSenhaRoute
   GovernancaRoute: typeof GovernancaRoute
   LoginRoute: typeof LoginRoute
   PermissoesRoute: typeof PermissoesRoute
@@ -513,6 +526,13 @@ declare module '@tanstack/react-router' {
       path: '/diretoria'
       fullPath: '/diretoria'
       preLoaderRoute: typeof DiretoriaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/esqueci-senha': {
+      id: '/esqueci-senha'
+      path: '/esqueci-senha'
+      fullPath: '/esqueci-senha'
+      preLoaderRoute: typeof EsqueciSenhaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/governanca': {
@@ -670,6 +690,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContratarRoute: ContratarRoute,
   DefinirSenhaRoute: DefinirSenhaRoute,
   DiretoriaRoute: DiretoriaRoute,
+  EsqueciSenhaRoute: EsqueciSenhaRoute,
   GovernancaRoute: GovernancaRoute,
   LoginRoute: LoginRoute,
   PermissoesRoute: PermissoesRoute,

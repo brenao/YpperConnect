@@ -206,7 +206,7 @@ export function urlDoApp(): string {
   return `${getRequestUrl().origin}${base}`;
 }
 
-function montarLink(tokenHash: string, tipo: "invite" | "email"): string {
+export function montarLink(tokenHash: string, tipo: "invite" | "email" | "recovery"): string {
   return `${urlDoApp()}/auth/confirm?token_hash=${encodeURIComponent(tokenHash)}&type=${tipo}`;
 }
 
