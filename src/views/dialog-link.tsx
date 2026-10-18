@@ -22,7 +22,8 @@ export function DialogLink({
   link,
   onFechar,
 }: {
-  link: { url: string; titulo: string } | null;
+  /** aviso: substitui o texto padrão (ex.: "convite enviado por e-mail"). */
+  link: { url: string; titulo: string; aviso?: string | undefined } | null;
   onFechar: () => void;
 }) {
   const [copiado, setCopiado] = useState(false);
@@ -33,8 +34,8 @@ export function DialogLink({
         <DialogHeader>
           <DialogTitle>{link?.titulo}</DialogTitle>
           <DialogDescription>
-            Envie este link à pessoa. Ele vale uma única vez e expira em 1 hora. Ao abrir, ela
-            define a própria senha.
+            {link?.aviso ? `${link.aviso} ` : "Envie este link à pessoa. "}O link vale uma única vez
+            e expira em 1 hora. Ao abrir, a pessoa define a própria senha.
           </DialogDescription>
         </DialogHeader>
         <div className="flex gap-2">

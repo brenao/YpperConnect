@@ -157,7 +157,7 @@ export interface AlteracaoUsuario {
  * Endereço público do app, para os links. APP_URL no .env ganha da
  * requisição: atrás de proxy, a URL que chega ao servidor é a interna.
  */
-function urlDoApp(): string {
+export function urlDoApp(): string {
   const configurada = process.env["APP_URL"]?.replace(/\/$/, "");
   if (configurada) return configurada;
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");

@@ -109,7 +109,9 @@ export type TipoNotificacao =
   /** Pedido de acesso a projeto, endereçado a quem decide. */
   | "acesso_solicitado"
   /** Resposta do gerente ao pedido, endereçada a quem pediu. */
-  | "acesso_decidido";
+  | "acesso_decidido"
+  /** Boas-vindas: empresa criada no checkout ou convite do administrador. */
+  | "boas_vindas";
 
 /** A que registro a notificação se refere. */
 export type ReferenciaNotificacao = "chamado" | "projeto" | "solicitacao_acesso";

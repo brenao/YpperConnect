@@ -159,7 +159,7 @@ function UserDialog({
   open?: boolean | undefined;
   onOpenChange?: ((v: boolean) => void) | undefined;
   /** Recebe o link de convite de um usuário recém-criado. */
-  onLink?: ((url: string) => void) | undefined;
+  onLink?: ((url: string, aviso: string) => void) | undefined;
 }) {
   const qc = useQueryClient();
   const [interno, setInterno] = useState(false);
@@ -213,7 +213,11 @@ function UserDialog({
     mutationFn: (v: UsuarioInput) => criarUsuarioFn({ data: v }),
     onSuccess: (r) => {
       sucesso();
-      if (r.link) onLink?.(r.link);
+      const aviso = r.emailEnviado
+        ? `Convite enviado por e-mail para ${r.email}. Se preferir, copie o link abaixo.`
+        : `Não foi possível enviar o e-mail agora (vamos tentar de novo). Envie este link a ${r.email}.`;
+      if (r.link) onLink?.(r.link, aviso);
+      else if (r.emailEnviado) toast.info(`Aviso de acesso enviado para ${r.email}`);
     },
     onError: erro,
   });
@@ -952,7 +956,7 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
     onError: erro,
   });
 
-  const [link, setLink] = useState<{ url: string; titulo: string } | null>(null);
+  const [link, setLink] = useState<{ url: string; titulo: string; aviso?: string } | null>(null);
   const gerarLink = useMutation({
     mutationFn: (id: string) => gerarLinkAcessoFn({ data: { id } }),
     onSuccess: (r) => setLink({ url: r.link, titulo: "Link de acesso" }),
@@ -1175,7 +1179,7 @@ export function Administracao({ secao }: { secao: SecaoAdministracao }) {
               </div>
               {isAdmin ? (
                 <UserDialog
-                  onLink={(url) => setLink({ url, titulo: "Usuário cadastrado" })}
+                  onLink={(url, aviso) => setLink({ url, titulo: "Usuário cadastrado", aviso })}
                   trigger={
                     <Button size="sm" className="gap-2">
                       <Plus className="size-4" /> Novo usuário

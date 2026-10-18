@@ -226,8 +226,21 @@ export const criarUsuarioFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => UsuarioSchema.parse(d))
   .handler(async ({ data }) => {
     const { criarUsuario } = await import("@/repositories/usuarios.repo");
+    const c = await ctx();
     // Devolve o link de convite: sem AD, é assim que a pessoa cria a senha.
-    return criarUsuario(await ctx(), { id: crypto.randomUUID(), ...data });
+    const r = await criarUsuario(c, { id: crypto.randomUUID(), ...data });
+
+    // Convite também por e-mail. Se o envio falhar, o cadastro vale do
+    // mesmo jeito: a tela avisa e o link continua disponível para copiar.
+    let emailEnviado = false;
+    try {
+      const { enviarConvite } = await import("@/services/convite.server");
+      await enviarConvite(c, { id: r.id, nome: data.nome, email: data.email, link: r.link });
+      emailEnviado = true;
+    } catch (e) {
+      console.error("Convite por e-mail ficou na fila para nova tentativa:", e);
+    }
+    return { ...r, emailEnviado, email: data.email.trim().toLowerCase() };
   });
 
 const UsuarioUpdateSchema = UsuarioSchema.partial().extend({ id: z.string() });
