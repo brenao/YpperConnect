@@ -7,12 +7,12 @@
 #   mv /var/ypper /var/beagleone     -- leva .env e .deploy.env junto
 #
 # Diferenca proposital: o token do GitHub NAO fica dentro do script.
-# Ele e lido de /var/beagleone/.deploy.env, que fica com permissao 600.
+# Ele e lido de /var/.deploy.env, que fica com permissao 600.
 #
-#   cat > /var/beagleone/.deploy.env <<'EOF'
-#   GITHUB_PAT=ghp_xxxxxxxx
+#   cat > /var/.deploy.env <<'EOF'
+#   GITHUB_TOKEN=ghp_xxxxxxxx
 #   EOF
-#   chmod 600 /var/beagleone/.deploy.env
+#   chmod 600 /var/.deploy.env
 #
 # Uso:  ./atualizar-beagleone.sh [branch]     (padrao: main)
 
@@ -53,15 +53,15 @@ NOME_ANTIGO=ypper-app
 
 cd "${BASE_DIR}"
 
-if [ ! -f "${BASE_DIR}/.deploy.env" ]; then
-  echo "ERRO: ${BASE_DIR}/.deploy.env nao existe (precisa conter GITHUB_PAT)."
+if [ ! -f /var/.deploy.env ]; then
+  echo "ERRO: /var/.deploy.env nao existe (precisa conter GITHUB_TOKEN)."
   exit 1
 fi
 # shellcheck disable=SC1091
-. "${BASE_DIR}/.deploy.env"
+. /var/.deploy.env
 
-if [ -z "${GITHUB_PAT:-}" ]; then
-  echo "ERRO: GITHUB_PAT vazio em ${BASE_DIR}/.deploy.env."
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+  echo "ERRO: GITHUB_TOKEN vazio em /var/.deploy.env."
   exit 1
 fi
 
@@ -76,7 +76,7 @@ fi
 #
 # Por isso tambem o clone em ${SRC_DIR}: o `docker build <url-do-git>` de antes
 # clonava pelo daemon do Docker, onde nao ha como passar o cabecalho.
-GITHUB_AUTH="$(printf 'x-access-token:%s' "${GITHUB_PAT}" | base64 -w0)"
+GITHUB_AUTH="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w0)"
 git_github() {
   GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
     GIT_CONFIG_VALUE_0="Authorization: Basic ${GITHUB_AUTH}" git "$@"
