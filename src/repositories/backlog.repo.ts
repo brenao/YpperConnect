@@ -252,23 +252,27 @@ export async function promoverDemanda(ctx: ContextoUsuario, id: string): Promise
 /**
  * Devolve um projeto ao backlog.
  *
- * Existe para o caso de priorização revista — o projeto foi aprovado,
- * nunca começou, e volta para a fila. Recusa quem já tem cronograma:
- * mandar de volta uma tarefa com trabalho registrado esconderia o
- * histórico numa lista que ninguém acompanha.
+ * Existe para a priorização revista: o projeto foi aprovado, não se
+ * sustentou, e volta para a fila em vez de ficar parado na carteira
+ * fingindo que ainda acontece.
+ *
+ * O CRONOGRAMA FICA. Antes esta função recusava projeto com tarefas, e
+ * o argumento era que devolver trabalho registrado o esconderia numa
+ * lista que ninguém acompanha. O argumento caiu quando os paralisados
+ * ganharam tela própria: hoje a devolução é justamente a saída que
+ * aquela tela oferece, e paralisado quase sempre tem cronograma — a
+ * guarda recusava exatamente o caso para o qual a ação existe.
+ *
+ * As tarefas continuam gravadas e voltam intactas quando o projeto for
+ * priorizado de novo. Apagá-las para "limpar" destruiria a estimativa e
+ * o progresso que alguém registrou, e é o tipo de perda que só se
+ * descobre meses depois.
+ *
+ * O que some é o acompanhamento: no backlog o projeto não cobra
+ * atualização semanal nem ocupa capacidade, que é o ponto de devolvê-lo.
  */
 export async function devolverAoBacklog(ctx: ContextoUsuario, id: string): Promise<void> {
   await exigirAcessoDemanda(ctx, id);
-
-  const t = await consultarUm<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM projeto_tarefas WHERE projeto_id = :id AND ativo = 1`,
-    { id },
-  );
-  if ((t?.total ?? 0) > 0) {
-    throw new ErroDominio(
-      "Este projeto já tem cronograma. Cancele-o ou remova as tarefas antes de devolvê-lo ao backlog.",
-    );
-  }
 
   const n = await executar(
     `UPDATE projetos
