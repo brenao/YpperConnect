@@ -238,8 +238,11 @@ function Diretoria() {
       { situacao: "Execução", total: d.projetos.emExecucao, cor: "var(--info)" },
       { situacao: "Planejamento", total: d.projetos.planejamento, cor: "var(--muted-foreground)" },
       { situacao: "Paralisados", total: d.projetos.paralisados, cor: "var(--paused)" },
-      { situacao: "Concluídos", total: d.projetos.concluidos, cor: "var(--success)" },
-      { situacao: "Cancelados", total: d.projetos.cancelados, cor: "var(--muted)" },
+      // "Entregues", e não "Concluídos": é o mesmo conjunto que a
+      // carteira abaixo chama assim, e duas palavras para a mesma coisa
+      // na mesma tela fazem quem lê procurar a diferença que não existe.
+      { situacao: "Entregues", total: d.projetos.concluidos, cor: "var(--success)" },
+      { situacao: "Cancelados", total: d.projetos.cancelados, cor: "var(--destructive)" },
       { situacao: "No backlog", total: d.projetos.backlog, cor: "var(--border)" },
     ];
   }, [d]);
@@ -302,10 +305,26 @@ function Diretoria() {
                   faria a diretoria ler como compromisso o que ainda é
                   fila de espera. */}
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                <Kpi label="Projetos ativos" value={d.projetos.total} hint="sem contar o backlog" />
-                <Kpi label="Em execução" value={d.projetos.emExecucao} tone="text-info" />
-                <Kpi label="Atrasados" value={d.projetos.atrasados} tone="text-destructive" />
-                <Kpi label="Concluídos" value={d.projetos.concluidos} tone="text-success" />
+                {/* Os três primeiros medem o mesmo conjunto — planejamento
+                    e execução —, e por isso podem ser lidos juntos: dos
+                    N em andamento, M já começaram e K estouraram o prazo.
+                    Antes o primeiro contava também paralisados e
+                    encerrados, e aparecia "11 atrasados" ao lado de "10
+                    em execução", o que parece impossível. */}
+                <Kpi label="Em andamento" value={d.projetos.total} hint="planejamento e execução" />
+                <Kpi
+                  label="Em execução"
+                  value={d.projetos.emExecucao}
+                  hint={`${d.projetos.planejamento} em planejamento`}
+                  tone="text-info"
+                />
+                <Kpi
+                  label="Atrasados"
+                  value={d.projetos.atrasados}
+                  hint="término vencido, sem encerrar"
+                  tone={d.projetos.atrasados > 0 ? "text-destructive" : undefined}
+                />
+                <Kpi label="Entregues" value={d.projetos.concluidos} tone="text-success" />
                 <Kpi
                   label="Aguardando decisão"
                   value={d.projetos.backlog}
@@ -314,7 +333,15 @@ function Diretoria() {
                 />
               </div>
 
-              {d.projetos.total === 0 && d.projetos.backlog === 0 ? (
+              {/* Vazio de verdade: nada em lugar nenhum.
+                  `total` passou a contar só o que está em andamento, e
+                  testar só por ele faria uma base com paralisados ou
+                  entregas anunciar "nenhum projeto cadastrado". */}
+              {d.projetos.total === 0 &&
+              d.projetos.backlog === 0 &&
+              d.projetos.paralisados === 0 &&
+              d.projetos.concluidos === 0 &&
+              d.projetos.cancelados === 0 ? (
                 <div className="panel p-5 text-sm text-muted-foreground">
                   <p className="font-medium text-foreground">Nenhum projeto cadastrado.</p>
                   <p className="mt-1">
@@ -362,7 +389,7 @@ function Diretoria() {
 
               <Panel
                 title="Carteira de entregas"
-                description="Concluídos nos últimos meses e previstos para os próximos, pela data de término do projeto. As barras marcam cancelamentos."
+                description="Projetos entregues nos últimos meses e previstos para os próximos, pela data de término do projeto. As barras marcam cancelamentos."
               >
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -415,7 +442,7 @@ function Diretoria() {
                       <Bar
                         dataKey="cancelados"
                         name="Cancelados"
-                        fill="var(--muted-foreground)"
+                        fill="var(--destructive)"
                         barSize={14}
                         radius={3}
                       />
@@ -446,7 +473,7 @@ function Diretoria() {
                           <th className="w-24 border-l border-border py-2 pl-3 font-medium">
                             Atrasados
                           </th>
-                          <th className="w-32 py-2 font-medium">Sem acompanhar</th>
+                          <th className="w-32 py-2 font-medium">Sem Atualização Recente</th>
                         </tr>
                       </thead>
                       <tbody>

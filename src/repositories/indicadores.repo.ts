@@ -335,7 +335,15 @@ export const chamadosPorEquipe = (p: PeriodoFiltro = {}) =>
   agrupar("COALESCE(eq.nome, 'Sem equipe')", p);
 
 export interface MetricasProjetos {
-  /** Projetos decididos: não inclui o backlog. */
+  /**
+   * Em andamento: planejamento e execução.
+   *
+   * Era "tudo que não é backlog", e isso somava paralisados,
+   * concluídos e cancelados — a diretoria lia 27 enquanto o menu
+   * mostrava 21, e os dois estavam certos para perguntas diferentes.
+   * Aqui vale a mesma régua das outras telas: a carteira que consome
+   * gente hoje.
+   */
   total: number;
   emExecucao: number;
   planejamento: number;
@@ -361,7 +369,7 @@ export interface MetricasProjetos {
  */
 export async function metricasProjetos(): Promise<MetricasProjetos> {
   const r = await consultarUm<MetricasProjetos>(
-    `SELECT COUNT(CASE WHEN ${DECIDIDO} THEN 1 END) AS total,
+    `SELECT COUNT(CASE WHEN status IN ('planejamento','execucao') THEN 1 END) AS total,
             COUNT(CASE WHEN status = 'execucao' THEN 1 END) AS em_execucao,
             COUNT(CASE WHEN status = 'planejamento' THEN 1 END) AS planejamento,
             COUNT(CASE WHEN status = 'paralisado' THEN 1 END) AS paralisados,
