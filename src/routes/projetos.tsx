@@ -212,9 +212,16 @@ function diasRestantes(fim: Date | string): number {
   return Math.ceil((new Date(fim).getTime() - Date.now()) / DIA_MS);
 }
 
-/** Vivo: ainda pede algo de alguém. Encerrado não entra em indicador de alerta. */
+/**
+ * Em andamento: planejamento e execução.
+ *
+ * Paralisado saiu daqui quando ganhou tela própria. Ele continua sendo
+ * um projeto priorizado, mas aparecia no meio de quem está andando e
+ * somava ao total de "o que está acontecendo" sem estar acontecendo —
+ * e o gerente passava por ele toda semana sem decidir nada.
+ */
 function estaVivo(p: ProjetoComProgresso): boolean {
-  return p.status === "planejamento" || p.status === "execucao" || p.status === "paralisado";
+  return p.status === "planejamento" || p.status === "execucao";
 }
 
 /**
@@ -356,8 +363,13 @@ function Projetos() {
       // explícito manda mais do que o padrão de esconder.
       const escondido = encerrado && !filtros.encerrados && filtros.status === "todos";
 
+      // Paralisado tem tela própria. Some daqui a menos que a pessoa o
+      // peça pelo filtro de situação — aí ela sabe o que procurou.
+      const noutraTela = p.status === "paralisado" && filtros.status !== "paralisado";
+
       return (
         !escondido &&
+        !noutraTela &&
         (filtros.gp === "todos" || p.gerenteNome === filtros.gp) &&
         (filtros.departamento === "todos" || p.gerenteDepartamento === filtros.departamento) &&
         (filtros.area === "todos" || p.areaDemandante === filtros.area) &&
@@ -380,8 +392,8 @@ function Projetos() {
 
   return (
     <AppShell
-      title="Projetos"
-      subtitle="Portfólio de iniciativas de TI com semáforo de prazo, atualização semanal e riscos"
+      title="Projetos em andamento"
+      subtitle="O que está em planejamento ou execução, com semáforo de prazo e acompanhamento semanal."
     >
       <div className="space-y-4">
         {q.error ? (

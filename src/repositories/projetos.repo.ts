@@ -3709,11 +3709,15 @@ export async function resumoPortfolio(ctx: ContextoUsuario): Promise<ResumoPortf
        COALESCE(SUM(p.capex) FILTER (
                 WHERE p.status = 'backlog' AND p.moeda = 'BRL'), 0) AS investimento_na_fila,
 
+       -- Paralisado saiu da conta quando ganhou tela própria: aqui
+       -- "priorizados" passou a significar o que está ANDANDO, e é esse
+       -- o número que a lista de projetos em andamento mostra. Somar o
+       -- que parou faria o card dizer 14 sobre uma lista de 11.
        COUNT(*) FILTER (
-         WHERE p.status IN ('planejamento','execucao','paralisado'))::int AS priorizados,
+         WHERE p.status IN ('planejamento','execucao'))::int AS priorizados,
 
        COUNT(*) FILTER (
-         WHERE p.status IN ('planejamento','execucao','paralisado')
+         WHERE p.status IN ('planejamento','execucao')
            AND NOT EXISTS (SELECT 1 FROM projeto_tarefas t
                             WHERE t.projeto_id = p.id AND t.ativo = 1))::int AS sem_cronograma,
 

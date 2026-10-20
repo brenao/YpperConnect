@@ -325,16 +325,36 @@ export const APP_MODULES: AppModule[] = [
     descricao: "Abertura assistida e sugestões por IA.",
     grupo: "Operação",
   },
+  /**
+   * As três listas de projeto, na ordem do ciclo de vida.
+   *
+   * Cada uma tem um assunto só, e um projeto está em exatamente uma
+   * delas: o que aguarda decisão, o que está andando, o que parou.
+   * Antes as três conviviam na mesma tela com abas e filtros, e a
+   * pergunta "quantos projetos temos?" tinha três respostas certas.
+   */
   {
     key: "/backlog",
     label: "Backlog de projetos",
-    descricao: "Projetos aguardando priorização, com pontuação e matriz de decisão.",
+    descricao: "Demandas registradas, aguardando priorização.",
     grupo: "Projetos",
   },
   {
     key: "/projetos",
-    label: "Projetos e cronograma",
-    descricao: "Cadastro de projetos, tarefas e Gantt.",
+    label: "Projetos em andamento",
+    descricao: "Cronograma, tarefas e Gantt do que está em planejamento ou execução.",
+    grupo: "Projetos",
+  },
+  {
+    key: "/paralisados",
+    label: "Projetos paralisados",
+    descricao: "O que começou e parou, com o tempo parado e a decisão pendente.",
+    grupo: "Projetos",
+  },
+  {
+    key: "/matriz",
+    label: "Matriz de priorização",
+    descricao: "Valor contra esforço, cruzando as três listas num plano só.",
     grupo: "Projetos",
   },
   {

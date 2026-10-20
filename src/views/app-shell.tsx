@@ -6,7 +6,9 @@ import {
   BookOpen,
   Boxes,
   GanttChartSquare,
+  Grid2x2,
   Inbox,
+  PauseCircle,
   ShieldCheck,
   Sparkles,
   PieChart,
@@ -21,6 +23,8 @@ import { cn } from "@/lib/utils";
 import { NewTicketDialog } from "./new-ticket-dialog";
 import { ThemeToggle } from "./theme-toggle";
 import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functions";
+import { resumoPortfolioFn } from "@/services/projetos.functions";
+import type { ResumoPortfolio } from "@/repositories/projetos.repo";
 
 /**
  * Portal externo de chamados. Mesma variável do botão "Abrir chamado".
@@ -32,19 +36,52 @@ import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functio
 const PORTAL_CHAMADOS = (import.meta.env["VITE_URL_ABRIR_CHAMADO"] ?? "").trim();
 
 /**
+ * De onde sai o número ao lado do rótulo.
+ *
+ * Só as três listas de projeto têm contador, e cada uma conta um
+ * conjunto que não se sobrepõe aos outros: o que aguarda decisão, o que
+ * está andando e o que parou. Somados, são a carteira viva.
+ *
+ * Encerrados não entram em nenhum: eles vivem atrás do "mostrar
+ * encerrados" da tela de projetos, e contá-los faria o menu crescer
+ * para sempre com decisão que já aconteceu.
+ *
+ * Nenhum outro item recebe número. Contador em tudo vira ruído de
+ * fundo, e aí ninguém lê nenhum.
+ */
+const CONTADOR: Partial<Record<string, (r: ResumoPortfolio) => number>> = {
+  "/backlog": (r) => r.backlog,
+  "/projetos": (r) => r.planejamento + r.execucao,
+  "/paralisados": (r) => r.paralisado,
+};
+
+/**
  * A ordem do menu é a da jornada, não a do histórico do produto.
  *
  * Visão diretoria vem primeiro porque é a tela inicial de quem tem
  * acesso a ela — a raiz redireciona para lá. Um item de menu que é o
  * destino padrão e aparece no meio da lista faz a pessoa procurar onde
  * já está.
+ *
+ * As três listas de projeto vêm na ordem do ciclo de vida: o que
+ * aguarda decisão, o que está andando, o que parou. A matriz fecha o
+ * bloco porque é a única que olha as três ao mesmo tempo — ela não é
+ * mais uma lista, é a visão de cima delas.
  */
 const nav = [
   { to: "/diretoria", label: "Visão diretoria", icon: PieChart },
   { to: "/", label: "Visão geral", icon: LayoutDashboard },
   { to: "/chamados", label: "Chamados", icon: Ticket },
-  { to: "/backlog", label: "Backlog de Projetos", icon: Inbox },
-  { to: "/projetos", label: "Projetos e cronograma", icon: GanttChartSquare },
+  /**
+   * Os rótulos das três listas repetiam "Projetos" e o do meio não
+   * cabia na barra — virava "Projetos em andame…", que é pior do que
+   * um nome curto. Lado a lado, o contexto já diz que são projetos: o
+   * que distingue cada item é o estado, e é ele que fica visível.
+   */
+  { to: "/backlog", label: "Backlog", icon: Inbox },
+  { to: "/projetos", label: "Proj. em Andamento", icon: GanttChartSquare },
+  { to: "/paralisados", label: "Paralisados", icon: PauseCircle },
+  { to: "/matriz", label: "Matriz de priorização", icon: Grid2x2 },
   { to: "/recursos", label: "Recursos e capacidade", icon: Users },
   { to: "/catalogo", label: "Catálogo de serviços", icon: Boxes },
   { to: "/conhecimento", label: "Base de conhecimento", icon: BookOpen },
@@ -95,10 +132,28 @@ export function AppShell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
+  const usuario = useQuery({
+    queryKey: ["usuario-atual"],
+    queryFn: () => usuarioAtualFn(),
+  });
   const permissoes = useQuery({
     queryKey: ["minhas-permissoes"],
     queryFn: () => minhasPermissoesFn(),
+  });
+
+  /**
+   * Números do menu: a mesma consulta que alimenta os cards das telas.
+   *
+   * Reaproveitada de propósito. Uma contagem própria aqui divergiria da
+   * que a tela mostra assim que alguém mudasse uma regra — e aí o menu
+   * diria 12, a tela diria 14, e nenhum dos dois seria confiável.
+   *
+   * Ela já respeita a visibilidade de cada pessoa: quem enxerga menos
+   * projetos vê números menores, como deve ser.
+   */
+  const resumo = useQuery({
+    queryKey: ["resumo-portfolio"],
+    queryFn: () => resumoPortfolioFn(),
   });
 
   // Enquanto carrega, mostra o menu inteiro: esconder e depois revelar
@@ -110,6 +165,21 @@ export function AppShell({
   // a raiz virou apenas desvio para a tela de projetos.
   const visibleNav =
     PORTAL_CHAMADOS === "" ? permitidos : permitidos.filter((item) => item.to !== "/");
+
+  /**
+   * O número ao lado do rótulo, quando há um.
+   *
+   * Zero não aparece: "Paralisados 0" ocupa espaço para dizer que não
+   * há nada — e a ausência diz isso melhor. Enquanto a consulta carrega
+   * também não aparece nada, porque um número que muda sozinho um
+   * segundo depois chama atenção para a coisa errada.
+   */
+  function contadorDe(to: string): number | null {
+    const fn = CONTADOR[to];
+    if (!fn || !resumo.data) return null;
+    const n = fn(resumo.data);
+    return n > 0 ? n : null;
+  }
 
   return (
     <div className="flex min-h-screen">
@@ -125,6 +195,8 @@ export function AppShell({
         <nav className="flex flex-1 flex-col gap-1">
           {visibleNav.map((item) => {
             const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
+            const contador = contadorDe(item.to);
+
             const classe = cn(
               "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
               active
@@ -132,21 +204,48 @@ export function AppShell({
                 : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
             );
 
+            /**
+             * O número fica discreto e alinhado à direita.
+             *
+             * Sem badge colorido de propósito: badge é vocabulário de
+             * "tem coisa nova para você", e aqui é só volume. Quem
+             * precisa saber quantos projetos há não precisa ser
+             * interrompido por isso.
+             *
+             * Fonte monoespaçada para os números não dançarem na
+             * vertical quando um item tem 9 e o de baixo tem 14.
+             */
+            const conteudo = (
+              <>
+                <item.icon className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {contador !== null ? (
+                  <span
+                    aria-label={`${contador} projeto(s)`}
+                    className={cn(
+                      "shrink-0 font-mono text-xs tabular-nums",
+                      active ? "text-sidebar-primary/70" : "text-muted-foreground/60",
+                    )}
+                  >
+                    {contador}
+                  </span>
+                ) : null}
+              </>
+            );
+
             // Chamados sai do sistema quando há portal: <a> e não <Link>,
             // senão o router tentaria casar a URL com uma rota daqui.
             if (item.to === "/chamados" && PORTAL_CHAMADOS !== "") {
               return (
                 <a key={item.to} href={PORTAL_CHAMADOS} className={classe}>
-                  <item.icon className="size-4" />
-                  {item.label}
+                  {conteudo}
                 </a>
               );
             }
 
             return (
               <Link key={item.to} to={item.to} className={classe}>
-                <item.icon className="size-4" />
-                {item.label}
+                {conteudo}
               </Link>
             );
           })}
@@ -187,19 +286,35 @@ export function AppShell({
 
         <nav className="flex gap-1 overflow-x-auto border-b border-border px-4 py-2 lg:hidden">
           {visibleNav.map((item) => {
-            const classe = "whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted-foreground";
+            const contador = contadorDe(item.to);
+            const classe =
+              "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted-foreground";
+
+            // No celular o número vem entre parênteses: não há espaço
+            // para alinhá-lo à direita, e colado ao rótulo ele parece
+            // parte do nome.
+            const conteudo = (
+              <>
+                {item.label}
+                {contador !== null ? (
+                  <span className="font-mono tabular-nums text-muted-foreground/60">
+                    ({contador})
+                  </span>
+                ) : null}
+              </>
+            );
 
             if (item.to === "/chamados" && PORTAL_CHAMADOS !== "") {
               return (
                 <a key={item.to} href={PORTAL_CHAMADOS} className={classe}>
-                  {item.label}
+                  {conteudo}
                 </a>
               );
             }
 
             return (
               <Link key={item.to} to={item.to} className={classe}>
-                {item.label}
+                {conteudo}
               </Link>
             );
           })}

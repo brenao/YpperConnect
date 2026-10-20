@@ -18,6 +18,8 @@ import { Route as ChamadosRouteImport } from './routes/chamados'
 import { Route as ConhecimentoRouteImport } from './routes/conhecimento'
 import { Route as DiretoriaRouteImport } from './routes/diretoria'
 import { Route as GovernancaRouteImport } from './routes/governanca'
+import { Route as MatrizRouteImport } from './routes/matriz'
+import { Route as ParalisadosRouteImport } from './routes/paralisados'
 import { Route as PermissoesRouteImport } from './routes/permissoes'
 import { Route as ProjetosRouteImport } from './routes/projetos'
 import { Route as RecursosRouteImport } from './routes/recursos'
@@ -70,6 +72,16 @@ const GovernancaRoute = GovernancaRouteImport.update({
   path: '/governanca',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MatrizRoute = MatrizRouteImport.update({
+  id: '/matriz',
+  path: '/matriz',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ParalisadosRoute = ParalisadosRouteImport.update({
+  id: '/paralisados',
+  path: '/paralisados',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PermissoesRoute = PermissoesRouteImport.update({
   id: '/permissoes',
   path: '/permissoes',
@@ -111,6 +123,8 @@ export interface FileRoutesByFullPath {
   '/conhecimento': typeof ConhecimentoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
+  '/matriz': typeof MatrizRoute
+  '/paralisados': typeof ParalisadosRoute
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
@@ -128,6 +142,8 @@ export interface FileRoutesByTo {
   '/conhecimento': typeof ConhecimentoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
+  '/matriz': typeof MatrizRoute
+  '/paralisados': typeof ParalisadosRoute
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
@@ -146,6 +162,8 @@ export interface FileRoutesById {
   '/conhecimento': typeof ConhecimentoRoute
   '/diretoria': typeof DiretoriaRoute
   '/governanca': typeof GovernancaRoute
+  '/matriz': typeof MatrizRoute
+  '/paralisados': typeof ParalisadosRoute
   '/permissoes': typeof PermissoesRoute
   '/projetos': typeof ProjetosRoute
   '/recursos': typeof RecursosRoute
@@ -165,6 +183,8 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/diretoria'
     | '/governanca'
+    | '/matriz'
+    | '/paralisados'
     | '/permissoes'
     | '/projetos'
     | '/recursos'
@@ -182,6 +202,8 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/diretoria'
     | '/governanca'
+    | '/matriz'
+    | '/paralisados'
     | '/permissoes'
     | '/projetos'
     | '/recursos'
@@ -199,6 +221,8 @@ export interface FileRouteTypes {
     | '/conhecimento'
     | '/diretoria'
     | '/governanca'
+    | '/matriz'
+    | '/paralisados'
     | '/permissoes'
     | '/projetos'
     | '/recursos'
@@ -217,6 +241,8 @@ export interface RootRouteChildren {
   ConhecimentoRoute: typeof ConhecimentoRoute
   DiretoriaRoute: typeof DiretoriaRoute
   GovernancaRoute: typeof GovernancaRoute
+  MatrizRoute: typeof MatrizRoute
+  ParalisadosRoute: typeof ParalisadosRoute
   PermissoesRoute: typeof PermissoesRoute
   ProjetosRoute: typeof ProjetosRoute
   RecursosRoute: typeof RecursosRoute
@@ -290,6 +316,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GovernancaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/matriz': {
+      id: '/matriz'
+      path: '/matriz'
+      fullPath: '/matriz'
+      preLoaderRoute: typeof MatrizRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/paralisados': {
+      id: '/paralisados'
+      path: '/paralisados'
+      fullPath: '/paralisados'
+      preLoaderRoute: typeof ParalisadosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/permissoes': {
       id: '/permissoes'
       path: '/permissoes'
@@ -345,6 +385,8 @@ const rootRouteChildren: RootRouteChildren = {
   ConhecimentoRoute: ConhecimentoRoute,
   DiretoriaRoute: DiretoriaRoute,
   GovernancaRoute: GovernancaRoute,
+  MatrizRoute: MatrizRoute,
+  ParalisadosRoute: ParalisadosRoute,
   PermissoesRoute: PermissoesRoute,
   ProjetosRoute: ProjetosRoute,
   RecursosRoute: RecursosRoute,
