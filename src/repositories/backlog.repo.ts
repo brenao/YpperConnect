@@ -280,11 +280,15 @@ export async function devolverAoBacklog(ctx: ContextoUsuario, id: string): Promi
             ordem_backlog = (SELECT COALESCE(MAX(ordem_backlog), 0) + 1
                                FROM projetos WHERE status = 'backlog'),
             atualizado_em = LOCALTIMESTAMP
-      WHERE id = :id AND status IN ('planejamento','paralisado')`,
+      WHERE id = :id AND status IN ('planejamento','execucao','paralisado')`,
     { id },
   );
   if (n === 0) {
-    throw new ErroDominio("Só projetos em planejamento ou paralisados voltam ao backlog");
+    // Encerrado não volta: concluído e cancelado são decisões tomadas, e
+    // devolvê-las à fila apagaria o registro de que aconteceram.
+    throw new ErroDominio(
+      "Projetos encerrados não voltam ao backlog. Para rever a decisão, cadastre um projeto novo.",
+    );
   }
 }
 

@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/select";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/models/itsm-types";
 import { definirStatusProjetoFn } from "@/services/projetos.functions";
+import { devolverAoBacklogFn } from "@/services/backlog.functions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,15 +34,20 @@ export const PROJECT_STATUS_STYLE: Record<ProjectStatus, string> = {
 };
 
 /**
- * Situações oferecidas na troca.
+ * Todas as situações, inclusive voltar ao backlog.
  *
- * `backlog` fica de fora: voltar para a fila de priorização tem regra
- * própria — recusa projeto com cronograma e recalcula a posição — e o
- * repositório recusa a troca por aqui de propósito.
+ * `backlog` ficava de fora porque tem regra própria — recalcula a
+ * posição na fila — e o `definirStatusProjeto` a recusa de propósito.
+ * Mas estar ausente do seletor significava que despriorizar só era
+ * possível depois de paralisar o projeto, passando por um estado que
+ * não descrevia nada: ninguém paralisa para devolver, devolve porque
+ * decidiu que aquilo não é mais prioridade.
+ *
+ * A escolha continua indo por outro caminho no código — é a função do
+ * backlog que atende —, mas para quem usa é a mesma pergunta: em que
+ * situação este projeto está?
  */
-const STATUS_OFERECIDOS = (Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).filter(
-  (s) => s !== "backlog",
-);
+const STATUS_OFERECIDOS = Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[];
 
 export function SeletorStatusProjeto({
   projetoId,
@@ -60,15 +66,33 @@ export function SeletorStatusProjeto({
   const qc = useQueryClient();
 
   const mudar = useMutation({
+    /**
+     * Voltar ao backlog não é uma troca de status qualquer.
+     *
+     * Ela recoloca o projeto no fim da fila de priorização, e esse
+     * cálculo mora no repositório do backlog. O `definirStatusProjeto`
+     * recusa `backlog` justamente para que ninguém chegue lá por um
+     * caminho que esqueça a posição.
+     */
     mutationFn: (novo: ProjectStatus) =>
-      definirStatusProjetoFn({ data: { id: projetoId, status: novo } }),
+      novo === "backlog"
+        ? devolverAoBacklogFn({ data: { id: projetoId } })
+        : definirStatusProjetoFn({ data: { id: projetoId, status: novo } }),
     onSuccess: (_r, novo) => {
       // As três telas que mostram situação: portfólio, detalhe e o
       // backlog, que lista a carteira inteira.
       qc.invalidateQueries({ queryKey: ["projetos"] });
       qc.invalidateQueries({ queryKey: ["projeto", projetoId] });
       qc.invalidateQueries({ queryKey: ["backlog"] });
-      toast.success(`Situação alterada para ${PROJECT_STATUS_LABEL[novo]}`);
+      qc.invalidateQueries({ queryKey: ["resumo-portfolio"] });
+      toast.success(
+        novo === "backlog"
+          ? "Projeto devolvido ao backlog"
+          : `Situação alterada para ${PROJECT_STATUS_LABEL[novo]}`,
+        novo === "backlog"
+          ? { description: "O cronograma fica guardado e volta se ele for priorizado de novo." }
+          : undefined,
+      );
     },
     onError: (e: Error) =>
       toast.error("Não foi possível alterar a situação", { description: e.message }),
