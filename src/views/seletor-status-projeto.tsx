@@ -24,11 +24,27 @@ import { cn } from "@/lib/utils";
  * As cores vivem aqui pelo mesmo motivo: o mapa estava escrito por
  * extenso nas duas telas.
  */
+/**
+ * Cor por situação, com um significado por cor.
+ *
+ * Verde é entrega — e só entrega. Azul é o trabalho acontecendo.
+ * Laranja é o que parou. Neutro é o que ainda não começou e o que
+ * acabou: nenhum dos dois pede nada de ninguém hoje.
+ *
+ * O amarelo saiu daqui de propósito. Ele é a cor de alerta em toda a
+ * aplicação — sem acompanhamento, sem gerente, sem baseline, risco de
+ * atraso — e usá-lo também para paralisado fazia o olho confundir "o
+ * gerente decidiu parar" com "ninguém está olhando para isto".
+ *
+ * Cancelado deixou de ser vermelho pelo mesmo motivo: cancelar é uma
+ * decisão legítima, não um erro, e vermelho ali competia com os
+ * atrasos de verdade.
+ */
 export const PROJECT_STATUS_STYLE: Record<ProjectStatus, string> = {
   backlog: "bg-muted text-muted-foreground border-border",
-  planejamento: "bg-info/12 text-info border-info/30",
-  execucao: "bg-primary/12 text-primary border-primary/30",
-  paralisado: "bg-warning/12 text-warning border-warning/30",
+  planejamento: "bg-secondary text-secondary-foreground border-border",
+  execucao: "bg-info/12 text-info border-info/30",
+  paralisado: "bg-paused/12 text-paused border-paused/30",
   cancelado: "bg-muted text-muted-foreground border-border",
   concluido: "bg-success/12 text-success border-success/30",
 };

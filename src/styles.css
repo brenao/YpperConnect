@@ -27,6 +27,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-paused: var(--paused);
   --color-surface: var(--surface);
   --color-p1: var(--p1);
   --color-p2: var(--p2);
@@ -98,6 +99,12 @@
   --success: oklch(0.75 0.16 155);
   --warning: oklch(0.82 0.15 80);
   --info: oklch(0.72 0.13 240);
+  /* Laranja do paralisado.
+     Precisa ser distinguível do warning, que é amarelo e significa
+     "algo pede atenção". Parado não é alerta: é um estado, e um estado
+     que dura. Daí o tom mais quente e menos luminoso — chama menos do
+     que um aviso e mais do que o neutro. */
+  --paused: oklch(0.72 0.16 52);
   --surface: oklch(0.2 0.022 252);
   --p1: oklch(0.65 0.22 20);
   --p2: oklch(0.78 0.16 55);
@@ -151,6 +158,7 @@
   --success: oklch(0.55 0.14 155);
   --warning: oklch(0.62 0.13 70);
   --info: oklch(0.55 0.13 240);
+  --paused: oklch(0.6 0.15 52);
   --surface: oklch(0.97 0.005 250);
   --p1: oklch(0.55 0.2 20);
   --p2: oklch(0.62 0.15 55);

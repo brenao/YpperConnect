@@ -232,12 +232,15 @@ function Diretoria() {
   const distribuicao = useMemo(() => {
     if (!d) return [];
     return [
-      { situacao: "Execução", total: d.projetos.emExecucao, cor: "var(--chart-2)" },
-      { situacao: "Planejamento", total: d.projetos.planejamento, cor: "var(--chart-1)" },
-      { situacao: "Paralisados", total: d.projetos.paralisados, cor: "var(--chart-3)" },
-      { situacao: "Concluídos", total: d.projetos.concluidos, cor: "var(--chart-4)" },
-      { situacao: "Cancelados", total: d.projetos.cancelados, cor: "var(--destructive)" },
-      { situacao: "No backlog", total: d.projetos.backlog, cor: "var(--muted-foreground)" },
+      // As mesmas cores do seletor de situação: a pessoa vê o cartão
+      // azul na lista e a barra azul aqui, e não precisa aprender duas
+      // legendas para o mesmo conceito.
+      { situacao: "Execução", total: d.projetos.emExecucao, cor: "var(--info)" },
+      { situacao: "Planejamento", total: d.projetos.planejamento, cor: "var(--muted-foreground)" },
+      { situacao: "Paralisados", total: d.projetos.paralisados, cor: "var(--paused)" },
+      { situacao: "Concluídos", total: d.projetos.concluidos, cor: "var(--success)" },
+      { situacao: "Cancelados", total: d.projetos.cancelados, cor: "var(--muted)" },
+      { situacao: "No backlog", total: d.projetos.backlog, cor: "var(--border)" },
     ];
   }, [d]);
 
@@ -300,7 +303,7 @@ function Diretoria() {
                   fila de espera. */}
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <Kpi label="Projetos ativos" value={d.projetos.total} hint="sem contar o backlog" />
-                <Kpi label="Em execução" value={d.projetos.emExecucao} tone="text-primary" />
+                <Kpi label="Em execução" value={d.projetos.emExecucao} tone="text-info" />
                 <Kpi label="Atrasados" value={d.projetos.atrasados} tone="text-destructive" />
                 <Kpi label="Concluídos" value={d.projetos.concluidos} tone="text-success" />
                 <Kpi
@@ -359,7 +362,7 @@ function Diretoria() {
 
               <Panel
                 title="Carteira de entregas"
-                description="Concluídos nos últimos meses e previstos para os próximos, pela data de término do projeto. Barras vermelhas marcam cancelamentos."
+                description="Concluídos nos últimos meses e previstos para os próximos, pela data de término do projeto. As barras marcam cancelamentos."
               >
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -370,8 +373,8 @@ function Diretoria() {
                           <stop offset="100%" stopColor="var(--success)" stopOpacity={0.02} />
                         </linearGradient>
                         <linearGradient id="grad-previsto" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.28} />
-                          <stop offset="100%" stopColor="var(--primary)" stopOpacity={0.02} />
+                          <stop offset="0%" stopColor="var(--info)" stopOpacity={0.28} />
+                          <stop offset="100%" stopColor="var(--info)" stopOpacity={0.02} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid
@@ -404,7 +407,7 @@ function Diretoria() {
                         type="monotone"
                         dataKey="previstos"
                         name="Previstos"
-                        stroke="var(--primary)"
+                        stroke="var(--info)"
                         strokeWidth={2}
                         strokeDasharray="5 4"
                         fill="url(#grad-previsto)"
@@ -412,7 +415,7 @@ function Diretoria() {
                       <Bar
                         dataKey="cancelados"
                         name="Cancelados"
-                        fill="var(--destructive)"
+                        fill="var(--muted-foreground)"
                         barSize={14}
                         radius={3}
                       />
@@ -433,9 +436,16 @@ function Diretoria() {
                       <thead>
                         <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                           <th className="py-2 pr-3 font-medium">Gerente</th>
-                          <th className="w-20 py-2 font-medium">Total</th>
-                          <th className="w-24 py-2 font-medium">Execução</th>
-                          <th className="w-24 py-2 font-medium">Atrasados</th>
+                          <th className="w-20 py-2 font-medium">Backlog</th>
+                          <th className="w-28 py-2 font-medium">Em andamento</th>
+                          <th className="w-24 py-2 font-medium">Parados</th>
+                          {/* As duas últimas são recortes da coluna "em
+                              andamento", não somas novas. A borda à
+                              esquerda marca essa mudança de assunto:
+                              daqui para a direita é o que preocupa. */}
+                          <th className="w-24 border-l border-border py-2 pl-3 font-medium">
+                            Atrasados
+                          </th>
                           <th className="w-32 py-2 font-medium">Sem acompanhar</th>
                         </tr>
                       </thead>
@@ -443,11 +453,26 @@ function Diretoria() {
                         {d.gerentes.map((g) => (
                           <tr key={g.gerenteId ?? "sem"} className="border-b border-border/60">
                             <td className="py-2 pr-3">{g.gerenteNome}</td>
-                            <td className="py-2 font-mono">{g.total}</td>
-                            <td className="py-2 font-mono text-primary">{g.emExecucao}</td>
                             <td
                               className={cn(
                                 "py-2 font-mono",
+                                g.backlog > 0 ? "" : "text-muted-foreground",
+                              )}
+                            >
+                              {g.backlog}
+                            </td>
+                            <td className="py-2 font-mono text-info">{g.emAndamento}</td>
+                            <td
+                              className={cn(
+                                "py-2 font-mono",
+                                g.paralisados > 0 ? "text-paused" : "text-muted-foreground",
+                              )}
+                            >
+                              {g.paralisados}
+                            </td>
+                            <td
+                              className={cn(
+                                "border-l border-border py-2 pl-3 font-mono",
                                 g.atrasados > 0 ? "text-destructive" : "text-muted-foreground",
                               )}
                             >

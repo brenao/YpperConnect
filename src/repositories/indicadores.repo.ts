@@ -459,10 +459,15 @@ export async function carteiraProjetos(mesesAtras = 3, mesesFrente = 6): Promise
 export interface CargaGerente {
   gerenteId: string | null;
   gerenteNome: string;
-  total: number;
-  emExecucao: number;
+  /** Aguardando decisão: ainda não pesa na agenda, mas é compromisso futuro. */
+  backlog: number;
+  /** Planejamento e execução: o que a pessoa está tocando agora. */
+  emAndamento: number;
+  /** Começou e parou. Cada um é uma decisão pendente. */
+  paralisados: number;
+  /** Dos que andam: com data de término já vencida. */
   atrasados: number;
-  /** Sem atualização há mais de 7 dias. */
+  /** Dos que andam: sem atualização há mais de 7 dias. */
   semAcompanhamento: number;
 }
 
@@ -480,8 +485,9 @@ export async function projetosPorGerente(): Promise<CargaGerente[]> {
   return consultar<CargaGerente>(
     `SELECT p.gerente_id,
             COALESCE(u.nome, 'Sem gerente') AS gerente_nome,
-            COUNT(*) AS total,
-            COUNT(CASE WHEN p.status = 'execucao' THEN 1 END) AS em_execucao,
+            COUNT(CASE WHEN p.status = 'backlog' THEN 1 END) AS backlog,
+            COUNT(CASE WHEN p.status IN ('planejamento','execucao') THEN 1 END) AS em_andamento,
+            COUNT(CASE WHEN p.status = 'paralisado' THEN 1 END) AS paralisados,
             COUNT(CASE WHEN p.status IN ('planejamento', 'execucao')
                         AND p.fim < CURRENT_DATE THEN 1 END) AS atrasados,
             COUNT(CASE WHEN p.status IN ('planejamento', 'execucao')
@@ -492,9 +498,14 @@ export async function projetosPorGerente(): Promise<CargaGerente[]> {
        LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
                     FROM projeto_atualizacoes GROUP BY projeto_id) a
               ON a.projeto_id = p.id
-      WHERE p.status NOT IN ('cancelado', 'backlog')
+      -- O backlog entra agora: ele é coluna própria, e um gerente com
+      -- oito demandas na fila carrega um compromisso que a tabela
+      -- escondia. Encerrados continuam fora — não pesam na agenda de
+      -- ninguém.
+      WHERE p.status NOT IN ('cancelado', 'concluido')
       GROUP BY p.gerente_id, u.nome
-      ORDER BY COUNT(*) DESC`,
+      ORDER BY COUNT(CASE WHEN p.status IN ('planejamento','execucao') THEN 1 END) DESC,
+               COUNT(*) DESC`,
   );
 }
 
