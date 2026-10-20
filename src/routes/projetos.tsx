@@ -88,6 +88,18 @@ const FILTROS_VAZIOS: FiltrosProjetos = {
 };
 
 /**
+ * Situações que esta tela lista.
+ *
+ * Planejamento e execução são o assunto dela; concluído e cancelado
+ * aparecem atrás do "mostrar encerrados" e por isso continuam no
+ * seletor — filtrar por um deles é justamente o pedido explícito que o
+ * `filtrados` reconhece.
+ *
+ * Backlog e paralisado ficam de fora: cada um tem tela própria.
+ */
+const STATUS_DESTA_TELA: ProjectStatus[] = ["planejamento", "execucao", "concluido", "cancelado"];
+
+/**
  * Lê a URL sem confiar nela.
  *
  * Qualquer pessoa pode editar a barra de endereços, e um valor estranho
@@ -137,7 +149,7 @@ export const Route = createFileRoute("/projetos")({
   validateSearch: (busca: Record<string, unknown>) => escreverFiltros(lerFiltros(busca)),
   head: () => ({
     meta: [
-      { title: "Projetos e cronograma · BeagleOne" },
+      { title: "Projetos em Andamento · BeagleOne" },
       {
         name: "description",
         content:
@@ -485,7 +497,12 @@ function Projetos() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os status</SelectItem>
-                {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => (
+                {/* Só as situações que esta tela mostra.
+                    Backlog e paralisado têm telas próprias, e oferecê-los
+                    aqui seria prometer um filtro que devolve lista vazia —
+                    a pessoa concluiria que não há nenhum, quando na
+                    verdade estão em outro lugar. */}
+                {STATUS_DESTA_TELA.map((s) => (
                   <SelectItem key={s} value={s}>
                     {PROJECT_STATUS_LABEL[s]}
                   </SelectItem>
