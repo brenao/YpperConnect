@@ -392,6 +392,42 @@ function Projetos() {
     });
   }, [projetos, filtros]);
 
+  /**
+   * Os números dos cards, contados sobre a lista filtrada.
+   *
+   * Usa o mesmo `passaNoKpi` que o clique no card aplica — se as duas
+   * contas divergissem, clicar num card de 5 traria 7 linhas.
+   *
+   * A base é `filtrados` sem o recorte do próprio indicador: com ele,
+   * clicar em "atrasados" zeraria todos os outros cards, e a faixa
+   * deixaria de dizer como está a carteira recortada.
+   */
+  const valoresKpi = useMemo(() => {
+    const t = filtros.busca.trim().toLowerCase();
+    const base = projetos.filter((p) => {
+      const encerrado = p.status === "cancelado" || p.status === "concluido";
+      const escondido = encerrado && !filtros.encerrados && filtros.status === "todos";
+      const noutraTela = p.status === "paralisado" && filtros.status !== "paralisado";
+
+      return (
+        !escondido &&
+        !noutraTela &&
+        (filtros.gp === "todos" || p.gerenteNome === filtros.gp) &&
+        (filtros.departamento === "todos" || p.gerenteDepartamento === filtros.departamento) &&
+        (filtros.area === "todos" || p.areaDemandante === filtros.area) &&
+        (filtros.status === "todos" || p.status === filtros.status) &&
+        (!t || `${p.nome} ${p.objetivo ?? ""}`.toLowerCase().includes(t))
+      );
+    });
+
+    return {
+      priorizados: base.filter((p) => passaNoKpi(p, "priorizados")).length,
+      prazoEstourado: base.filter((p) => passaNoKpi(p, "prazoEstourado")).length,
+      semAcompanhamento: base.filter((p) => passaNoKpi(p, "semAcompanhamento")).length,
+      semCronograma: base.filter((p) => passaNoKpi(p, "semCronograma")).length,
+    };
+  }, [projetos, filtros]);
+
   const atrasados = projetos.filter((p) => calcularSaude(p) === "atrasado").length;
 
   const temFiltro =
@@ -533,6 +569,7 @@ function Projetos() {
             Clicar filtra a lista abaixo; clicar de novo desliga. */}
         <KpisPortfolio
           cards={["priorizados", "prazoEstourado", "semAcompanhamento", "semCronograma"]}
+          valores={valoresKpi}
           ativo={filtros.kpi}
           onAlternar={(c) =>
             // Um filtro de situação de cada vez, nos dois sentidos.

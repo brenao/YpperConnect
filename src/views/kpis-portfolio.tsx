@@ -115,6 +115,20 @@ const DEFINICOES: Record<ChaveKpi, Definicao> = {
 interface Props {
   /** Quais indicadores esta tela mostra, na ordem. */
   cards: ChaveKpi[];
+  /**
+   * Contagens já calculadas pela tela, quando ela filtra a própria
+   * lista.
+   *
+   * Sem isto os cards vêm do servidor e valem para a carteira inteira
+   * — o que fazia a tela dizer "20 de 28 projetos" na linha de filtro
+   * e "22" no card logo abaixo. Como os cards TAMBÉM filtram quando
+   * clicados, um número que filtra mas não é filtrado confunde: ele se
+   * comporta como parte da lista e se conta como se não fosse.
+   *
+   * Telas sem filtro omitem e continuam usando o resumo do servidor,
+   * que é mais barato e já respeita a visibilidade de cada pessoa.
+   */
+  valores?: Partial<Record<ChaveKpi, number>> | undefined;
   /** Filtro aplicado agora. `null` é "sem filtro". */
   ativo?: ChaveKpi | null | undefined;
   /**
@@ -126,11 +140,15 @@ interface Props {
   className?: string | undefined;
 }
 
-export function KpisPortfolio({ cards, ativo, onAlternar, className }: Props) {
+export function KpisPortfolio({ cards, valores, ativo, onAlternar, className }: Props) {
+  // A consulta continua existindo para o detalhe da segunda linha — o
+  // investimento parado na fila, os dias do mais antigo — que não sai
+  // da lista de projetos.
   const q = useQuery({ queryKey: ["resumo-portfolio"], queryFn: () => resumoPortfolioFn() });
   const r = q.data;
 
   function valorDe(chave: ChaveKpi): number {
+    if (valores) return valores[chave] ?? 0;
     if (!r) return 0;
     return r[chave];
   }
@@ -210,7 +228,7 @@ export function KpisPortfolio({ cards, ativo, onAlternar, className }: Props) {
                 {d.rotulo}
               </span>
               <span className={cn("block font-mono text-2xl font-semibold leading-tight", cor)}>
-                {q.isPending ? (
+                {q.isPending && !valores ? (
                   <CircleDashed className="size-5 animate-spin text-muted-foreground" />
                 ) : (
                   valor
