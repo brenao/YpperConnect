@@ -331,11 +331,19 @@ export function filtroVisibilidadeProjetos(ctx: ContextoUsuario): FiltroVisibili
     binds["equipeId"] = ctx.equipeId;
   }
 
-  // A área amplia: tudo do departamento da pessoa, mais o que ela
-  // participa em qualquer outro. Sem departamento cadastrado, ela cai
-  // na visão de participação — cadastro incompleto não deve abrir o
-  // portfólio inteiro.
-  if (ctx.departamento !== null && ctx.departamento.trim() !== "") {
+  /**
+   * A área amplia, para quem tem direito a isso.
+   *
+   * Participação é o piso de todo mundo: o que a pessoa gerencia,
+   * patrocina ou executa. A área soma a isso o departamento inteiro, e
+   * só para quem tem a feature — gerente de projetos e quem acompanha
+   * carteira. Para o analista, ver o que participa é o teto: ele
+   * trabalha nas tarefas dele, e o portfólio da área não é assunto
+   * dele.
+   *
+   * Sem departamento cadastrado, a feature não tem o que ampliar.
+   */
+  if (ctx.verAreaProjetos && ctx.departamento !== null && ctx.departamento.trim() !== "") {
     partes.push(SQL_AREA_DO_USUARIO);
     binds["departamento"] = ctx.departamento;
   }
@@ -987,10 +995,46 @@ async function propagarCronogramaDaTarefa(tarefaId: string): Promise<void> {
  * a gestão de projetos não é privilégio da TI.
  */
 export async function criarProjeto(ctx: ContextoUsuario, d: DadosProjeto): Promise<string> {
+  /**
+   * Criar projeto é ato de quem responde por carteira.
+   *
+   * Já foi aberto a toda a empresa, pela ideia de que quem tem uma
+   * demanda deve conseguir registrá-la. O efeito foi outro: projeto
+   * criado por quem não acompanha nasce sem gerente de verdade, sem
+   * priorização e sem quem o mantenha — e some no meio da lista.
+   *
+   * Quem tem a demanda continua sendo atendido: pede a quem gerencia,
+   * ou o administrador registra.
+   */
+  if (!ctx.admin && !ctx.funcionalidades.includes("projeto.criar")) {
+    throw new ErroDominio(
+      "Somente quem gerencia projetos pode cadastrar. Peça ao gerente da sua área.",
+    );
+  }
+
   validarProjeto(d);
 
+  /**
+   * Todo projeto nasce no backlog, e só o admin escapa disso.
+   *
+   * Entrar direto em planejamento pulava a decisão que o backlog
+   * existe para registrar: o projeto aparecia na carteira consumindo
+   * capacidade sem ninguém ter dito que ele era prioridade. Na prática
+   * todo mundo criava por ali, e a fila de priorização ficou vazia
+   * enquanto a carteira crescia.
+   *
+   * O admin mantém a saída porque precisa corrigir cadastro e importar
+   * projeto que já começou fora do sistema.
+   */
+  if (!ctx.admin && d.status !== undefined && d.status !== "backlog") {
+    throw new ErroDominio(
+      "Projeto novo entra no backlog e sai de lá quando for priorizado. " +
+        "Use o Backlog de projetos para registrá-lo.",
+    );
+  }
+
   const id = novoId();
-  const status = d.status ?? "planejamento";
+  const status = ctx.admin ? (d.status ?? "backlog") : "backlog";
 
   // Nasce no fim da fila quando entra pelo backlog. A posição é
   // calculada no próprio INSERT para não abrir uma janela em que duas

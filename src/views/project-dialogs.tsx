@@ -109,7 +109,16 @@ const vazio = (status: ProjectStatus): Form => ({
 export function ProjectDialog({
   project,
   trigger,
-  statusInicial = "planejamento",
+  /**
+   * Estado em que o projeto nasce — e agora o padrão é o backlog.
+   *
+   * Era "planejamento", e o efeito foi que todo mundo criava projeto
+   * direto na carteira: o botão da lista de projetos pulava a fila de
+   * priorização, e a decisão que o backlog existe para registrar
+   * simplesmente não acontecia. O servidor hoje recusa qualquer outro
+   * valor para quem não é administrador.
+   */
+  statusInicial = "backlog",
   modelo = "simples",
   aoSalvar,
   open: openProp,

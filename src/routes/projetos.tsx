@@ -48,7 +48,7 @@ import {
   excluirProjetoFn,
   impedimentosDeExclusaoFn,
 } from "@/services/projetos.functions";
-import { usuarioAtualFn } from "@/services/cadastros.functions";
+import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functions";
 import { listarMinhasSolicitacoesFn } from "@/services/acesso-projeto.functions";
 import { cn } from "@/lib/utils";
 
@@ -149,13 +149,13 @@ export const Route = createFileRoute("/projetos")({
   validateSearch: (busca: Record<string, unknown>) => escreverFiltros(lerFiltros(busca)),
   head: () => ({
     meta: [
-      { title: "Projetos em Andamento · BeagleOne" },
+      { title: "Projetos em andamento · BeagleOne" },
       {
         name: "description",
         content:
-          "Portfólio de projetos de TI com semáforo de saúde, gerente responsável, atualização semanal e progresso do cronograma.",
+          "Projetos em planejamento ou execução, com semáforo de saúde, gerente responsável, atualização semanal e progresso do cronograma.",
       },
-      { property: "og:title", content: "Projetos e cronograma · BeagleOne" },
+      { property: "og:title", content: "Projetos em andamento · BeagleOne" },
       {
         property: "og:description",
         content: "Portfólio de projetos de TI com semáforo de saúde e progresso do cronograma.",
@@ -298,6 +298,19 @@ function Projetos() {
     queryKey: ["usuario-atual"],
     queryFn: () => usuarioAtualFn(),
   });
+
+  /**
+   * As permissões do perfil, para a tela não oferecer o que o servidor
+   * recusa.
+   *
+   * Mesma consulta que o menu lateral usa, então vem do cache na
+   * esmagadora maioria das vezes.
+   */
+  const permissoes = useQuery({
+    queryKey: ["minhas-permissoes"],
+    queryFn: () => minhasPermissoesFn(),
+  });
+
   const q = useQuery({
     queryKey: ["projetos"],
     queryFn: () => listarProjetosFn(),
@@ -329,10 +342,25 @@ function Projetos() {
     [minhas.data],
   );
 
-  // Cadastrar projeto é aberto a toda a empresa: quem cria vira gerente
-  // e passa a poder montar o cronograma dele.
   const autenticado = usuario.data !== undefined;
   const projetos: ProjetoComProgresso[] = useMemo(() => q.data ?? [], [q.data]);
+
+  /**
+   * Quem pode cadastrar projeto.
+   *
+   * Criar já foi aberto a toda a empresa, pela ideia de que quem tem uma
+   * demanda deve conseguir registrá-la. O efeito foi outro: projeto
+   * criado por quem não acompanha nasce sem gerente de verdade e sem
+   * priorização, e some no meio da lista. Agora é de quem responde por
+   * carteira, e quem tem a demanda pede a essa pessoa.
+   *
+   * A regra espelha a do `criarProjeto` no servidor. Se divergirem, a
+   * tela oferece um botão que o banco recusa — e erro depois do clique
+   * é pior do que botão ausente.
+   */
+  const podeCriar =
+    (usuario.data?.admin ?? false) ||
+    (permissoes.data?.funcionalidades ?? []).includes("projeto.criar");
 
   /**
    * As opções de cada filtro saem da própria carteira.
@@ -469,7 +497,10 @@ function Projetos() {
                 className="pl-8"
               />
             </div>
-            {autenticado ? <ProjectDialog /> : null}
+            {/* Só para quem responde por carteira, e o projeto nasce no
+                backlog — o diálogo já abre assim. Oferecer a todos e
+                recusar depois do clique é pior do que não oferecer. */}
+            {podeCriar ? <ProjectDialog /> : null}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -564,9 +595,9 @@ function Projetos() {
           ) : null}
         </div>
 
-        {/* Os números do topo vêm do servidor e valem para a carteira
-            inteira que a pessoa enxerga — não para o resultado da busca.
-            Clicar filtra a lista abaixo; clicar de novo desliga. */}
+        {/* Os números acompanham os filtros da tela: eles também filtram
+            quando clicados, e um número que filtra mas não é filtrado
+            confunde. Clicar de novo desliga. */}
         <KpisPortfolio
           cards={["priorizados", "prazoEstourado", "semAcompanhamento", "semCronograma"]}
           valores={valoresKpi}
@@ -612,11 +643,11 @@ function Projetos() {
           <div className="panel p-8 text-center">
             <ListChecks className="mx-auto size-8 text-muted-foreground" />
             <p className="mt-3 text-sm font-medium">
-              {projetos.length === 0 ? "Nenhum projeto cadastrado" : "Nenhum projeto encontrado"}
+              {projetos.length === 0 ? "Nenhum projeto em andamento" : "Nenhum projeto encontrado"}
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
               {projetos.length === 0
-                ? "Cadastre o primeiro projeto para acompanhar cronograma, riscos e capacidade da equipe."
+                ? "Projetos entram aqui quando saem do backlog. Priorize um para começar o cronograma."
                 : "Tente outros filtros."}
             </p>
             {projetos.length > 0 && temFiltro ? (

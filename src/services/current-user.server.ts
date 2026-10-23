@@ -37,6 +37,26 @@ export const FEATURE_PROJETOS_DIRETORIA = "projetos.visao_diretoria";
 export const FEATURE_PROJETOS_PORTFOLIO = "projetos.portfolio";
 
 /**
+ * Enxerga os projetos da própria ÁREA, em leitura.
+ *
+ * A área é `usuarios.departamento`, e o recorte é o departamento de
+ * quem gerencia cada projeto. Soma-se à participação: quem executa
+ * tarefa num projeto de outra área continua enxergando o projeto em que
+ * trabalha.
+ *
+ * Virou permissão depois de ter sido automática. Enquanto bastava ter
+ * departamento preenchido, qualquer pessoa cadastrada passava a ver a
+ * área inteira — e para o analista isso é o oposto do pretendido: ele
+ * trabalha nas tarefas dele, e o portfólio da área não é assunto seu.
+ * Ver o que participa é o teto dele, não o piso.
+ *
+ * Não confundir com a de portfólio: aquela recorta por EQUIPE, que é
+ * estrutura de time; esta por DEPARTAMENTO, que é estrutura da empresa.
+ * Numa TI que atende a empresa inteira, as duas raramente coincidem.
+ */
+export const FEATURE_PROJETOS_AREA = "projetos.area";
+
+/**
  * Vê o instrutor de cronograma no detalhe do projeto.
  *
  * Diferente das duas de cima, esta não protege dado nenhum: o painel lê
@@ -67,13 +87,13 @@ export interface ContextoUsuario {
   /**
    * Área em que a pessoa trabalha.
    *
-   * Entra no contexto porque a visibilidade de portfólio passou a somar
-   * o departamento à participação: a pessoa vê os projetos da própria
-   * área, mais os de qualquer outra em que ela participe.
+   * Entra no contexto porque a visibilidade de portfólio pode somar o
+   * departamento à participação — mas só para quem tem a permissão
+   * `projetos.area`. Sozinho, o campo não amplia nada.
    *
-   * Nulo quando o cadastro está incompleto — e aí ela cai na visão de
-   * participação, que é o comportamento seguro. Abrir o portfólio
-   * inteiro nesse caso seria o oposto do que a regra existe para fazer.
+   * Nulo quando o cadastro está incompleto, e aí a pessoa fica na visão
+   * de participação mesmo tendo a permissão: não há área de onde
+   * ampliar.
    */
   departamento: string | null;
   /** Chaves de `perfil_features` do perfil do usuário. */
@@ -81,6 +101,13 @@ export interface ContextoUsuario {
   /** Atalhos dos papéis de projeto, para não espalhar string mágica. */
   visaoDiretoriaProjetos: boolean;
   gestorPortfolio: boolean;
+  /**
+   * Enxerga o portfólio da própria área, além do que participa.
+   *
+   * Depende também de `departamento` estar preenchido: a permissão diz
+   * que a pessoa PODE ver a área, e o cadastro diz QUAL área é.
+   */
+  verAreaProjetos: boolean;
   /**
    * Instrutor de cronograma ligado.
    *
@@ -323,6 +350,9 @@ export async function getUsuarioAtual(): Promise<ContextoUsuario> {
     funcionalidades,
     visaoDiretoriaProjetos: funcionalidades.includes(FEATURE_PROJETOS_DIRETORIA),
     gestorPortfolio: funcionalidades.includes(FEATURE_PROJETOS_PORTFOLIO),
+    // Admin entra sempre: ele é quem cadastra os perfis, e precisaria
+    // dar a si mesmo uma permissão para enxergar o que está liberando.
+    verAreaProjetos: admin || funcionalidades.includes(FEATURE_PROJETOS_AREA),
     coachProjetos: admin || funcionalidades.includes(FEATURE_PROJETOS_COACH),
   };
 }

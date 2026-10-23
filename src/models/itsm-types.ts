@@ -464,6 +464,20 @@ export const APP_FEATURES: AppFeature[] = [
     grupo: "Projetos",
   },
   /**
+   * Virou permissão quando ficou claro que a regra não serve a todo
+   * mundo. Antes bastava ter departamento preenchido, e qualquer pessoa
+   * cadastrada passava a ver a área inteira — para o analista, ver o
+   * que participa é o teto, não o piso.
+   */
+  {
+    key: "projetos.area",
+    label: "Ver projetos da área",
+    descricao:
+      "Enxerga os projetos tocados por gente do mesmo departamento, além dos que participa. " +
+      "Depende do departamento cadastrado no usuário.",
+    grupo: "Projetos",
+  },
+  /**
    * Esta não protege dado nenhum: o instrutor lê o que a pessoa já está
    * vendo na tela. É preferência de uso — há quem queira a leitura
    * automática do cronograma e há quem considere ruído numa tela já

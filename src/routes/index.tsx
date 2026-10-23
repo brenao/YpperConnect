@@ -41,7 +41,7 @@ import { minhasPermissoesFn } from "@/services/cadastros.functions";
  */
 const PORTAL_CHAMADOS = (import.meta.env["VITE_URL_ABRIR_CHAMADO"] ?? "").trim();
 
-/** Chaves de `perfil_features` que dão entrada no módulo de projetos. */
+/** Chaves de `perfil_features` que decidem a tela inicial de projetos. */
 const FEATURE_DIRETORIA = "projetos.visao_diretoria";
 const FEATURE_PORTFOLIO = "projetos.portfolio";
 
@@ -80,10 +80,27 @@ export const Route = createFileRoute("/")({
     if (p.admin || p.funcionalidades.includes(FEATURE_DIRETORIA)) {
       throw redirect({ to: "/diretoria" });
     }
-    if (p.funcionalidades.includes(FEATURE_PORTFOLIO)) {
+
+    /**
+     * Quem tem o módulo de projetos entra nele.
+     *
+     * Antes só as duas features de acompanhamento — diretoria e
+     * portfólio — davam entrada, e quem tinha o módulo sem nenhuma
+     * delas batia na tela de bloqueio com o menu de projetos
+     * funcionando ao lado. É o caso do analista e do gerente de
+     * projetos, que são a maioria de quem usa o sistema.
+     *
+     * Quem acompanha carteira vai para a lista de projetos; os demais,
+     * para o backlog — é de lá que o trabalho começa, e é a tela que
+     * faz sentido como porta de entrada de quem registra demanda.
+     */
+    if (p.funcionalidades.includes(FEATURE_PORTFOLIO) || p.modulos.includes("/projetos")) {
       throw redirect({ to: "/projetos" });
     }
-    // Sem nenhuma das duas, cai no componente abaixo, que explica.
+    if (p.modulos.includes("/backlog")) {
+      throw redirect({ to: "/backlog" });
+    }
+    // Sem módulo de projetos nenhum, cai no componente abaixo.
   },
   component: PORTAL_CHAMADOS === "" ? Dashboard : SemAcessoProjetos,
 });
