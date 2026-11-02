@@ -36,8 +36,12 @@ async function executar(): Promise<Response> {
   const fila = await processarFila();
   // Fim do desconto do cupom, fim do split e carteiras novas de afiliado.
   const gateway = await sincronizarGateway();
+  // Cancelamentos agendados: encerra no dia seguinte ao último dia de acesso.
+  const { getSupabaseAdmin } = await import("@/integrations/supabase/admin.server");
+  const encerradas = await getSupabaseAdmin().rpc("encerrar_assinaturas_vencidas");
+  if (encerradas.error) console.error("Falha ao encerrar assinaturas:", encerradas.error.message);
 
-  return Response.json({ lembretes, fila, gateway });
+  return Response.json({ lembretes, fila, gateway, assinaturasEncerradas: encerradas.data ?? 0 });
 }
 
 export const Route = createFileRoute("/api/rotinas")({

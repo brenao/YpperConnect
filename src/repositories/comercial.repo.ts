@@ -23,6 +23,8 @@ export interface LinhaAssinatura {
   testeAte: string | null;
   periodoFim: string | null;
   afiliadoCodigo: string | null;
+  /** Último dia de acesso, quando há cancelamento agendado. */
+  encerraEm: string | null;
 }
 
 export interface Plano {
@@ -110,6 +112,7 @@ export async function painelAssinaturas(ctx: ContextoUsuario): Promise<LinhaAssi
     testeAte: (r["teste_ate"] as string | null) ?? null,
     periodoFim: (r["periodo_fim"] as string | null) ?? null,
     afiliadoCodigo: (r["afiliado_codigo"] as string | null) ?? null,
+    encerraEm: (r["encerra_em"] as string | null) ?? null,
   }));
 }
 
@@ -142,6 +145,8 @@ export async function atualizarAssinatura(
 ): Promise<void> {
   exigirOperador(ctx);
   if (d.usuarios < 3) throw new ErroDominio("O mínimo é de 3 usuários pagantes.");
+  // Cancelar na hora também precisa parar as cobranças no gateway.
+  if (d.status === "cancelada") await agendarCancelamento(ctx, d.tenantId);
   const { error } = await getSupabaseServerClient().rpc("atualizar_assinatura", {
     p_tenant: d.tenantId,
     p_plano: d.plano,
@@ -154,6 +159,41 @@ export async function atualizarAssinatura(
     p_afiliado_codigo: d.afiliadoCodigo,
   });
   if (error) falha(error);
+}
+
+/**
+ * Cancelamento pedido pelo cliente: o acesso vai até o fim do período já
+ * pago (mensal: fim do mês; anual: fim dos 12 meses; teste: hoje) e as
+ * próximas cobranças são canceladas no gateway. Quem grava "cancelada" é
+ * a rotina diária, no dia seguinte ao último dia de acesso.
+ */
+export async function agendarCancelamento(
+  ctx: ContextoUsuario,
+  tenantId: string,
+): Promise<{ encerraEm: string }> {
+  exigirOperador(ctx);
+  const { data, error } = await getSupabaseServerClient().rpc("agendar_cancelamento", {
+    p_tenant: tenantId,
+  });
+  if (error) falha(error);
+  const r = (data ?? {}) as Record<string, unknown>;
+  const idGateway = (r["gateway_assinatura_id"] as string | null) ?? null;
+
+  if (idGateway) {
+    const { asaas } = await import("@/integrations/gateway/asaas.server");
+    if (asaas.configurado()) {
+      try {
+        await asaas.cancelarAssinatura(idGateway);
+      } catch (e) {
+        // O acesso já foi agendado; sem cancelar no gateway, ele continuaria cobrando.
+        console.error("Falha ao cancelar a assinatura no gateway:", e);
+        throw new ErroDominio(
+          `Cancelamento agendado, mas o Asaas recusou o cancelamento da cobrança (${idGateway}). Cancele essa assinatura no painel do Asaas.`,
+        );
+      }
+    }
+  }
+  return { encerraEm: r["encerra_em"] as string };
 }
 
 export async function listarAfiliados(ctx: ContextoUsuario): Promise<Afiliado[]> {

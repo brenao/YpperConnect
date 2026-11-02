@@ -22,6 +22,8 @@ export interface SituacaoPlano {
   usuariosPagantes: number;
   testeAte: string | null;
   periodoFim: string | null;
+  /** Último dia de acesso, quando há cancelamento agendado. */
+  encerraEm: string | null;
 }
 
 const ROTAS_POR_MODULO: Record<ModuloComercial, string[]> = {
@@ -62,6 +64,7 @@ export const SEM_PLANO: SituacaoPlano = {
   usuariosPagantes: 0,
   testeAte: null,
   periodoFim: null,
+  encerraEm: null,
 };
 
 /** JSON de situacao_assinatura (banco) no formato do app. */
@@ -79,5 +82,6 @@ export function paraSituacaoPlano(j: Record<string, unknown> | null | undefined)
     usuariosPagantes: Number(j["usuarios_pagantes"] ?? 0),
     testeAte: (j["teste_ate"] as string | null | undefined) ?? null,
     periodoFim: (j["periodo_fim"] as string | null | undefined) ?? null,
+    encerraEm: (j["encerra_em"] as string | null | undefined) ?? null,
   };
 }

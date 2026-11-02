@@ -28,6 +28,7 @@ import { sessaoFn } from "@/services/sessao.functions";
 import { DialogLink } from "@/views/dialog-link";
 import {
   atualizarAfiliadoFn,
+  agendarCancelamentoFn,
   atualizarAssinaturaFn,
   salvarParametrosFn,
   codigoAfiliadoEmUsoFn,
@@ -119,6 +120,16 @@ function DialogAssinatura({
     },
     onError: erro,
   });
+  const [confirmarCancelamento, setConfirmarCancelamento] = useState(false);
+  const cancelar = useMutation({
+    mutationFn: () => agendarCancelamentoFn({ data: { tenantId: linha.tenantId } }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["painel-comercial"] });
+      toast.success(`Cancelamento agendado. Acesso até ${dataBr(r.encerraEm)}.`);
+      onFechar();
+    },
+    onError: erro,
+  });
 
   return (
     <Dialog open onOpenChange={(v) => (v ? null : onFechar())}>
@@ -206,9 +217,44 @@ function DialogAssinatura({
             Cortesia (sem cobrança)
           </label>
         </div>
+        <div className="rounded-lg border border-border p-3 text-sm">
+          {linha.encerraEm ? (
+            <p className="text-muted-foreground">
+              Cancelamento agendado. Acesso até <strong>{dataBr(linha.encerraEm)}</strong>; a
+              assinatura é encerrada no dia seguinte.
+            </p>
+          ) : confirmarCancelamento ? (
+            <div className="space-y-2">
+              <p>
+                O acesso continua até o fim do período já pago (no teste, encerra hoje) e as
+                próximas cobranças são canceladas no Asaas. Confirma?
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={cancelar.isPending}
+                  onClick={() => cancelar.mutate()}
+                >
+                  {cancelar.isPending ? "Cancelando..." : "Sim, cancelar no fim do período"}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmarCancelamento(false)}>
+                  Voltar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-muted-foreground">Pedido de cancelamento do cliente</p>
+              <Button variant="outline" size="sm" onClick={() => setConfirmarCancelamento(true)}>
+                Cancelar no fim do período
+              </Button>
+            </div>
+          )}
+        </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onFechar}>
-            Cancelar
+            Fechar
           </Button>
           <Button disabled={salvar.isPending} onClick={() => salvar.mutate()}>
             {salvar.isPending ? "Salvando..." : "Salvar"}
@@ -687,6 +733,11 @@ function Comercial() {
                           <Badge variant="outline" className="text-[10px]">
                             {a.cortesia ? "Cortesia" : (STATUS_LABEL[a.status ?? ""] ?? "—")}
                           </Badge>
+                          {a.encerraEm ? (
+                            <span className="block text-[11px] text-destructive">
+                              cancela em {dataBr(a.encerraEm)}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="px-4 py-2">
                           {a.usuariosPagantes} / {a.cortesia ? "∞" : a.usuariosContratados}

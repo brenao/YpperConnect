@@ -30,7 +30,12 @@ const STATUS: Record<string, string> = {
   sem_assinatura: "Sem assinatura",
 };
 
+const dataBr = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("pt-BR");
+
 function mensagem(p: SituacaoPlano): string {
+  if (p.encerraEm && p.acesso !== "bloqueado") {
+    return `Cancelamento agendado: o acesso continua até ${dataBr(p.encerraEm)}, sem novas cobranças.`;
+  }
   if (p.status === "teste" && p.acesso === "bloqueado") {
     return "O período de teste terminou. Contrate um plano para continuar usando o BeagleOne.";
   }

@@ -53,6 +53,11 @@ export const atualizarAssinaturaFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+/** Cancelamento pedido pelo cliente: vale no fim do período já pago. */
+export const agendarCancelamentoFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => z.object({ tenantId: z.string().uuid() }).parse(d))
+  .handler(async ({ data }) => (await repo()).agendarCancelamento(await ctx(), data.tenantId));
+
 export const criarAfiliadoFn = createServerFn({ method: "POST" })
   .validator((d: unknown) =>
     z
