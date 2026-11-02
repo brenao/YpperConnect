@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import logo from "@/assets/beagleone-logo.png";
+import logo from "@/assets/beagleone-logo.webp";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,7 +59,7 @@ function DefinirSenha() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex justify-center">
-          <img src={logo} alt="BeagleOne" width={1240} height={1240} className="h-24 w-auto" />
+          <img src={logo} alt="BeagleOne" width={384} height={384} className="h-24 w-auto" />
         </div>
         <form onSubmit={aoEnviar} className="space-y-4 rounded-lg border border-border bg-card p-6">
           <div>

@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { documentoValido, somenteDigitos } from "@/lib/documento";
 
 /** Server functions do painel comercial (operadores da plataforma). */
 
@@ -65,6 +66,10 @@ export const criarAfiliadoFn = createServerFn({ method: "POST" })
         codigo: z.string().min(3),
         nome: z.string().trim().min(2, "Informe o nome"),
         email: z.string().trim().email("E-mail inválido"),
+        documento: z
+          .string()
+          .transform(somenteDigitos)
+          .refine(documentoValido, "CPF ou CNPJ inválido"),
         tipo: z.enum(["afiliado", "parceiro"]),
         descontoPct: z.number().int().min(0).max(90),
       })
@@ -128,6 +133,11 @@ export const atualizarAfiliadoFn = createServerFn({ method: "POST" })
         id: z.string(),
         descontoPct: z.number().int().min(0).max(90),
         ativo: z.boolean(),
+        documento: z
+          .string()
+          .transform(somenteDigitos)
+          .refine((v) => v === "" || documentoValido(v), "CPF ou CNPJ inválido")
+          .optional(),
       })
       .parse(d),
   )

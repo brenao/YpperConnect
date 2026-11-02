@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import logo from "@/assets/beagleone-logo.png";
+import logo from "@/assets/beagleone-logo.webp";
 import { confirmarLinkFn } from "@/services/sessao.functions";
 
 type TipoLink = "invite" | "email" | "recovery";
@@ -37,8 +37,8 @@ function ConfirmarLink() {
         <img
           src={logo}
           alt="BeagleOne"
-          width={1240}
-          height={1240}
+          width={384}
+          height={384}
           className="mx-auto mb-8 h-24 w-auto"
         />
         <div className="rounded-lg border border-border bg-card p-6">

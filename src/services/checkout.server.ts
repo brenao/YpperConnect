@@ -183,6 +183,8 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
     p_versao_termos: VERSAO_TERMOS,
     p_ip: origem.ip,
     p_user_agent: origem.userAgent,
+    // Bloqueia o cupom do próprio afiliado pelo CPF/CNPJ.
+    p_documento: documento,
   });
   if (error) {
     if (error.code === "23505")

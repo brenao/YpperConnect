@@ -43,6 +43,8 @@ export interface Afiliado {
   descontoPct: number;
   mesesRecorrencia: number;
   ativo: boolean;
+  /** CPF/CNPJ (só dígitos). Sem ele, não dá para barrar o uso do próprio cupom. */
+  documento: string | null;
   /** Desempenho (desempenho_afiliados). */
   emTeste: number;
   ativas: number;
@@ -81,7 +83,13 @@ function exigirOperador(ctx: ContextoUsuario): void {
 function falha(erro: { code?: string; message: string }): never {
   if (erro.code === "42501") throw new ErroDominio("Somente operadores da plataforma.");
   if (erro.code === "P0001" || erro.code === "P0002") throw new ErroDominio(erro.message);
-  if (erro.code === "23505") throw new ErroDominio("Já existe um afiliado com esse código.");
+  if (erro.code === "23505") {
+    throw new ErroDominio(
+      erro.message.includes("documento")
+        ? "Já existe um afiliado com esse CPF/CNPJ."
+        : "Já existe um afiliado com esse código.",
+    );
+  }
   if (erro.code === "23514") {
     throw new ErroDominio(
       erro.message.startsWith("Desconto")
@@ -202,7 +210,9 @@ export async function listarAfiliados(ctx: ContextoUsuario): Promise<Afiliado[]>
   const [{ data, error }, desempenho] = await Promise.all([
     sb
       .from("afiliados")
-      .select("id, codigo, nome, email, tipo, comissao_pct, desconto_pct, meses_recorrencia, ativo")
+      .select(
+        "id, codigo, nome, email, tipo, comissao_pct, desconto_pct, meses_recorrencia, ativo, documento",
+      )
       .order("nome"),
     sb.rpc("desempenho_afiliados"),
   ]);
@@ -226,6 +236,7 @@ export async function listarAfiliados(ctx: ContextoUsuario): Promise<Afiliado[]>
       descontoPct: Number(a.desconto_pct ?? 0),
       mesesRecorrencia: Number(a.meses_recorrencia),
       ativo: a.ativo as boolean,
+      documento: (a.documento as string | null) ?? null,
       emTeste: Number(d["em_teste"] ?? 0),
       ativas: Number(d["ativas"] ?? 0),
       canceladas: Number(d["canceladas"] ?? 0),
@@ -270,13 +281,14 @@ export async function salvarParametros(
 /** O código não muda (já foi divulgado); desconto e situação, sim. */
 export async function atualizarAfiliado(
   ctx: ContextoUsuario,
-  d: { id: string; descontoPct: number; ativo: boolean },
+  d: { id: string; descontoPct: number; ativo: boolean; documento?: string | undefined },
 ): Promise<void> {
   exigirOperador(ctx);
   const { error } = await getSupabaseServerClient().rpc("atualizar_afiliado", {
     p_id: d.id,
     p_desconto: d.descontoPct,
     p_ativo: d.ativo,
+    p_documento: d.documento?.replace(/\D/g, "") || null,
   });
   if (error) falha(error);
 }
@@ -286,6 +298,8 @@ export interface NovoAfiliado {
   nome: string;
   email: string;
   tipo: "afiliado" | "parceiro";
+  /** CPF/CNPJ: barra o uso do próprio cupom no checkout. */
+  documento: string;
   /** 0 ao máximo dos parâmetros comerciais. O código sugerido termina com ele (LUCIANA20 = 20%). */
   descontoPct: number;
 }
@@ -358,15 +372,18 @@ export async function criarAfiliado(
   if ((await codigosEmUso(ctx, [codigo])).length) {
     throw new ErroDominio(`O código ${codigo} já está em uso. Gere ou digite outro.`);
   }
-  const { error } = await getSupabaseServerClient().from("afiliados").insert({
-    codigo,
-    nome: d.nome.trim(),
-    email: d.email.trim().toLowerCase(),
-    tipo: d.tipo,
-    comissao_pct: COMISSAO_POR_TIPO[d.tipo],
-    desconto_pct: d.descontoPct,
-    meses_recorrencia: 12,
-  });
+  const { error } = await getSupabaseServerClient()
+    .from("afiliados")
+    .insert({
+      codigo,
+      nome: d.nome.trim(),
+      email: d.email.trim().toLowerCase(),
+      documento: d.documento.replace(/\D/g, ""),
+      tipo: d.tipo,
+      comissao_pct: COMISSAO_POR_TIPO[d.tipo],
+      desconto_pct: d.descontoPct,
+      meses_recorrencia: 12,
+    });
   if (error) falha(error);
 
   // Conta de login do afiliado (portal). O link vai para o operador

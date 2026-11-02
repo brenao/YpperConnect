@@ -26,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { sessaoFn } from "@/services/sessao.functions";
 import { DialogLink } from "@/views/dialog-link";
+import { documentoValido, formatarDocumento } from "@/lib/documento";
 import {
   atualizarAfiliadoFn,
   agendarCancelamentoFn,
@@ -279,12 +280,14 @@ function DialogAfiliado({
     codigo: string;
     nome: string;
     email: string;
+    documento: string;
     tipo: "afiliado" | "parceiro";
     descontoPct: number;
   }>({
     codigo: "",
     nome: "",
     email: "",
+    documento: "",
     tipo: "afiliado",
     descontoPct: Math.min(10, descontoMax),
   });
@@ -353,6 +356,21 @@ function DialogAfiliado({
           <div className="space-y-1.5">
             <Label>E-mail</Label>
             <Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>CPF ou CNPJ</Label>
+            <Input
+              inputMode="numeric"
+              value={f.documento}
+              onChange={(e) => setF({ ...f, documento: formatarDocumento(e.target.value) })}
+            />
+            {f.documento && !documentoValido(f.documento) ? (
+              <p className="text-xs text-destructive">CPF ou CNPJ inválido.</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Impede que o afiliado compre com o próprio cupom.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Tipo</Label>
@@ -438,7 +456,13 @@ function DialogAfiliado({
             Cancelar
           </Button>
           <Button
-            disabled={criar.isPending || !valido || ocupado || emUso.isFetching}
+            disabled={
+              criar.isPending ||
+              !valido ||
+              ocupado ||
+              emUso.isFetching ||
+              !documentoValido(f.documento)
+            }
             onClick={() => criar.mutate()}
           >
             Cadastrar
@@ -461,8 +485,11 @@ function DialogEditarAfiliado({
   const qc = useQueryClient();
   const [descontoPct, setDescontoPct] = useState(afiliado.descontoPct);
   const [ativo, setAtivo] = useState(afiliado.ativo);
+  const [documento, setDocumento] = useState(formatarDocumento(afiliado.documento ?? ""));
+  const documentoOk = documento === "" || documentoValido(documento);
   const salvar = useMutation({
-    mutationFn: () => atualizarAfiliadoFn({ data: { id: afiliado.id, descontoPct, ativo } }),
+    mutationFn: () =>
+      atualizarAfiliadoFn({ data: { id: afiliado.id, descontoPct, ativo, documento } }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["painel-comercial"] });
       toast.success("Afiliado atualizado");
@@ -497,6 +524,22 @@ function DialogEditarAfiliado({
               o número do desconto antigo, considere cadastrar um novo.
             </p>
           </div>
+          <div className="space-y-1.5">
+            <Label>CPF ou CNPJ</Label>
+            <Input
+              inputMode="numeric"
+              value={documento}
+              onChange={(e) => setDocumento(formatarDocumento(e.target.value))}
+            />
+            {!documentoOk ? (
+              <p className="text-xs text-destructive">CPF ou CNPJ inválido.</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Impede que o afiliado compre com o próprio cupom. Vendas já feitas para o mesmo
+                documento deixam de gerar comissão.
+              </p>
+            )}
+          </div>
           <label className="flex items-center gap-2 text-sm">
             <Switch checked={ativo} onCheckedChange={setAtivo} />
             Ativo (inativo: o cupom deixa de valer e o split é retirado na próxima sincronização)
@@ -506,7 +549,7 @@ function DialogEditarAfiliado({
           <Button variant="ghost" onClick={onFechar}>
             Cancelar
           </Button>
-          <Button disabled={salvar.isPending} onClick={() => salvar.mutate()}>
+          <Button disabled={salvar.isPending || !documentoOk} onClick={() => salvar.mutate()}>
             {salvar.isPending ? "Salvando..." : "Salvar"}
           </Button>
         </DialogFooter>
@@ -801,6 +844,9 @@ function Comercial() {
                             </Badge>
                           )}
                           <span className="block text-[11px] text-muted-foreground">{a.email}</span>
+                          {a.documento ? null : (
+                            <span className="block text-[11px] text-destructive">sem CPF/CNPJ</span>
+                          )}
                         </td>
                         <td className="px-4 py-2 font-mono text-xs">{a.codigo}</td>
                         <td className="px-4 py-2">
