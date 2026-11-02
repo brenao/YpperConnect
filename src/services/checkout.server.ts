@@ -1,4 +1,5 @@
-import { getCookie, setCookie } from "@tanstack/react-start/server";
+import { getCookie, getRequest, setCookie } from "@tanstack/react-start/server";
+import { VERSAO_TERMOS } from "@/models/termos";
 import { asaas } from "@/integrations/gateway/asaas.server";
 import type { SplitGateway } from "@/integrations/gateway/tipos";
 import { ErroDominio } from "@/repositories/tipos";
@@ -105,6 +106,19 @@ export interface DadosCheckout {
   addonIa: boolean;
   /** Cupom de indicação digitado (vazio = sem cupom). */
   cupom?: string | undefined;
+  /** Marcou "Li e aceito os Termos de uso e a Política de privacidade". */
+  aceiteTermos: true;
+}
+
+/** IP e navegador de quem contrata, para o registro do aceite. */
+function origemDaRequisicao(): { ip: string | null; userAgent: string | null } {
+  try {
+    const h = getRequest().headers;
+    const ip = (h.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || h.get("x-real-ip") || null;
+    return { ip, userAgent: h.get("user-agent") };
+  } catch {
+    return { ip: null, userAgent: null };
+  }
 }
 
 export interface CupomValidado {
@@ -146,7 +160,11 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
     throw new ErroDominio("Informe um CPF (11 dígitos) ou CNPJ (14 dígitos).");
   }
   if (d.usuarios < 3) throw new ErroDominio("O mínimo é de 3 usuários pagantes.");
+  if (d.aceiteTermos !== true) {
+    throw new ErroDominio("Aceite os Termos de uso e a Política de privacidade.");
+  }
 
+  const origem = origemDaRequisicao();
   const sb = await admin();
   const { prepararConta } = await import("@/repositories/usuarios.repo");
   const conta = await prepararConta(d.email, d.nome);
@@ -161,6 +179,10 @@ export async function criarCheckout(d: DadosCheckout): Promise<{ email: string }
     p_addon_ia: d.addonIa,
     p_visitante: visitanteAtual(),
     p_cupom: d.cupom?.trim() || null,
+    // Aceite gravado na mesma transação que cria a empresa.
+    p_versao_termos: VERSAO_TERMOS,
+    p_ip: origem.ip,
+    p_user_agent: origem.userAgent,
   });
   if (error) {
     if (error.code === "23505")

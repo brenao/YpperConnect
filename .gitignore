@@ -37,3 +37,4 @@ dist-ssr
 *.sw?check-oracle.mjs
 .vercel
 .env*.local
+.env*

@@ -26,6 +26,9 @@ export const criarCheckoutFn = createServerFn({ method: "POST" })
         usuarios: z.number().int().min(3).max(500),
         addonIa: z.boolean(),
         cupom: z.string().trim().toUpperCase().max(30).optional(),
+        aceiteTermos: z.literal(true, {
+          errorMap: () => ({ message: "Aceite os Termos de uso e a Política de privacidade." }),
+        }),
       })
       .parse(d),
   )
