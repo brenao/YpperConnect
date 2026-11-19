@@ -93,8 +93,20 @@ export function progressoReal(tarefas: TarefaCalculada[]): number {
 /**
  * Verde em dia, amarelo atrasado até 15 pontos, vermelho acima disso.
  * Adiantado nunca é alerta.
+ *
+ * `prazoVencido` entra porque o desvio sozinho não conta a história
+ * toda: um projeto com 83% feito contra 86% esperado está dentro da
+ * tolerância, e ainda assim pode ter passado da data de entrega. A
+ * lista de projetos já tratava isso como vermelho e o detalhe não, e o
+ * mesmo projeto aparecia como "Atrasado" num lugar e "Risco de atraso"
+ * no outro — dois números para a mesma pergunta destroem a confiança na
+ * tela inteira.
+ *
+ * Data vencida sem encerrar é fato, não risco: vermelho direto, qualquer
+ * que seja o progresso.
  */
-export function semaforoPrazo(esperado: number, real: number): Semaforo {
+export function semaforoPrazo(esperado: number, real: number, prazoVencido = false): Semaforo {
+  if (prazoVencido) return "vermelho";
   const atraso = esperado - real;
   if (atraso <= 0) return "verde";
   if (atraso <= TOLERANCIA_ATRASO) return "amarelo";

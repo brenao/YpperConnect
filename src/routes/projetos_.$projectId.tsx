@@ -48,6 +48,7 @@ import {
   semaforoAtualizacao,
   semaforoPrazo,
   SEMAFORO_CLASSE,
+  SEMAFORO_PRAZO_LABEL,
 } from "@/services/projeto-metricas";
 import { fmt, inicioDoDia } from "@/lib/datas";
 import { cn } from "@/lib/utils";
@@ -308,7 +309,20 @@ function DetalheProjeto() {
   const hoje = inicioDoDia(new Date());
   const esperado = progressoEsperado(tarefas, planejado, hoje);
   const progresso = progressoReal(tarefas);
-  const semPrazo = semaforoPrazo(esperado, progresso);
+  /**
+   * Prazo vencido é o `atrasado` de baixo, declarado antes para o
+   * semáforo poder usá-lo: data no passado sem o projeto ter encerrado.
+   *
+   * Entra no semáforo porque o desvio sozinho não bastava — 83% contra
+   * 86% esperado fica dentro da tolerância, e o projeto aparecia como
+   * "risco de atraso" aqui enquanto a lista dizia "Atrasado". Dois
+   * veredictos para a mesma pergunta fazem a tela inteira perder
+   * credibilidade.
+   */
+  const prazoVencido =
+    new Date(projeto.fim) < new Date() &&
+    (projeto.status === "execucao" || projeto.status === "planejamento");
+  const semPrazo = semaforoPrazo(esperado, progresso, prazoVencido);
 
   // As métricas usam a janela recente, não o resultado da busca: elas
   // perguntam "quando foi a última atualização", e a mais recente está
@@ -333,7 +347,8 @@ function DetalheProjeto() {
 
   const atencoesAbertas = atencoes.filter((a) => a.status === "aberto");
   const riscosAbertos = riscos.filter((r) => r.status !== "mitigado");
-  const atrasado = new Date(projeto.fim) < new Date() && projeto.status === "execucao";
+  // Mesmo teste do semáforo, para o aviso e a cor nunca discordarem.
+  const atrasado = prazoVencido;
 
   const pendentesAcesso = (pedidos.data ?? []).filter((s) => s.projetoId === projectId).length;
 
@@ -446,11 +461,7 @@ function DetalheProjeto() {
                   SEMAFORO_CLASSE[semPrazo],
                 )}
               >
-                {semPrazo === "verde"
-                  ? "em dia"
-                  : semPrazo === "amarelo"
-                    ? "risco de atraso"
-                    : "atrasado"}
+                {SEMAFORO_PRAZO_LABEL[semPrazo].toLowerCase()}
               </span>
               <span className="text-muted-foreground">
                 {concluidas} de {folhas.length} tarefa(s)
