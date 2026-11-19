@@ -57,6 +57,20 @@ export const Route = createFileRoute("/recursos")({
 /** Mesma chave que o repositório exige para escrever. */
 const FEATURE_RECURSO_EDITAR = "recurso.editar";
 
+/**
+ * Lança a própria ausência, e só ela.
+ *
+ * Avisar que se vai tirar férias não é administrar a capacidade de
+ * ninguém, mas as duas coisas viviam sob `recurso.editar` — e isso
+ * obrigava a escolher entre o analista não conseguir marcar as próprias
+ * férias ou poder mexer no cadastro da equipe inteira.
+ *
+ * O botão aparece só no card do recurso vinculado à pessoa. O servidor
+ * recusa o resto, e um botão que só dá erro é pior do que botão
+ * ausente.
+ */
+const FEATURE_AUSENCIA_PROPRIA = "recurso.ausencia_propria";
+
 /** Letras necessárias antes de sugerir nomes, como no seletor de pessoa. */
 const MIN_BUSCA = 2;
 
@@ -65,8 +79,14 @@ function Recursos() {
   const [busca, setBusca] = useState("");
   const [mostrarInativos, setMostrarInativos] = useState(false);
 
-  const usuario = useQuery({ queryKey: ["usuario-atual"], queryFn: () => usuarioAtualFn() });
-  const q = useQuery({ queryKey: ["recursos"], queryFn: () => listarRecursosFn() });
+  const usuario = useQuery({
+    queryKey: ["usuario-atual"],
+    queryFn: () => usuarioAtualFn(),
+  });
+  const q = useQuery({
+    queryKey: ["recursos"],
+    queryFn: () => listarRecursosFn(),
+  });
 
   // Antes bastava ter equipe — a mesma regra de TI que já saiu de
   // projetos. Capacidade de projeto não é assunto de quem atende
@@ -74,13 +94,21 @@ function Recursos() {
   const u = usuario.data;
   const podeEditar = u ? u.admin || u.funcionalidades.includes(FEATURE_RECURSO_EDITAR) : false;
 
+  /** Pode lançar ausência de alguém — a própria, no mínimo. */
+  const podeAusenciaPropria = u
+    ? podeEditar || u.funcionalidades.includes(FEATURE_AUSENCIA_PROPRIA)
+    : false;
+
   const recursos: Recurso[] = useMemo(() => q.data?.recursos ?? [], [q.data]);
 
   /** Carga vinda das tarefas de projeto, indexada por recurso. */
   const cargaPorId = useMemo(() => {
     const m = new Map<string, { horas: number; projetos: number }>();
     for (const c of q.data?.cargas ?? []) {
-      m.set(c.recursoId, { horas: c.horasComprometidas, projetos: c.projetosAtivos });
+      m.set(c.recursoId, {
+        horas: c.horasComprometidas,
+        projetos: c.projetosAtivos,
+      });
     }
     return m;
   }, [q.data]);
@@ -235,6 +263,18 @@ function Recursos() {
               const pct = capacidade ? Math.round((horas / capacidade) * 100) : 0;
               const conflito = horas > capacidade;
 
+              /**
+               * O próprio recurso da pessoa logada.
+               *
+               * O vínculo é `usuario_id`, o mesmo que faz alguém
+               * enxergar os projetos em que trabalha. Recurso sem
+               * vínculo — terceiro, externo sem login — nunca é de
+               * ninguém, e por isso a comparação com nulo não pode
+               * passar.
+               */
+              const meuRecurso = r.usuarioId !== null && r.usuarioId === u?.id;
+              const podeLancarAusencia = podeEditar || (podeAusenciaPropria && meuRecurso);
+
               return (
                 <article key={r.id} className={cn("panel p-5", r.ativo ? "" : "opacity-60")}>
                   <div className="flex items-start justify-between gap-2">
@@ -245,11 +285,14 @@ function Recursos() {
                         {r.equipeNome ? ` · ${r.equipeNome}` : ""}
                       </p>
                     </div>
-                    {podeEditar ? (
+                    {podeLancarAusencia ? (
                       <div className="flex shrink-0 gap-1">
                         {/* Ausências ficam no card da pessoa, e não numa
                             tela separada: quem vai marcar férias já está
-                            olhando a capacidade dela. */}
+                            olhando a capacidade dela.
+
+                            Quem só tem a chave da ausência própria vê
+                            este botão apenas no próprio card. */}
                         <DialogoAusencias
                           recurso={r}
                           trigger={
@@ -263,28 +306,40 @@ function Recursos() {
                             </Button>
                           }
                         />
-                        <ResourceDialog
-                          resource={r}
-                          trigger={
-                            <Button variant="ghost" size="icon" className="size-7" title="Editar">
-                              <Pencil className="size-3.5" />
+                        {/* Editar o cadastro e desativar continuam sendo
+                            de quem administra capacidade: mexem no que
+                            a equipe inteira enxerga. */}
+                        {podeEditar ? (
+                          <>
+                            <ResourceDialog
+                              resource={r}
+                              trigger={
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  title="Editar"
+                                >
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                              }
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7"
+                              title={r.ativo ? "Desativar" : "Reativar"}
+                              disabled={alternar.isPending}
+                              onClick={() => alternar.mutate({ id: r.id, ativo: !r.ativo })}
+                            >
+                              {r.ativo ? (
+                                <EyeOff className="size-3.5 text-muted-foreground" />
+                              ) : (
+                                <Eye className="size-3.5 text-success" />
+                              )}
                             </Button>
-                          }
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-7"
-                          title={r.ativo ? "Desativar" : "Reativar"}
-                          disabled={alternar.isPending}
-                          onClick={() => alternar.mutate({ id: r.id, ativo: !r.ativo })}
-                        >
-                          {r.ativo ? (
-                            <EyeOff className="size-3.5 text-muted-foreground" />
-                          ) : (
-                            <Eye className="size-3.5 text-success" />
-                          )}
-                        </Button>
+                          </>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

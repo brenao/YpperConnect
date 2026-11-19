@@ -836,6 +836,18 @@ function Administracao() {
   });
 
   const isAdmin = usuario.data?.admin ?? false;
+
+  /**
+   * Edita feriados e localidades.
+   *
+   * Mais largo que `isAdmin` de propósito, e só para o calendário: o
+   * resto desta tela continua restrito a administrador. Quem gerencia
+   * projetos cadastra o feriado da cidade onde a equipe trabalha sem
+   * precisar de acesso ao resto da Administração.
+   */
+  const podeCalendario =
+    isAdmin || (usuario.data?.funcionalidades ?? []).includes("calendario.editar");
+
   const usuarios = useMemo(() => usuariosQuery.data ?? [], [usuariosQuery.data]);
   const sistemas = useMemo(() => sistemasQuery.data ?? [], [sistemasQuery.data]);
 
@@ -998,6 +1010,7 @@ function Administracao() {
       {!isAdmin ? (
         <div className="panel mb-4 border-warning/40 p-4 text-sm text-muted-foreground">
           Você pode consultar os cadastros, mas somente administradores podem alterá-los.
+          {podeCalendario ? " A aba Calendário é a exceção: seu perfil pode editá-la." : ""}
         </div>
       ) : null}
 
@@ -1257,8 +1270,12 @@ function Administracao() {
           <TabsContent value="calendario" className="mt-4">
             {/* Localidades e feriados mudam as datas de todo projeto da
                 empresa — é configuração de instalação, e por isso mora
-                aqui e não dentro de um projeto. */}
-            <PainelCalendario isAdmin={isAdmin} />
+                aqui e não dentro de um projeto.
+
+                Tem permissão própria: quem gerencia projetos cadastra o
+                feriado da cidade onde a equipe trabalha sem precisar
+                ser administrador do sistema. */}
+            <PainelCalendario isAdmin={podeCalendario} />
           </TabsContent>
 
           {/* ---------------------------------------------- fornecedores */}

@@ -83,10 +83,72 @@ const mapear = (l: Linha): Recurso => ({ ...l, ativo: paraBool(l.ativo) });
  */
 const FEATURE_RECURSO_EDITAR = "recurso.editar";
 
+/**
+ * Lança a PRÓPRIA ausência, e só ela.
+ *
+ * Existe porque avisar que se vai tirar férias não é administrar
+ * capacidade de ninguém: estava sob `recurso.editar`, a mesma chave que
+ * cria recurso e edita o cadastro dos outros, e isso obrigava a
+ * escolher entre o analista não conseguir marcar as próprias férias ou
+ * poder mexer no cadastro da equipe inteira.
+ *
+ * Quem gerencia continua lançando a de qualquer um, por
+ * `recurso.editar`.
+ */
+const FEATURE_AUSENCIA_PROPRIA = "recurso.ausencia_propria";
+
 function exigirGestaoRecursos(ctx: ContextoUsuario, acao: string): void {
   if (ctx.admin) return;
   if (ctx.funcionalidades.includes(FEATURE_RECURSO_EDITAR)) return;
   throw new ErroDominio(`Seu perfil não permite ${acao}`);
+}
+
+/**
+ * Permite a ação sobre a ausência de UM recurso.
+ *
+ * Quem administra recursos passa direto. Quem só tem a chave da
+ * ausência própria precisa que o recurso seja o dela — o vínculo é
+ * `recursos.usuario_id`, o mesmo que faz a pessoa enxergar os projetos
+ * em que trabalha.
+ *
+ * A checagem é aqui, e não só na tela: esconder o botão não impede
+ * ninguém de chamar a função direto.
+ */
+async function exigirAusencia(
+  ctx: ContextoUsuario,
+  recursoId: string,
+  acao: string,
+): Promise<void> {
+  if (ctx.admin) return;
+  if (ctx.funcionalidades.includes(FEATURE_RECURSO_EDITAR)) return;
+
+  if (ctx.funcionalidades.includes(FEATURE_AUSENCIA_PROPRIA)) {
+    const dono = await consultarUm<{ usuarioId: string | null }>(
+      `SELECT usuario_id FROM recursos WHERE id = :recursoId`,
+      { recursoId },
+    );
+    if (dono?.usuarioId === ctx.id) return;
+    throw new ErroDominio(
+      `Seu perfil permite ${acao} apenas para você. Peça ao gerente para registrar a de outra pessoa.`,
+    );
+  }
+
+  throw new ErroDominio(`Seu perfil não permite ${acao}`);
+}
+
+/**
+ * De quem é a ausência, pelo id dela.
+ *
+ * Editar e excluir recebem só o id do registro, e a permissão depende
+ * do recurso a que ele pertence.
+ */
+async function recursoDaAusencia(id: string): Promise<string> {
+  const linha = await consultarUm<{ recursoId: string }>(
+    `SELECT recurso_id FROM recurso_ausencias WHERE id = :id`,
+    { id },
+  );
+  if (!linha) throw new ErroDominio("Ausência não encontrada");
+  return linha.recursoId;
 }
 
 export async function listarRecursos(apenasAtivos = true): Promise<Recurso[]> {
@@ -484,7 +546,7 @@ export interface DadosAusencia {
  * e ninguém entende de onde saiu o número.
  */
 export async function criarAusencia(ctx: ContextoUsuario, d: DadosAusencia): Promise<string> {
-  exigirGestaoRecursos(ctx, "registrar ausências");
+  await exigirAusencia(ctx, d.recursoId, "registrar ausências");
 
   if (d.fim < d.inicio) throw new ErroDominio("Data final anterior à inicial");
 
@@ -529,7 +591,7 @@ export async function atualizarAusencia(
   id: string,
   d: Omit<DadosAusencia, "recursoId">,
 ): Promise<void> {
-  exigirGestaoRecursos(ctx, "alterar ausências");
+  await exigirAusencia(ctx, await recursoDaAusencia(id), "alterar ausências");
   if (d.fim < d.inicio) throw new ErroDominio("Data final anterior à inicial");
 
   const n = await executar(
@@ -561,7 +623,7 @@ export async function atualizarAusencia(
  * em que está trabalhando.
  */
 export async function excluirAusencia(ctx: ContextoUsuario, id: string): Promise<void> {
-  exigirGestaoRecursos(ctx, "excluir ausências");
+  await exigirAusencia(ctx, await recursoDaAusencia(id), "excluir ausências");
   const n = await executar(`DELETE FROM recurso_ausencias WHERE id = :id`, {
     id,
   });

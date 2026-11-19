@@ -50,11 +50,20 @@ const mapearLocalidade = (l: LinhaLocalidade): Localidade => ({
  * Quem administra o calendário.
  *
  * Feriado e localidade mudam as datas de todo cronograma da empresa —
- * é configuração de instalação, não de projeto. Fica com o
- * administrador, junto do resto da Administração.
+ * é configuração de instalação, não de projeto.
+ *
+ * Era exclusivo do administrador, sem passar por perfil. Isso deixava o
+ * gerente de projetos dependente dele para cadastrar o feriado da
+ * cidade onde a equipe trabalha, que é justamente quem sabe que o
+ * feriado existe. A chave abre essa porta sem abrir o resto da
+ * Administração.
  */
+const FEATURE_CALENDARIO_EDITAR = "calendario.editar";
+
 function exigirAdmin(ctx: ContextoUsuario, acao: string): void {
-  if (!ctx.admin) throw new ErroDominio(`Somente administradores podem ${acao}`);
+  if (ctx.admin) return;
+  if (ctx.funcionalidades.includes(FEATURE_CALENDARIO_EDITAR)) return;
+  throw new ErroDominio(`Seu perfil não permite ${acao}`);
 }
 
 /**

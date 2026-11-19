@@ -495,6 +495,20 @@ export const APP_FEATURES: AppFeature[] = [
     grupo: "Projetos",
   },
   {
+    key: "recurso.ausencia_propria",
+    label: "Registrar a própria ausência",
+    descricao:
+      "Lança férias, folga e afastamento do próprio recurso. Não dá acesso ao cadastro " +
+      "nem à ausência de outras pessoas.",
+    grupo: "Recursos",
+  },
+  {
+    key: "calendario.editar",
+    label: "Cadastrar feriados e localidades",
+    descricao: "Administra o calendário da instalação. Muda as datas de todo projeto da empresa.",
+    grupo: "Recursos",
+  },
+  {
     key: "recurso.editar",
     label: "Gerir recursos",
     descricao: "Cadastrar recursos e percentual de disponibilidade.",
