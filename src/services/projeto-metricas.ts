@@ -18,8 +18,23 @@ export const SEMAFORO_CLASSE: Record<Semaforo, string> = {
   vermelho: "bg-destructive/12 text-destructive border-destructive/30",
 };
 
-/** Atraso a partir do qual o projeto passa de amarelo para vermelho. */
-const TOLERANCIA_ATRASO = 15;
+/**
+ * Atraso a partir do qual o projeto passa de amarelo para vermelho.
+ *
+ * Exportada porque a lista de projetos tem o próprio semáforo — ela não
+ * carrega baseline e calcula o esperado pelas datas atuais — e as duas
+ * precisam concordar sobre quando um desvio deixa de ser risco e vira
+ * atraso. Enquanto a lista usava 25 e o detalhe 15, o mesmo projeto era
+ * "Atrasado" num lugar e "risco de atraso" no outro.
+ */
+export const TOLERANCIA_ATRASO = 15;
+
+/** Rótulos do semáforo de prazo, iguais em toda a aplicação. */
+export const SEMAFORO_PRAZO_LABEL: Record<Semaforo, string> = {
+  verde: "No prazo",
+  amarelo: "Risco de atraso",
+  vermelho: "Atrasado",
+};
 
 // ------------------------------------------------------------ progresso
 

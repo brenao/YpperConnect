@@ -50,6 +50,11 @@ import {
 } from "@/services/projetos.functions";
 import { minhasPermissoesFn, usuarioAtualFn } from "@/services/cadastros.functions";
 import { listarMinhasSolicitacoesFn } from "@/services/acesso-projeto.functions";
+import {
+  SEMAFORO_PRAZO_LABEL,
+  TOLERANCIA_ATRASO,
+  type Semaforo,
+} from "@/services/projeto-metricas";
 import { cn } from "@/lib/utils";
 
 /**
@@ -167,19 +172,22 @@ export const Route = createFileRoute("/projetos")({
   component: Projetos,
 });
 
-type Saude = "no_prazo" | "atencao" | "atrasado" | "encerrado";
+/**
+ * O semáforo da lista é o mesmo do detalhe, mais o estado "encerrado"
+ * que só existe aqui — no detalhe a situação já aparece em campo
+ * próprio.
+ */
+type Saude = Semaforo | "encerrado";
 
 const saudeLabel: Record<Saude, string> = {
-  no_prazo: "No prazo",
-  atencao: "Atenção",
-  atrasado: "Atrasado",
+  ...SEMAFORO_PRAZO_LABEL,
   encerrado: "Encerrado",
 };
 
 const saudeDot: Record<Saude, string> = {
-  no_prazo: "bg-success",
-  atencao: "bg-warning",
-  atrasado: "bg-destructive",
+  verde: "bg-success",
+  amarelo: "bg-warning",
+  vermelho: "bg-destructive",
   encerrado: "bg-muted-foreground",
 };
 
@@ -193,6 +201,18 @@ const DIA_MS = 86_400_000;
  * mesmo sem ter estourado a data — que é o sinal que interessa à
  * diretoria antes de virar problema.
  */
+/**
+ * Semáforo por progresso esperado × real, na mesma régua do detalhe.
+ *
+ * A diferença que resta é de onde vem o esperado: aqui das datas
+ * atuais, no detalhe da baseline. Um projeto muito replanejado pode
+ * divergir por isso — medir contra o cronograma reescrito é medir
+ * contra si mesmo. O limiar, porém, é um só.
+ *
+ * Data vencida sem encerrar continua vermelho direto: não é risco, é
+ * fato. Um projeto com 95% feito e prazo estourado ainda precisa de
+ * decisão, e chamá-lo de "no prazo" esconderia isso.
+ */
 function calcularSaude(p: ProjetoComProgresso): Saude {
   if (p.status === "concluido" || p.status === "cancelado") return "encerrado";
 
@@ -200,16 +220,16 @@ function calcularSaude(p: ProjetoComProgresso): Saude {
   const fim = new Date(p.fim).getTime();
   const agora = Date.now();
 
-  if (agora > fim) return "atrasado";
+  if (agora > fim) return "vermelho";
 
   const duracao = Math.max(1, fim - inicio);
   const decorrido = Math.max(0, agora - inicio);
   const esperado = (decorrido / duracao) * 100;
-  const desvio = esperado - p.progresso;
+  const atraso = esperado - p.progresso;
 
-  if (desvio > 25) return "atrasado";
-  if (desvio > 10) return "atencao";
-  return "no_prazo";
+  if (atraso <= 0) return "verde";
+  if (atraso <= TOLERANCIA_ATRASO) return "amarelo";
+  return "vermelho";
 }
 
 function fmtData(v: Date | string): string {
@@ -456,7 +476,7 @@ function Projetos() {
     };
   }, [projetos, filtros]);
 
-  const atrasados = projetos.filter((p) => calcularSaude(p) === "atrasado").length;
+  const atrasados = projetos.filter((p) => calcularSaude(p) === "vermelho").length;
 
   const temFiltro =
     filtros.gp !== "todos" ||
@@ -870,9 +890,9 @@ function CardProjeto({
               <span className={cn("size-2 rounded-full", saudeDot[saude])} />
               <span
                 className={cn(
-                  saude === "atrasado"
+                  saude === "vermelho"
                     ? "text-destructive"
-                    : saude === "atencao"
+                    : saude === "amarelo"
                       ? "text-warning"
                       : "text-muted-foreground",
                 )}
