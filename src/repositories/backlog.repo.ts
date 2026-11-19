@@ -79,9 +79,17 @@ const SELECT_BACKLOG = `
     FROM projetos p
     LEFT JOIN usuarios ug ON ug.id = p.gerente_id
     LEFT JOIN usuarios us ON us.id = p.sponsor_id
-    LEFT JOIN (SELECT projeto_id, AVG(progresso) AS media
-                 FROM projeto_tarefas WHERE ativo = 1
-                GROUP BY projeto_id) t
+    -- Ponderado pela duração e só das folhas, igual à lista de projetos
+    -- e ao detalhe. Três consultas com três contas diferentes davam
+    -- três percentuais para o mesmo projeto.
+    LEFT JOIN (SELECT f.projeto_id,
+                      SUM(f.progresso::numeric * (f.fim::date - f.inicio::date + 1))
+                        / NULLIF(SUM(f.fim::date - f.inicio::date + 1), 0) AS media
+                 FROM projeto_tarefas f
+                WHERE f.ativo = 1
+                  AND NOT EXISTS (SELECT 1 FROM projeto_tarefas c
+                                   WHERE c.pai_id = f.id AND c.ativo = 1)
+                GROUP BY f.projeto_id) t
            ON t.projeto_id = p.id`;
 
 // ------------------------------------------------------- configuração

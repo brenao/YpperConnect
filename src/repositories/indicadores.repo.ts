@@ -582,9 +582,19 @@ export async function portfolio(f: FiltroPortfolio = {}): Promise<ProjetoPortfol
                  THEN 1 ELSE 0 END AS atrasado
        FROM projetos p
        LEFT JOIN usuarios u ON u.id = p.gerente_id
-       LEFT JOIN (SELECT projeto_id, AVG(progresso) AS media
-                    FROM projeto_tarefas WHERE ativo = 1
-                   GROUP BY projeto_id) t
+       -- Ponderado pela duração e só das folhas, igual à lista de
+       -- projetos, ao backlog e ao detalhe. A média simples tratava uma
+       -- tarefa de 20 dias como uma de 2 e ainda somava as mães, que
+       -- são o rollup das filhas: o mesmo projeto aparecia com 67% aqui
+       -- e 83% no cronograma.
+       LEFT JOIN (SELECT f.projeto_id,
+                         SUM(f.progresso::numeric * (f.fim::date - f.inicio::date + 1))
+                           / NULLIF(SUM(f.fim::date - f.inicio::date + 1), 0) AS media
+                    FROM projeto_tarefas f
+                   WHERE f.ativo = 1
+                     AND NOT EXISTS (SELECT 1 FROM projeto_tarefas c
+                                      WHERE c.pai_id = f.id AND c.ativo = 1)
+                   GROUP BY f.projeto_id) t
               ON t.projeto_id = p.id
        LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
                     FROM projeto_atualizacoes GROUP BY projeto_id) a

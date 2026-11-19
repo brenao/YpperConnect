@@ -564,12 +564,27 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
        FROM projetos p
        LEFT JOIN usuarios us ON us.id = p.sponsor_id
        LEFT JOIN usuarios ug ON ug.id = p.gerente_id
-       LEFT JOIN (SELECT projeto_id,
+       -- Progresso ponderado pela duração, só das folhas.
+       --
+       -- Era AVG(progresso) sobre todas as tarefas ativas, e isso dava
+       -- dois números diferentes para a mesma coisa: a lista mostrava
+       -- 67% e o detalhe do projeto, 83%. A média simples trata uma
+       -- tarefa de 20 dias como uma de 2, e ainda somava as mães, que
+       -- são o rollup das filhas: o mesmo trabalho contado duas vezes.
+       --
+       -- A ponderação é a mesma do progressoReal da tela: dias corridos
+       -- entre início e fim, as duas pontas inclusive. Se as duas
+       -- contas divergirem, volta o problema que esta mudança corrige.
+       LEFT JOIN (SELECT f.projeto_id,
                          COUNT(*) AS total,
-                         COUNT(CASE WHEN quadro = 'done' THEN 1 END) AS concluidas,
-                         AVG(progresso) AS media
-                    FROM projeto_tarefas WHERE ativo = 1
-                   GROUP BY projeto_id) t
+                         COUNT(CASE WHEN f.quadro = 'done' THEN 1 END) AS concluidas,
+                         SUM(f.progresso::numeric * (f.fim::date - f.inicio::date + 1))
+                           / NULLIF(SUM(f.fim::date - f.inicio::date + 1), 0) AS media
+                    FROM projeto_tarefas f
+                   WHERE f.ativo = 1
+                     AND NOT EXISTS (SELECT 1 FROM projeto_tarefas c
+                                      WHERE c.pai_id = f.id AND c.ativo = 1)
+                   GROUP BY f.projeto_id) t
               ON t.projeto_id = p.id
        LEFT JOIN (SELECT projeto_id, COUNT(*) AS abertos
                     FROM projeto_riscos WHERE status <> 'mitigado'
@@ -919,6 +934,10 @@ async function sincronizarStatusPorProgresso(projetoId: string): Promise<void> {
         SET status = COALESCE(novo.destino, p.status),
             atualizado_em = CASE WHEN novo.destino IS NULL OR novo.destino = p.status
                                  THEN p.atualizado_em ELSE LOCALTIMESTAMP END
+       -- Média simples de propósito: aqui só três fronteiras importam
+       -- (0%, acima de 1%, 100%), e nelas ponderar não muda a resposta.
+       -- O percentual que as telas mostram é ponderado pela duração e
+       -- vive nas consultas de listagem.
        FROM (SELECT CASE
                       WHEN COUNT(*) = 0 THEN NULL
                       WHEN AVG(progresso) >= 100 THEN 'concluido'
