@@ -596,8 +596,29 @@ export async function portfolio(f: FiltroPortfolio = {}): Promise<ProjetoPortfol
                                       WHERE c.pai_id = f.id AND c.ativo = 1)
                    GROUP BY f.projeto_id) t
               ON t.projeto_id = p.id
-       LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
-                    FROM projeto_atualizacoes GROUP BY projeto_id) a
+       -- Quando este projeto recebeu atenção pela última vez.
+       --
+       -- Cinco fontes com peso igual: o acompanhamento escrito, uma
+       -- tarefa mexida, um risco ou ponto de atenção registrado, e uma
+       -- baseline tirada. Atualizar projeto é binário: ou alguém entrou
+       -- nele, ou não.
+       --
+       -- Era só o acompanhamento escrito, e isso marcava como
+       -- abandonado o projeto de quem lançava progresso todo dia. O
+       -- alerta dizia "ninguém escreveu", e quem lia entendia "ninguém
+       -- entrou aqui".
+       LEFT JOIN (
+         SELECT projeto_id, MAX(quando) AS ultima FROM (
+           SELECT projeto_id, data_ref::timestamp AS quando FROM projeto_atualizacoes
+           UNION ALL
+           SELECT projeto_id, atualizado_em FROM projeto_tarefas WHERE ativo = 1
+           UNION ALL
+           SELECT projeto_id, criado_em FROM projeto_riscos
+           UNION ALL
+           SELECT projeto_id, criado_em FROM projeto_atencoes
+           UNION ALL
+           SELECT projeto_id, criado_em FROM projeto_baselines
+         ) f GROUP BY projeto_id) a
               ON a.projeto_id = p.id
        ${where}
       ORDER BY CASE p.status

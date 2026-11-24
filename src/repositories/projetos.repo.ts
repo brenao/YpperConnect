@@ -594,8 +594,20 @@ export async function listarProjetos(ctx: ContextoUsuario): Promise<ProjetoComPr
                     FROM projeto_atencoes WHERE status = 'aberto'
                    GROUP BY projeto_id) a
               ON a.projeto_id = p.id
-       LEFT JOIN (SELECT projeto_id, MAX(data_ref) AS ultima
-                    FROM projeto_atualizacoes GROUP BY projeto_id) u
+       -- Mesma régua do indicador nas outras telas: cinco fontes com
+       -- peso igual. Ver o comentário em portfolio, no indicadores.repo.
+       LEFT JOIN (
+         SELECT projeto_id, MAX(quando) AS ultima FROM (
+           SELECT projeto_id, data_ref::timestamp AS quando FROM projeto_atualizacoes
+           UNION ALL
+           SELECT projeto_id, atualizado_em FROM projeto_tarefas WHERE ativo = 1
+           UNION ALL
+           SELECT projeto_id, criado_em FROM projeto_riscos
+           UNION ALL
+           SELECT projeto_id, criado_em FROM projeto_atencoes
+           UNION ALL
+           SELECT projeto_id, criado_em FROM projeto_baselines
+         ) f GROUP BY projeto_id) u
               ON u.projeto_id = p.id
       WHERE p.status <> 'backlog' AND (${f.clausula})
       ORDER BY CASE p.status
